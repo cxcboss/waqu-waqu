@@ -1,0 +1,241 @@
+import { PLATE_COLORS } from '../art/palette';
+import { K } from '../art/sprites';
+import { clamp, rng, shuffle } from '../engine/math';
+import { DAYS, RESIDENTS, TUNING, type DayConfig, type HouseType, type Size, type Species } from './config';
+
+export type PlatKind = 'lily' | 'log' | 'house' | 'truck' | 'bank';
+
+export interface Plat {
+  id: number;
+  kind: PlatKind;
+  /** World position (design units). World y grows downward like the screen; the camera moves toward negative y. */
+  x: number;
+  y: number;
+  /** Ellipse radii (lily, house raft), half length / half thickness (log), half extents (truck). */
+  rx: number;
+  ry: number;
+  rot: number;
+  variant: number;
+  /** Seconds since something landed on it (drives the bob), large when idle. */
+  bobT: number;
+  drift: number;
+  house?: House;
+  /** Truck or bank side: 0 = left, 1 = right. */
+  side: 0 | 1;
+}
+
+export interface House {
+  id: number;
+  type: HouseType;
+  num: number;
+  color: string;
+  name: string;
+  species: Species;
+  plat: Plat;
+  /** Resident and frog porch spots, relative to the raft center. */
+  resident: { x: number; y: number };
+  porch: { x: number; y: number };
+  plateAt: { x: number; y: number };
+  react: { kind: 'happy' | 'confused'; t: number } | null;
+  passed: boolean;
+  phase: number;
+}
+
+export type OrderState = 'pool' | 'bag' | 'delivered' | 'wrong' | 'wet' | 'missed';
+
+export interface Order {
+  id: number;
+  house: House;
+  size: Size;
+  urgent: boolean;
+  state: OrderState;
+  deadline: number;
+  late: boolean;
+  deliveredTo: House | null;
+}
+
+export interface Level {
+  cfg: DayConfig;
+  plats: Plat[];
+  houses: House[];
+  orders: Order[];
+  trucks: [Plat, Plat];
+  banks: [Plat, Plat];
+}
+
+// House geometry in design units (concept coordinates × K).
+const HOUSE_GEO: Record<HouseType, { rx: number; ry: number; resident: [number, number]; porch: [number, number]; plate: [number, number] }> = {
+  teapot: { rx: 150 * K, ry: 64 * K, resident: [-96 * K, -6 * K], porch: [44 * K, 30 * K], plate: [107 * K, -48 * K] },
+  boot: { rx: 128 * K, ry: 56 * K, resident: [96 * K, 12 * K], porch: [-40 * K, 28 * K], plate: [-119 * K, -46 * K] },
+  can: { rx: 120 * K, ry: 52 * K, resident: [-88 * K, 8 * K], porch: [36 * K, 28 * K], plate: [95 * K, -44 * K] },
+};
+
+let nextId = 1;
+
+function plat(kind: PlatKind, x: number, y: number, rx: number, ry: number, extra: Partial<Plat> = {}): Plat {
+  return { id: nextId++, kind, x, y, rx, ry, rot: 0, variant: 0, bobT: 9, drift: 0, side: 0, ...extra };
+}
+
+export function dayConfig(day: number): DayConfig {
+  return DAYS[clamp(day, 1, DAYS.length) - 1];
+}
+
+/** Builds one day's river. Same seed, same river. `H` is the screen height in design units. */
+export function buildLevel(cfg: DayConfig, H: number): Level {
+  const r = rng(cfg.seed);
+  const { riverL, riverR } = TUNING;
+  const plats: Plat[] = [];
+  const houses: House[] = [];
+
+  // House positions: the first one is already on screen at the start, the rest evenly spaced.
+  const firstY = H * 0.14;
+  const lastY = -(cfg.length - H * 0.45);
+  const gap = (firstY - lastY) / Math.max(1, cfg.houses - 1);
+  const houseYs = Array.from({ length: cfg.houses }, (_, i) => firstY - i * gap);
+
+  const types: HouseType[] = [];
+  const pool: HouseType[] = ['teapot', 'boot', 'can'];
+  let last: HouseType | null = null;
+  for (let i = 0; i < cfg.houses; i++) {
+    const options = pool.filter((t) => t !== last);
+    const t = options[Math.floor(r() * options.length)];
+    types.push(t);
+    last = t;
+  }
+  const nums = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9], r);
+  const colors = shuffle([...PLATE_COLORS], r);
+
+  let pathX = 270;
+  let side: 0 | 1 = r() < 0.5 ? 0 : 1;
+  let afterHouse = false;
+  const lilyX = (rx: number, want: number) => clamp(want, riverL + rx + 6, riverR - rx - 6);
+
+  const row = (y: number) => {
+    // A main landing spot within reach of the last one, sometimes a log, sometimes a second lily.
+    let want = pathX + (r() - 0.5) * 240;
+    if (afterHouse) want = pathX < 375 ? 470 + r() * 50 : 230 + r() * 60; // keep clear of the roof above the house
+    afterHouse = false;
+    if (r() < 0.16) {
+      const lx = clamp(want, riverL + 90, riverR - 90);
+      plats.push(plat('log', lx, y, 76, 18, { rot: (r() - 0.5) * 0.35, drift: (r() < 0.5 ? -1 : 1) * (8 + r() * 8) }));
+      pathX = lx;
+    } else {
+      const rx = 48 + r() * 24;
+      const lx = lilyX(rx, want);
+      plats.push(plat('lily', lx, y + (r() - 0.5) * 20, rx, rx * 0.6, { variant: Math.floor(r() * 4) }));
+      pathX = lx;
+    }
+    if (r() < 0.45) {
+      const rx = 42 + r() * 18;
+      const away = pathX < 375 ? pathX + 180 + r() * 60 : pathX - 180 - r() * 60;
+      plats.push(plat('lily', lilyX(rx, away), y + (r() - 0.5) * 50, rx, rx * 0.6, { variant: Math.floor(r() * 4) }));
+    }
+  };
+
+  const house = (i: number, hy: number) => {
+    const t = types[i];
+    const geo = HOUSE_GEO[t];
+    const hx = side === 0 ? 292 + r() * 16 : 458 + r() * 12;
+    const p = plat('house', hx, hy, geo.rx, geo.ry, { variant: i });
+    const res = RESIDENTS[t];
+    const twin = houses.filter((h) => h.type === t).length;
+    const h: House = {
+      id: i, type: t, num: nums[i % nums.length], color: colors[i % colors.length],
+      name: res.names[twin % res.names.length], species: res.species, plat: p,
+      resident: { x: geo.resident[0], y: geo.resident[1] },
+      porch: { x: geo.porch[0], y: geo.porch[1] },
+      plateAt: { x: geo.plate[0], y: geo.plate[1] },
+      react: null, passed: false, phase: r() * 6,
+    };
+    p.house = h;
+    plats.push(p);
+    houses.push(h);
+    // A lily on the open side of the river so the house row stays crossable.
+    const orx = 44 + r() * 10;
+    const ox = side === 0 ? 505 : 245;
+    plats.push(plat('lily', lilyX(orx, ox + (r() - 0.5) * 30), hy + 30 + r() * 30, orx, orx * 0.6, { variant: Math.floor(r() * 4) }));
+    pathX = hx;
+    side = side === 0 ? 1 : 0;
+    afterHouse = true;
+  };
+
+  // Rows are spaced evenly between houses so every gap stays jumpable. The row just past a
+  // house sits closer, since it has to dodge the roof sideways.
+  let y = H * 0.86;
+  pathX = 250;
+  row(y);
+  houseYs.forEach((hy, i) => {
+    if (i > 0) {
+      y -= 165;
+      row(y);
+    }
+    const n = Math.max(1, Math.ceil((y - hy) / 195));
+    const step = (y - hy) / n;
+    for (let k = 1; k < n; k++) row(y - k * step);
+    house(i, hy);
+    y = hy;
+  });
+  const yEnd = -(cfg.length + H * 1.3);
+  y -= 165;
+  row(y);
+  while (y > yEnd) {
+    y -= 175 + r() * 30;
+    row(y);
+  }
+  bridgeGaps(plats, cfg, yEnd + H);
+
+  // Orders: the first house always has one (the tutorial walks you there), the rest spread out.
+  const orders: Order[] = [];
+  const houseOrder = [0, ...shuffle(houses.slice(1).map((h) => h.id), r)];
+  for (let i = 0; i < cfg.orders; i++) {
+    const h = houses[houseOrder[i % houseOrder.length]];
+    orders.push({
+      id: i, house: h, size: cfg.sizes[Math.floor(r() * cfg.sizes.length)], urgent: false,
+      state: 'pool', deadline: 0, late: false, deliveredTo: null,
+    });
+  }
+  // Urgent parcels go to houses that are not the very first ones, so there's time to plan.
+  const urgentCandidates = shuffle(orders.filter((o) => o.house.id >= 2), r);
+  urgentCandidates.slice(0, cfg.urgent).forEach((o) => (o.urgent = true));
+
+  const trucks: [Plat, Plat] = [
+    plat('truck', TUNING.truckX[0], 0, TUNING.truckHalfW, TUNING.truckHalfH, { side: 0, variant: 0 }),
+    plat('truck', TUNING.truckX[1], 0, TUNING.truckHalfW, TUNING.truckHalfH, { side: 1, variant: 1 }),
+  ];
+  const banks: [Plat, Plat] = [plat('bank', 0, 0, 0, 0, { side: 0 }), plat('bank', 0, 0, 0, 0, { side: 1 })];
+  return { cfg, plats, houses, orders, trucks, banks };
+}
+
+/** Where the frog ends up standing on a platform. */
+function spot(p: Plat) {
+  return p.house ? { x: p.x + p.house.porch.x, y: p.y + p.house.porch.y } : { x: p.x, y: p.y };
+}
+
+/**
+ * Safety net for the generator: from every landing spot there has to be somewhere further
+ * upriver within a jump made with a full bag. Where there isn't, a lily is added in between.
+ */
+function bridgeGaps(plats: Plat[], cfg: DayConfig, top: number) {
+  const reach = TUNING.maxJump * (1 - TUNING.weightPenalty * cfg.bagSlots) * 0.88;
+  const { riverL, riverR } = TUNING;
+  const blocked = (x: number, y: number, rx: number) =>
+    plats.some((q) => {
+      if (q.kind === 'house') return Math.abs(x - q.x) < q.rx + rx + 10 && y > q.y - 230 && y < q.y + q.ry + rx;
+      return Math.hypot(x - q.x, y - q.y) < q.rx + rx + 14;
+    });
+  for (let guard = 0; guard < 80; guard++) {
+    const sorted = plats.slice().sort((a, b) => b.y - a.y);
+    const stuck = sorted.find((p) => {
+      if (p.y < top) return false;
+      const s = spot(p);
+      return !plats.some((q) => q !== p && q.y < s.y - 60 && Math.hypot(q.x - s.x, q.y - s.y) <= reach);
+    });
+    if (!stuck) return;
+    const s = spot(stuck);
+    const rx = 48;
+    const dy = Math.min(170, reach * 0.75);
+    const xs = [s.x, s.x + 110, s.x - 110, 375, riverL + rx + 10, riverR - rx - 10].map((x) => clamp(x, riverL + rx + 6, riverR - rx - 6));
+    const x = xs.find((x) => !blocked(x, s.y - dy, rx) && Math.hypot(x - s.x, dy) <= reach) ?? xs[0];
+    plats.push(plat('lily', x, s.y - dy, rx, rx * 0.6, { variant: guard % 4 }));
+  }
+}
