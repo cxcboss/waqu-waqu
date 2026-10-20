@@ -1,4 +1,4 @@
-import type { Canvas, Ctx, Platform } from '../platform/types';
+import type { Ctx, ImageSource, Platform } from '../platform/types';
 import { P } from './palette';
 import * as A from './shapes';
 import { defs } from './svg';
@@ -8,7 +8,7 @@ export const K = 750 / 1080;
 export const TILE_H = 2016; // background tile height in concept units (1400 design units)
 
 export interface Sprite {
-  img: Canvas;
+  img: ImageSource;
   /** Size and anchor in design units. */
   w: number;
   h: number;
@@ -88,24 +88,51 @@ def('river', [0, 0, 1080, TILE_H], () => A.riverTile(TILE_H));
 
 export const SPRITE_NAMES = Object.keys(D);
 
-/** Rasterizes the SVG placeholder art into canvases once, at the current render scale. */
+/**
+ * Holds the game's art. Painted PNGs listed in `art/manifest.json` are used where they exist;
+ * everything else is rasterized from the SVG placeholders once, at the current render scale.
+ * A PNG covers its sprite's bounds box exactly, so it lines up with the same anchor.
+ */
 export class SpriteBank {
   private map = new Map<string, Sprite>();
 
   constructor(private platform: Platform) {}
 
-  async load(pxPerUnit: number, onProgress?: (done: number, total: number) => void) {
+  async load(pxPerUnit: number, onProgress?: (done: number, total: number) => void, artBase = 'art/') {
     const names = SPRITE_NAMES;
+    const painted = await this.paintedList(artBase);
     let done = 0;
     // Rasterize in small batches so phones don't choke on SVG filters.
     const batch = 6;
     for (let i = 0; i < names.length; i += batch) {
       await Promise.all(
         names.slice(i, i + batch).map(async (name) => {
-          this.map.set(name, await this.raster(D[name], pxPerUnit));
+          const png = painted.has(name) ? await this.png(D[name], artBase + name + '.png') : null;
+          this.map.set(name, png ?? (await this.raster(D[name], pxPerUnit)));
           onProgress?.(++done, names.length);
         }),
       );
+    }
+  }
+
+  private async paintedList(base: string): Promise<Set<string>> {
+    try {
+      const raw = await this.platform.loadBinary(base + 'manifest.json');
+      const list: unknown = JSON.parse(new TextDecoder().decode(raw));
+      return new Set(Array.isArray(list) ? list.filter((n): n is string => typeof n === 'string' && n in D) : []);
+    } catch {
+      return new Set(); // no painted art yet
+    }
+  }
+
+  private async png(d: SpriteDef, url: string): Promise<Sprite | null> {
+    const [x0, y0, x1, y1] = d.b;
+    try {
+      const img = await this.platform.loadImage(url);
+      return { img, w: (x1 - x0) * d.s, h: (y1 - y0) * d.s, ax: -x0 * d.s, ay: -y0 * d.s };
+    } catch (e) {
+      console.warn(e);
+      return null;
     }
   }
 

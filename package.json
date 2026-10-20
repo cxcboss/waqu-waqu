@@ -7,7 +7,8 @@
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "font": "python3 scripts/subset_font.py"
+    "font": "python3 scripts/subset_font.py",
+    "deploy": "bash scripts/deploy.sh"
   },
   "devDependencies": {
     "typescript": "~5.6.3",

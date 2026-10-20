@@ -16,6 +16,7 @@ npm install
 npm run dev      # 本地预览，手机连同一个 Wi-Fi 也能打开
 npm run build    # 打包到 dist/
 npm run font     # 改了文案后重新裁剪字体（霞鹜文楷）
+npm run deploy   # 打包并发布到 GitHub Pages（gh-pages 分支）
 ```
 
 TypeScript + Canvas 2D，没有用游戏引擎。所有浏览器相关的调用都在 `src/platform/web.ts`，
@@ -24,5 +25,6 @@ TypeScript + Canvas 2D，没有用游戏引擎。所有浏览器相关的调用�
 - `src/game/config.ts`：每天的关卡参数和手感数值
 - `src/game/level.ts`：河道生成（同一天每次都一样）
 - `src/game/play.ts`：玩法；`src/game/hq.ts`：总部结算；`src/game/title.ts`：标题页
-- `src/art/`：占位美术（代码绘制的 SVG，正式美术做好后替换）
+- `src/art/`：占位美术（代码绘制的 SVG）。正式美术放进 `public/art/<名字>.png` 并把名字写进
+  `public/art/manifest.json`，就会替换同名占位图（名字和尺寸见 `src/art/sprites.ts`）
 - `public/audio/`：音效和音乐，来源和授权见 `public/audio/CREDITS.md`
