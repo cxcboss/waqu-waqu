@@ -30,21 +30,21 @@ export interface DayConfig {
 export const DAYS: DayConfig[] = [
   {
     day: 1, length: 5200, speed: 44, houses: 6, orders: 4, urgent: 0, sizes: [0], bagSlots: 3,
-    predictDelay: 1, markTargets: true, tutorial: true, seed: 101,
+    predictDelay: 0, markTargets: true, tutorial: true, seed: 101,
     intro: '第一天上班，先熟悉跳跃和送件',
     brief: {
       title: '第1天 · 入职第一天',
       rows: [
         ['box0', '从运输车上【取包裹】'],
-        ['plate', '送到【门牌号相同】的住户家'],
-        ['hand', '【按住往下拉】，松手就能跳'],
+        ['code', '送到挂着【相同取件码】的房子'],
+        ['hand', '【任意空白处】按住往下拉，松手就跳'],
         ['frog_swim', '别掉进河里，也别被冲出屏幕'],
       ],
     },
   },
   {
     day: 2, length: 6200, speed: 52, houses: 7, orders: 6, urgent: 1, sizes: [0, 0, 1], bagSlots: 4,
-    predictDelay: 1, markTargets: false, tutorial: false, seed: 202,
+    predictDelay: 0.5, markTargets: false, tutorial: false, seed: 202,
     intro: '新业务：加急件，按时送到有奖金',
     brief: {
       title: '第2天 · 新业务',
@@ -57,7 +57,7 @@ export const DAYS: DayConfig[] = [
   },
   {
     day: 3, length: 7200, speed: 60, houses: 8, orders: 8, urgent: 2, sizes: [0, 1, 1, 2], bagSlots: 4,
-    predictDelay: 2, markTargets: false, tutorial: false, seed: 303,
+    predictDelay: 1, markTargets: false, tutorial: false, seed: 303,
     intro: '大件包裹更重，跳不远，挑着拿',
     brief: {
       title: '第3天 · 大件来了',

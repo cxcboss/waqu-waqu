@@ -18,6 +18,9 @@ export interface Plat {
   variant: number;
   /** Seconds since something landed on it (drives the bob), large when idle. */
   bobT: number;
+  /** How hard the last landing pushed it down (drives the wobble), and which way it tipped (-1..1). */
+  press: number;
+  tilt: number;
   drift: number;
   house?: House;
   /** Truck or bank side: 0 = left, 1 = right. */
@@ -27,7 +30,7 @@ export interface Plat {
 export interface House {
   id: number;
   type: HouseType;
-  num: number;
+  /** Color of the pickup-code tags hanging at this house (and on its parcels' cards). */
   color: string;
   name: string;
   species: Species;
@@ -37,14 +40,19 @@ export interface House {
   porch: { x: number; y: number };
   plateAt: { x: number; y: number };
   react: { kind: 'happy' | 'confused'; t: number } | null;
+  /** The parcel the resident is holding up after a hand-over; t < 0 while it's still flying over. */
+  hold: { size: Size; urgent: boolean; wrong: boolean; t: number } | null;
   passed: boolean;
   phase: number;
 }
 
-export type OrderState = 'pool' | 'bag' | 'delivered' | 'wrong' | 'wet' | 'missed';
+/** 'float': dropped in the river and still within reach of a rescue. */
+export type OrderState = 'pool' | 'bag' | 'float' | 'delivered' | 'wrong' | 'wet' | 'missed';
 
 export interface Order {
   id: number;
+  /** Pickup code 0–9, unique within the day; shown on the card and on the house waiting for it. */
+  code: number;
   house: House;
   size: Size;
   urgent: boolean;
@@ -73,7 +81,7 @@ const HOUSE_GEO: Record<HouseType, { rx: number; ry: number; resident: [number, 
 let nextId = 1;
 
 function plat(kind: PlatKind, x: number, y: number, rx: number, ry: number, extra: Partial<Plat> = {}): Plat {
-  return { id: nextId++, kind, x, y, rx, ry, rot: 0, variant: 0, bobT: 9, drift: 0, side: 0, ...extra };
+  return { id: nextId++, kind, x, y, rx, ry, rot: 0, variant: 0, bobT: 9, press: 0, tilt: 0, drift: 0, side: 0, ...extra };
 }
 
 export function dayConfig(day: number): DayConfig {
@@ -102,7 +110,6 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
     types.push(t);
     last = t;
   }
-  const nums = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9], r);
   const colors = shuffle([...PLATE_COLORS], r);
 
   const mid = (riverL + riverR) / 2;
@@ -142,12 +149,12 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
     const res = RESIDENTS[t];
     const twin = houses.filter((h) => h.type === t).length;
     const h: House = {
-      id: i, type: t, num: nums[i % nums.length], color: colors[i % colors.length],
+      id: i, type: t, color: colors[i % colors.length],
       name: res.names[twin % res.names.length], species: res.species, plat: p,
       resident: { x: geo.resident[0], y: geo.resident[1] },
       porch: { x: geo.porch[0], y: geo.porch[1] },
       plateAt: { x: geo.plate[0], y: geo.plate[1] },
-      react: null, passed: false, phase: r() * 6,
+      react: null, hold: null, passed: false, phase: r() * 6,
     };
     p.house = h;
     plats.push(p);
@@ -196,10 +203,11 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
   // Orders: the first house always has one (the tutorial walks you there), the rest spread out.
   const orders: Order[] = [];
   const houseOrder = [0, ...shuffle(houses.slice(1).map((h) => h.id), r)];
+  const codes = shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], r);
   for (let i = 0; i < cfg.orders; i++) {
     const h = houses[houseOrder[i % houseOrder.length]];
     orders.push({
-      id: i, house: h, size: cfg.sizes[Math.floor(r() * cfg.sizes.length)], urgent: false,
+      id: i, code: codes[i % codes.length], house: h, size: cfg.sizes[Math.floor(r() * cfg.sizes.length)], urgent: false,
       state: 'pool', deadline: 0, late: false, deliveredTo: null,
     });
   }
@@ -242,7 +250,8 @@ function bridgeGaps(plats: Plat[], cfg: DayConfig, top: number) {
     const stuck = sorted.find((p) => {
       if (p.y < top || given.has(p)) return false;
       const s = spot(p);
-      return !plats.some((q) => q !== p && q.y < s.y - 60 && Math.hypot(q.x - s.x, q.y - s.y) <= reach);
+      // logs drift across the river, so they can't be counted on as the way forward
+      return !plats.some((q) => q !== p && q.kind !== 'log' && q.y < s.y - 60 && Math.hypot(q.x - s.x, q.y - s.y) <= reach);
     });
     if (!stuck) return;
     const s = spot(stuck);

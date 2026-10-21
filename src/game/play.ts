@@ -1,6 +1,6 @@
 import { INK, P } from '../art/palette';
 import { K, TILE_H } from '../art/sprites';
-import { button, ellipse, font, hit, panel, plate, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
+import { button, codeTag, ellipse, font, hit, panel, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
 import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
 import type { Canvas, Ctx } from '../platform/types';
@@ -14,34 +14,59 @@ import { TitleScene } from './title';
 const FROG_S = 0.92; // frog sprite scale on top of K, matching the concept art
 const TILE = TILE_H * K;
 
+type How = 'jump' | 'climb' | 'auto';
+
 interface Jump {
   x0: number; y0: number; x1: number; y1: number;
   t: number; T: number; H: number; dist: number;
   whistled?: boolean;
-  /** Set for the automatic hop from a bank onto a truck: lands there whatever is underneath. */
+  /** Set for jumps that land on a chosen spot whatever is underneath (leaping out of the water). */
   to?: Plat;
+  how?: How;
 }
 
+/**
+ * The hop onto a truck from the road once it has caught up (a flip and a croak), or, with `yank`,
+ * the truck's rope hauling the frog back from wherever it is. Positions are on screen because the
+ * trucks keep pace with the camera.
+ */
+interface Board { truck: Plat; t: number; x0: number; y0: number; yank: boolean; said: boolean }
+
+/** Exhaust from a truck's tail pipe: drifts behind on the road and hides what's under it. */
+interface Puff { x: number; y: number; vx: number; vy: number; r: number; t: number; dur: number }
+
 interface Frog {
-  state: 'stand' | 'jump' | 'swim';
+  state: 'stand' | 'jump' | 'swim' | 'board';
   x: number; y: number; z: number;
   on: Plat | null;
   lx: number; ly: number;
   settle: { fx: number; fy: number; tx: number; ty: number; t: number } | null;
   jump: Jump | null;
+  board: Board | null;
   vx: number; vy: number;
   swimT: number;
   strokeT: number;
   landT: number;
+  /** How hard the last landing was (about 0.25–1.1), for the squash. */
+  impact: number;
+  /** Lean toward the resident while handing a parcel over, fading out. */
+  give: number;
+  giveDir: number;
   swing: number; swingV: number;
 }
 
+/** A parcel bobbing in the river after a fall. It can be fished out for a few seconds. */
+interface Floater { o: Order; x: number; y: number; vx: number; vy: number; t: number; spin: number }
+
 interface Fx {
-  kind: 'ripple' | 'splash' | 'dust' | 'floatBox' | 'heart' | 'fly' | 'qmark';
+  kind: 'ripple' | 'splash' | 'dust' | 'floatBox' | 'heart' | 'fly' | 'qmark' | 'drops' | 'petals' | 'sink' | 'arc' | 'coins' | 'say';
   x: number; y: number; t: number; dur: number;
   size?: number; urgent?: boolean;
-  /** For 'fly': screen-space start and end. */
+  /** For 'fly' (screen space) and 'arc' (world space): where it ends. */
   x2?: number; y2?: number;
+  label?: string;
+  /** Random seed for the particle kinds. */
+  seed?: number;
 }
 
 interface Popup { text: string; x: number; y: number; t: number; color: string }
@@ -50,18 +75,20 @@ interface Shot { at: number; caption: string; prio: number; kind: string; thrown
 
 interface Card { order: Order; rect: Rect }
 
-type HintKey = 'go' | 'refill' | 'last' | 'swim' | 'warn' | 'urgent' | 'heavy' | 'wrongHouse';
+type HintKey = 'go' | 'refill' | 'call' | 'egg' | 'road' | 'swim' | 'rescue' | 'warn' | 'urgent' | 'heavy' | 'wrongHouse';
 
 /**
  * Coached steps at the start of a day. 'intro' is the briefing card (every day); day 1 then walks
- * through pick → aim → go → deliver → refill. The river holds still during the hands-on steps.
+ * through pick → aim → go → deliver → refill. 'rescue' is shown once, the first time parcels end up
+ * in the water. The river holds still during the hands-on steps.
  */
-type Step = 'intro' | 'pick' | 'aim' | 'go' | 'deliver' | 'refill' | null;
+type Step = 'intro' | 'pick' | 'aim' | 'go' | 'deliver' | 'refill' | 'rescue' | null;
 
 /** The drive home after everything is handed out: camera pans to the truck, it drives off. */
 interface Offwork { truck: Plat; t: number; line: string; baseY: number; drive: number; panX: number; panY: number; horn: boolean; card: boolean }
 
-const plateSeg = (h: House): Seg => ({ plate: h.num, color: h.color });
+const codeSeg = (o: Order): Seg => ({ code: o.code, color: o.house.color });
+const frac = (v: number) => v - Math.floor(v);
 
 /** How to fit each briefing icon in its circle: offset from the circle center and scale. */
 const ICONS: Record<string, [number, number, number]> = {
@@ -73,6 +100,30 @@ const PAN_T = 0.8;
 const DRIVE_AT = 0.95;
 const CARD_AT = 1.5;
 const OFF_END = 5.2;
+
+/** Seconds a dropped parcel stays afloat, and how close the frog must swim to scoop it up. */
+const FLOAT_T = 5.5;
+const GRAB_R = 70;
+/** How far the tongue reaches, from the water or from a pad. */
+const TONGUE_R = 270;
+const TONGUE_OUT = 0.13;
+const TONGUE_IN = 0.22;
+/** A tap while swimming this close to a pad or the bank leaps out of the water. */
+const LEAP_R = 170;
+/** Countdown once everything is handed out, before the truck hauls the frog in. */
+const CALL_T = 15;
+const BOARD_LEAP_T = 0.4;
+const YANK_T = 0.8;
+/** Jumping off the road behind a truck: it blows exhaust, which slows the frog for a while. */
+const SMOG_T = 2.6;
+const SMOG_REACH = 0.7;
+const SMOG_SLOW = 1.5;
+
+const LETTERS = [
+  '“给河湾的快递员：谢谢你每天都来。——住在桥洞的老乌龟”',
+  '“如果你捡到这封信，说明你很会偷懒。——猫头鹰经理”',
+  '“明天的荷叶会更大一点。——一只路过的鹭”',
+];
 
 export class PlayScene implements Scene {
   private lv: Level;
@@ -120,10 +171,33 @@ export class PlayScene implements Scene {
   private amb: LoopHandle | null = null;
   private engine: LoopHandle | null = null;
   private bubbles: LoopHandle | null = null;
-  private charge: LoopHandle | null = null;
+  private hum: { setPitch(hz: number): void; stop(): void } | null = null;
+  /** How many tick marks the pull has passed; each new one clicks a little higher. */
+  private notch = 0;
   private chargeMax = false;
   private predicted = false;
   private tick: LoopHandle | null = null;
+  /** Parcels in the water that can still be saved, and the tongue fetching one of them. */
+  private floaters: Floater[] = [];
+  private tongue: { fl: Floater; t: number } | null = null;
+  private tongueQ: Floater[] = [];
+  /** Where the tutorial was when the rescue lesson cut in. */
+  private stepBefore: Step = null;
+  private lessonAt: number | null = null;
+  /** Seconds left to get back on a truck once everything is handed out. */
+  private callT: number | null = null;
+  private honkT = 0;
+  private lastHonk = 0;
+  /** Something to find on the road behind the truck while the countdown runs. */
+  private egg: { x: number; y: number; got: boolean } | null = null;
+  private shakeT = 0;
+  private puffs: Puff[] = [];
+  /** Seconds the frog stays slowed by exhaust. */
+  private smogT = 0;
+  /** The current stand on the road has already set off the exhaust. */
+  private puffed = false;
+  /** For the road: whether the frog came down ahead of its truck (and waits) or behind it. */
+  private roadSpot: 'ahead' | 'behind' | null = null;
 
   constructor(private game: Game, readonly day: number) {
     const cfg = dayConfig(day);
@@ -132,8 +206,8 @@ export class PlayScene implements Scene {
     this.placeTrucks();
     const lx = TUNING.truckSpotX[1];
     this.frog = {
-      state: 'stand', x: truck.x + lx, y: truck.y + 40, z: 0, on: truck, lx, ly: 40, settle: null, jump: null,
-      vx: 0, vy: 0, swimT: 0, strokeT: 9, landT: 9, swing: 0, swingV: 0,
+      state: 'stand', x: truck.x + lx, y: truck.y + 40, z: 0, on: truck, lx, ly: 40, settle: null, jump: null, board: null,
+      vx: 0, vy: 0, swimT: 0, strokeT: 9, landT: 9, impact: 0.5, give: 0, giveDir: 1, swing: 0, swingV: 0,
     };
     this.slowT = TUNING.truckSlowSec;
     this.slowCd = TUNING.truckSlowSec + TUNING.slowCooldown;
@@ -156,13 +230,27 @@ export class PlayScene implements Scene {
     if (this.paused || this.leaving) return;
     this.time += dt;
     this.stepT += dt;
+    this.shakeT = Math.max(0, this.shakeT - dt);
+    this.honkT = Math.max(0, this.honkT - dt);
+    this.smogT = Math.max(0, this.smogT - dt);
+    for (const p of this.puffs) {
+      p.t += dt;
+      if (p.t < 0) continue;
+      const d = Math.exp(-1.6 * dt);
+      p.vx *= d;
+      p.vy *= d;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+    this.puffs = this.puffs.filter((p) => p.t < p.dur);
     const cfg = this.cfg;
 
     if (this.off) this.updateOffwork(dt);
     else {
       this.slowT = Math.max(0, this.slowT - dt);
       this.slowCd = Math.max(0, this.slowCd - dt);
-      const target = this.ended === 'done' ? 0 : this.slowT > 0 ? TUNING.slowFactor : 1;
+      // the convoy also eases off while it waits for the frog at the end of the round
+      const target = this.ended === 'done' ? 0 : this.slowT > 0 || this.callT !== null ? TUNING.slowFactor : 1;
       this.speedK = approach(this.speedK, target, 4, dt);
       // The river holds still while the tutorial has the player's hands busy.
       if (!this.frozen()) this.camY -= cfg.speed * this.speedK * dt;
@@ -176,9 +264,14 @@ export class PlayScene implements Scene {
         if (p.x > TUNING.riverR - 84) p.drift = -Math.abs(p.drift);
       }
     }
-    for (const h of this.lv.houses) if (h.react) h.react.t += dt;
+    for (const h of this.lv.houses) {
+      if (h.react) h.react.t += dt;
+      if (h.hold && (h.hold.t += dt) > 1.6) h.hold = null;
+    }
 
     this.updateFrog(dt);
+    this.updateFloaters(dt);
+    this.updateTongue(dt);
     if (this.aim) this.aim.t += dt;
     this.updateSound();
 
@@ -187,6 +280,9 @@ export class PlayScene implements Scene {
       this.checkUrgent();
       this.checkDanger(dt);
       this.tutorial();
+      this.updateRoad();
+      this.updateCall(dt);
+      this.checkEgg();
       this.checkOffwork();
       if (!this.ended && -this.camY >= cfg.length) this.endDay('done');
     } else if (this.ended !== 'off') {
@@ -205,7 +301,7 @@ export class PlayScene implements Scene {
   }
 
   private frozen() {
-    return this.step === 'intro' || this.step === 'pick' || this.step === 'aim' || this.step === 'deliver';
+    return this.step === 'intro' || this.step === 'pick' || this.step === 'aim' || this.step === 'deliver' || this.step === 'rescue';
   }
 
   private setStep(step: Step) {
@@ -245,10 +341,11 @@ export class PlayScene implements Scene {
         if (!this.findPlat(j.x1, j.y1)) this.game.audio.play('fall_whistle', { volume: 0.8 });
       }
       if (k >= 1) {
-        if (j.to) this.standOn(j.to, j.x1, j.y1, 'jump');
+        if (j.to) this.standOn(j.to, j.x1, j.y1, j.how ?? 'jump');
         else this.land(j.x1, j.y1);
       }
-    } else if (f.state === 'swim') {
+    } else if (f.state === 'board') this.updateBoard(dt);
+    else if (f.state === 'swim' && this.step !== 'rescue') {
       f.swimT += dt;
       f.strokeT += dt;
       const d = Math.exp(-TUNING.swimDrag * dt);
@@ -256,11 +353,13 @@ export class PlayScene implements Scene {
       f.vy *= d;
       f.x = clamp(f.x + f.vx * dt, TUNING.riverL - 24, TUNING.riverR + 24);
       f.y += (f.vy + TUNING.current) * dt;
+      // bumping into something on the way springs the frog out of the water
       if (f.swimT > 0.4) {
         const p = this.findPlat(f.x, f.y, true);
-        if (p) this.standOn(p, f.x, f.y, 'climb');
+        if (p) this.leapOut(p);
       }
     }
+    f.give = Math.max(0, f.give - dt * 2.2);
     // satchel swing spring
     f.swingV += (-60 * f.swing - 6 * f.swingV) * dt;
     f.swing += f.swingV * dt;
@@ -273,7 +372,7 @@ export class PlayScene implements Scene {
     return this.bag.reduce((w, o) => w + SIZE_INFO[o.size].slots, 0);
   }
   private maxJump() {
-    return TUNING.maxJump * (1 - TUNING.weightPenalty * this.weight());
+    return TUNING.maxJump * (1 - TUNING.weightPenalty * this.weight()) * (this.smogT > 0 ? SMOG_REACH : 1);
   }
 
   /** Finds what's under a world point: truck, river object, bank, or null for water. */
@@ -306,13 +405,12 @@ export class PlayScene implements Scene {
     return null;
   }
 
-  private standOn(p: Plat, x: number, y: number, how: 'jump' | 'climb') {
+  private standOn(p: Plat, x: number, y: number, how: How) {
     const f = this.frog;
-    // Nobody stays on the bank: the frog scurries straight onto that side's truck.
-    if (p.kind === 'bank') {
-      this.hopToTruck(this.lv.trucks[p.side], x, y, how);
-      return;
-    }
+    const dist = f.jump?.dist ?? 0;
+    // the road rules (wait for the truck, or exhaust) are sorted out once the frog has settled
+    this.roadSpot = null;
+    this.puffed = false;
     let tx: number, ty: number;
     let cx = x - p.x, cy = y - p.y;
     switch (p.kind) {
@@ -341,39 +439,56 @@ export class PlayScene implements Scene {
       default:
         cx = x;
         cy = y;
-        tx = p.side === 0 ? Math.min(x, TUNING.riverL - 26) : Math.max(x, TUNING.riverR + 26);
+        tx = p.side === 0 ? clamp(x, 30, TUNING.riverL - 26) : clamp(x, TUNING.riverR + 26, 720);
         ty = y;
     }
     f.state = 'stand';
     f.on = p;
     f.z = 0;
     f.jump = null;
+    f.board = null;
     f.landT = 0;
     f.lx = cx;
     f.ly = cy;
     f.settle = { fx: cx, fy: cy, tx, ty, t: 0 };
     f.swingV += 5 + this.weight() * 1.5;
+    // How hard it came down: far jumps hit harder, and everything gives way to match.
+    const impact = how === 'auto' ? 0.6 : clamp(dist / 300, 0.25, 1.1);
+    f.impact = impact;
     p.bobT = 0;
+    p.tilt = 0;
     const au = this.game.audio;
-    if (how === 'climb') {
-      au.play('swim_climb');
-      this.bubbles?.stop(0.2);
-      this.bubbles = null;
-      au.duck(false);
-      this.doneHint('swim');
-      if (this.sy(y) > this.H * TUNING.warnLine) {
-        this.stats.closeCalls++;
-        this.queueShot('close', '极限上岸！', 7, 0.2);
+    if (how === 'climb' && this.sy(y) > this.H * TUNING.warnLine) {
+      this.stats.closeCalls++;
+      this.queueShot('close', '极限上岸！', 7, 0.2);
+    }
+    if (p.kind === 'lily' || p.kind === 'log') {
+      // small and young pads give more; logs barely sink but rock
+      const soft = p.kind === 'log' ? 0.45 : clamp(62 / p.rx, 0.8, 1.4) * (p.variant === 2 ? 1.2 : 1);
+      p.press = impact * soft;
+      p.tilt = clamp((x - p.x) / p.rx, -1, 1);
+      this.fx.push({ kind: 'ripple', x: p.x, y: p.y + 6, t: 0, dur: 0.6 + impact * 0.5, size: p.rx * (1 + impact * 0.4) });
+      if (p.kind === 'lily' && (p.variant === 0 || p.variant === 3) && impact > 0.35) {
+        this.fx.push({ kind: 'petals', x: p.x + p.rx * 0.35, y: p.y - p.ry * 0.15, t: 0, dur: 1.1, size: impact, seed: Math.random() * 100 });
       }
-    } else if (p.kind === 'truck') au.play('land_truck');
-    else if (p.kind === 'lily' || p.kind === 'log') au.play('land_pad', { jitter: true });
-    else au.play('land_house');
-    if (p.kind === 'lily' || p.kind === 'log') this.fx.push({ kind: 'ripple', x: p.x, y: p.y + 6, t: 0, dur: 0.8, size: p.rx * 1.2 });
-    else this.fx.push({ kind: 'dust', x: f.x, y: f.y, t: 0, dur: 0.5 });
+      if (p.press > 0.8) this.fx.push({ kind: 'drops', x, y, t: 0, dur: 0.6, size: impact, seed: Math.random() * 100 });
+      if (p.kind === 'log') au.play('land_house', { volume: 0.5 + impact * 0.4, rate: 1.25 - impact * 0.2, jitter: true });
+      else au.play('land_pad', { volume: 0.55 + impact * 0.45, rate: 1.15 - impact * 0.25, jitter: true });
+    } else {
+      p.press = impact * 0.5;
+      this.fx.push({ kind: 'dust', x, y, t: 0, dur: 0.5, size: impact });
+      if (p.kind === 'truck') au.play('land_truck', { volume: 0.6 + impact * 0.4 });
+      else au.play('land_house', { volume: 0.6 + impact * 0.4, rate: 1.1 - impact * 0.15 });
+    }
+    if (dist > 260) {
+      this.shakeT = 0.22;
+      this.game.platform.vibrate(25);
+    }
 
     if (p.kind === 'truck') {
       this.game.platform.vibrate(12);
-      if (this.slowCd <= 0) {
+      // hopping on by itself from the road keeps the convoy at its pace
+      if (this.slowCd <= 0 && how !== 'auto') {
         this.slowT = TUNING.truckSlowSec;
         this.slowCd = TUNING.truckSlowSec + TUNING.slowCooldown;
         au.play('truck_slowdown', { volume: 0.7, delay: 0.1 });
@@ -390,35 +505,94 @@ export class PlayScene implements Scene {
         this.setStep('deliver');
         this.hint = null;
       } else if (this.cfg.tutorial && !this.bag.some((o) => o.house === h)) {
-        const want = this.bag[0].house;
-        this.showHint('wrongHouse', ['这是 ', plateSeg(h), ' 号，要找 ', plateSeg(want), ' 号'], { dur: 4, again: true });
+        const waits = this.lv.orders.filter((o) => o.house === h && (o.state === 'pool' || o.state === 'bag'));
+        const line: Seg[] = waits.length ? ['这家等的是 ', ...waits.map(codeSeg), '，你的是 ', codeSeg(this.bag[0])] : ['这家没有包裹，你的是 ', codeSeg(this.bag[0])];
+        this.showHint('wrongHouse', line, { dur: 4, again: true });
       }
     }
   }
 
-  /** Quick automatic hop from wherever the frog reached the bank onto that side's truck bed. */
-  private hopToTruck(t: Plat, x: number, y: number, how: 'jump' | 'climb') {
+  /** Up onto truck `t` from world point (x, y) with a flip, or hauled in by its rope with `yank`. */
+  private runToTruck(t: Plat, x: number, y: number, yank: boolean) {
     const f = this.frog;
-    const T = 0.36;
-    const lx = (t.side === 0 ? 1 : -1) * TUNING.truckSpotX[1];
-    // the truck keeps pace with the camera, so aim where it will be on landing
-    const x1 = t.x + lx, y1 = t.y + 40 - this.cfg.speed * this.speedK * T;
-    const dist = Math.hypot(x1 - x, y1 - y);
-    f.state = 'jump';
+    f.state = 'board';
     f.on = null;
     f.settle = null;
+    f.jump = null;
     f.z = 0;
-    f.jump = { x0: x, y0: y, x1, y1, t: 0, T, H: 40 + Math.min(60, dist * 0.12), dist, to: t };
+    f.board = { truck: t, t: 0, x0: x, y0: this.sy(y), yank, said: false };
+    this.aim = null;
+    this.stopCharge();
+    this.roadSpot = null;
     const au = this.game.audio;
-    if (how === 'climb') {
-      au.play('swim_climb');
-      this.bubbles?.stop(0.2);
-      this.bubbles = null;
-      au.duck(false);
-      this.doneHint('swim');
-    } else au.play('land_pad', { volume: 0.6, jitter: true });
-    au.play('jump_whoosh', { volume: 0.5, delay: 0.05 });
-    this.fx.push({ kind: 'dust', x, y, t: 0, dur: 0.5 });
+    this.fx.push({ kind: 'dust', x, y, t: 0, dur: 0.5, size: 0.6 });
+    if (yank) au.play('truck_horn');
+    au.play('jump_whoosh', { volume: yank ? 0.8 : 0.5 });
+  }
+
+  private updateBoard(dt: number) {
+    const f = this.frog;
+    const b = f.board!;
+    b.t += dt;
+    // the leap, homing in on the bed as the truck rocks along
+    const t = b.truck;
+    const T = b.yank ? YANK_T : BOARD_LEAP_T;
+    const k = Math.min(1, b.t / T);
+    const lx = (t.side === 0 ? 1 : -1) * TUNING.truckSpotX[1];
+    const tx = t.x + lx, ts = this.sy(t.y) + 40;
+    const e = b.yank ? easeOutCubic(k) : k;
+    f.x = lerp(b.x0, tx, e);
+    f.y = this.camY + lerp(b.y0, ts, e);
+    f.z = 4 * (b.yank ? 170 : 70) * k * (1 - k);
+    if (!b.said && k > 0.2) {
+      b.said = true;
+      this.fx.push({ kind: 'say', x: 0, y: 0, t: 0, dur: b.yank ? 1.1 : 0.8, label: b.yank ? '哇啊——' : '呱！' });
+      this.game.audio.play('frog_croak', { volume: 0.8, rate: b.yank ? 1.35 : 1.1, jitter: true });
+    }
+    if (k >= 1) this.standOn(t, tx, t.y + 40, 'auto');
+  }
+
+  /**
+   * On the road: ahead of its truck the frog waits for the truck to catch up and hops on by itself;
+   * behind it, the road carries the frog off the bottom unless it jumps.
+   */
+  private updateRoad() {
+    const f = this.frog;
+    if (f.state !== 'stand' || f.on?.kind !== 'bank') return;
+    const t = this.lv.trucks[f.on.side];
+    const s = this.sy(f.y), ts = this.sy(t.y);
+    if (!this.roadSpot) {
+      this.roadSpot = s > ts + t.ry ? 'behind' : 'ahead';
+      if (this.roadSpot === 'ahead' && s < ts - t.ry - 70) this.fx.push({ kind: 'say', x: 0, y: 0, t: 0, dur: 1.4, label: '等车来…' });
+      else if (this.roadSpot === 'behind' && this.callT === null) {
+        this.showHint('road', '落在【车尾】了！不跳会被甩出去', { dur: 4, sub: '在车尾起跳，卡车会喷尾气：跳得慢、看不清', warn: true, again: true });
+      }
+    }
+    if (this.roadSpot === 'ahead' && s >= ts - t.ry - 70 && !this.aim) this.runToTruck(t, f.x, f.y, false);
+  }
+
+  /** Pressing to jump off the road behind a truck: it blows a cloud of exhaust over the frog. */
+  private exhaust() {
+    const f = this.frog;
+    if (this.puffed || this.callT !== null || this.roadSpot !== 'behind' || f.on?.kind !== 'bank') return;
+    this.puffed = true;
+    const t = this.lv.trucks[f.on.side];
+    const dir = t.side === 0 ? 1 : -1;
+    const px = t.x + dir * 40, py = t.y + t.ry - 6;
+    // a few big belches, billowing out behind and toward the river
+    for (let i = 0; i < 20; i++) {
+      const a = Math.PI / 2 - dir * (Math.random() * 1.1 - 0.15);
+      const v = 70 + Math.random() * 190;
+      this.puffs.push({
+        x: px + (Math.random() - 0.5) * 24, y: py, t: -Math.floor(i / 5) * 0.22 - Math.random() * 0.08, dur: SMOG_T + Math.random() * 0.8,
+        vx: Math.cos(a) * v, vy: Math.sin(a) * v, r: 30 + Math.random() * 45,
+      });
+    }
+    this.smogT = SMOG_T;
+    const au = this.game.audio;
+    au.play('truck_speedup', { volume: 0.9, rate: 0.8 });
+    au.play('frog_croak', { volume: 0.5, rate: 0.7, delay: 0.3 });
+    this.game.platform.vibrate(40);
   }
 
   private land(x: number, y: number) {
@@ -448,28 +622,266 @@ export class PlayScene implements Scene {
     f.swimT = 0;
     this.slowT = 0;
     this.stats.falls++;
-    const wet = this.bag.splice(0);
-    wet.forEach((o, i) => {
-      o.state = 'wet';
-      this.fx.push({ kind: 'floatBox', x: x + (i - (wet.length - 1) / 2) * 34, y: y + 10, t: 0, dur: 3.2, size: o.size, urgent: o.urgent });
+    // the satchel spills: each parcel bobs off on its own and can still be fished out
+    const spilled = this.bag.splice(0);
+    const n = spilled.length;
+    spilled.forEach((o, i) => {
+      o.state = 'float';
+      const side = i - (n - 1) / 2;
+      // flung out of the satchel, ahead and to the sides
+      const a = -Math.PI / 2 + (n > 1 ? side / ((n - 1) / 2) : Math.random() - 0.5) * 0.9;
+      const v = 190 + Math.random() * 60;
+      this.floaters.push({ o, x: x + side * 30, y: y + 6, t: 0, spin: Math.random() * 6, vx: Math.cos(a) * v, vy: Math.sin(a) * v });
     });
     this.fx.push({ kind: 'splash', x, y, t: 0, dur: 0.7 });
     this.fx.push({ kind: 'ripple', x, y, t: 0, dur: 1, size: 70 });
+    this.fx.push({ kind: 'drops', x, y, t: 0, dur: 0.7, size: 1, seed: Math.random() * 100 });
     const au = this.game.audio;
     au.play('splash');
-    if (wet.length) au.play('parcel_soaked', { delay: 0.35 });
+    if (n) au.play('bag_open', { volume: 0.6, delay: 0.15 });
     au.duck(true);
     this.bubbles?.stop();
     this.bubbles = au.loop('swim_bubbles', { volume: 0.5, fadeIn: 0.6 });
     this.game.platform.vibrate(70);
     this.queueShot('splash', `扑通！第${this.stats.falls}次落水`, this.stats.falls === 1 ? 8 : 6, 0.28);
-    this.showHint('swim', '掉水里了！【快速连点屏幕】', { dur: 6, sub: '游到最近的荷叶或岸边', warn: true, again: true });
-    if (wet.length) this.showToast(`${wet.length} 个包裹泡水了……`);
+    if (n && !this.game.save.tips.rescue && this.step !== 'intro') {
+      // first time: once the parcels have spread out, stop the river and show how to get them back
+      this.lessonAt = this.time + 0.7;
+    } else if (n) {
+      this.showHint('rescue', '包裹掉水里了！【点包裹】捞回来', { dur: 4, sub: '连续点屏幕，也能游过去捡', warn: true, again: true });
+    } else this.swimHint();
   }
 
-  private swimStroke() {
+  private swimHint() {
+    this.showHint('swim', '掉水里了！【连续点屏幕】游回去', { dur: 5, sub: '靠近荷叶或岸边时再点，就能跳上去', warn: true, again: true });
+  }
+
+  private endRescueLesson() {
+    this.game.save.tips.rescue = true;
+    this.game.writeSave();
+    this.setStep(this.stepBefore);
+    this.stepBefore = null;
+  }
+
+  /** Floating parcels drift with the current a little faster than the frog, then sink. */
+  private updateFloaters(dt: number) {
+    if (this.lessonAt !== null && this.time >= this.lessonAt) {
+      this.lessonAt = null;
+      if (this.floaters.length) {
+        this.stepBefore = this.step;
+        this.setStep('rescue');
+        this.aim = null;
+        this.stopCharge();
+        this.hint = null;
+      }
+    }
+    if (this.step === 'rescue') {
+      if (!this.floaters.length) this.endRescueLesson();
+      return;
+    }
     const f = this.frog;
-    const tgt = this.nearestRefuge();
+    for (const fl of this.floaters) {
+      if (this.tongue?.fl === fl) continue;
+      fl.t += dt;
+      const d = Math.exp(-1.8 * dt);
+      fl.vx *= d;
+      fl.vy *= d;
+      fl.x = clamp(fl.x + fl.vx * dt, TUNING.riverL + 24, TUNING.riverR - 24);
+      fl.y += (fl.vy + TUNING.current * 1.3) * dt;
+    }
+    for (const fl of [...this.floaters]) {
+      if (this.tongue?.fl === fl || this.tongueQ.includes(fl)) continue;
+      if (f.state === 'swim' && fl.t > 0.6 && Math.hypot(fl.x - f.x, fl.y - f.y) < GRAB_R) this.catchParcel(fl);
+      else if (fl.t >= FLOAT_T || this.sy(fl.y) > this.H - 20) this.loseParcel(fl);
+    }
+  }
+
+  private catchParcel(fl: Floater) {
+    const f = this.frog;
+    const o = fl.o;
+    this.floaters = this.floaters.filter((x) => x !== fl);
+    this.fx.push({ kind: 'drops', x: fl.x, y: fl.y, t: 0, dur: 0.5, size: 0.6, seed: Math.random() * 100 });
+    const au = this.game.audio;
+    if (o.house.passed) {
+      o.state = 'missed';
+      this.showToast(`取件码 ${o.code} 的包裹没赶上`);
+    } else {
+      o.state = 'bag';
+      this.bag.push(o);
+      f.swingV += 6;
+      this.popups.push({ text: '捞回来了！', x: f.x, y: f.y - 70, t: 0, color: P.blue });
+      au.play('parcel_pickup');
+    }
+    if (!this.floaters.length) {
+      this.doneHint('rescue');
+      if (f.state === 'swim') this.swimHint();
+    }
+  }
+
+  private loseParcel(fl: Floater) {
+    this.floaters = this.floaters.filter((x) => x !== fl);
+    fl.o.state = 'wet';
+    this.fx.push({ kind: 'sink', x: fl.x, y: fl.y, t: 0, dur: 1, size: fl.o.size, urgent: fl.o.urgent });
+    this.fx.push({ kind: 'ripple', x: fl.x, y: fl.y + 6, t: 0, dur: 0.9, size: 44 });
+    this.game.audio.play('parcel_soaked');
+    this.showToast(`取件码 ${fl.o.code} 的包裹沉下去了……`);
+    if (!this.floaters.length) {
+      this.doneHint('rescue');
+      if (this.frog.state === 'swim') this.swimHint();
+    }
+  }
+
+  /** The floating parcel under a screen point, if any. */
+  private floaterAt(x: number, y: number): Floater | null {
+    let best: Floater | null = null;
+    let bestD = 66;
+    for (const fl of this.floaters) {
+      const d = Math.hypot(fl.x - x, this.sy(fl.y) - 8 - y);
+      if (d < bestD) {
+        bestD = d;
+        best = fl;
+      }
+    }
+    return best;
+  }
+
+  /** A tap on a floating parcel: the tongue fetches it if it's in reach, otherwise swim for it. */
+  private tapFloater(fl: Floater) {
+    const f = this.frog;
+    if (Math.hypot(fl.x - f.x, fl.y - f.y) <= TONGUE_R && f.state !== 'jump' && f.state !== 'board') this.lick(fl);
+    else if (f.state === 'swim') this.swimStroke(fl);
+    else this.showToast('太远了，舌头够不着');
+  }
+
+  /** One parcel at a time; any others tapped meanwhile wait their turn. */
+  private lick(fl: Floater) {
+    if (this.tongue?.fl === fl || this.tongueQ.includes(fl)) return;
+    if (this.tongue) {
+      this.tongueQ.push(fl);
+      return;
+    }
+    this.tongue = { fl, t: 0 };
+    this.frog.giveDir = fl.x < this.frog.x ? -1 : 1;
+    this.game.audio.play('jump_release', { rate: 1.9, volume: 0.6 });
+  }
+
+  private updateTongue(dt: number) {
+    const tg = this.tongue;
+    if (!tg) return;
+    tg.t += dt;
+    if (tg.t < TONGUE_OUT + TONGUE_IN) return;
+    this.tongue = null;
+    this.catchParcel(tg.fl);
+    this.game.audio.play('frog_croak', { volume: 0.4, rate: 1.3 });
+    while (this.tongueQ.length) {
+      const next = this.tongueQ.shift()!;
+      if (this.floaters.includes(next)) {
+        this.lick(next);
+        break;
+      }
+    }
+  }
+
+  /** Where the tongue starts, in world coordinates. */
+  private mouth(): [number, number] {
+    const f = this.frog;
+    if (f.state === 'swim') return [f.x, f.y - 20];
+    return [f.x + f.giveDir * 4, f.y - f.z - 58];
+  }
+
+  /** Tongue tip and the parcel it holds while reeling in, in world coordinates. */
+  private tongueTip(): [number, number] | null {
+    const tg = this.tongue;
+    if (!tg) return null;
+    const [mx, my] = this.mouth();
+    if (tg.t < TONGUE_OUT) {
+      const k = easeOutCubic(tg.t / TONGUE_OUT);
+      return [lerp(mx, tg.fl.x, k), lerp(my, tg.fl.y - 10, k)];
+    }
+    const k = clamp((tg.t - TONGUE_OUT) / TONGUE_IN, 0, 1);
+    return [lerp(tg.fl.x, mx, k * k), lerp(tg.fl.y - 10, my, k * k)];
+  }
+
+  /** Mashing in the water: go for the nearest parcel first, then for safety, leaping out when close. */
+  private swimTap() {
+    const f = this.frog;
+    const fl = this.nearestFloater();
+    const out = this.leapTarget();
+    const danger = this.sy(f.y) > this.H * TUNING.warnLine - 80;
+    if (out && (!fl || danger) && f.swimT > 0.2) this.leapOut(out);
+    else this.swimStroke(fl ?? this.nearestRefuge());
+  }
+
+  private nearestFloater(): Floater | null {
+    const f = this.frog;
+    let best: Floater | null = null;
+    let bestD = Infinity;
+    for (const fl of this.floaters) {
+      if (this.tongue?.fl === fl || this.tongueQ.includes(fl)) continue;
+      const d = Math.hypot(fl.x - f.x, fl.y - f.y);
+      if (d < bestD) {
+        bestD = d;
+        best = fl;
+      }
+    }
+    return best;
+  }
+
+  /** A pad, house or bank close enough to spring onto from the water. */
+  private leapTarget(): Plat | null {
+    const f = this.frog;
+    let best: Plat | null = null;
+    let bestD = LEAP_R;
+    for (const p of this.lv.plats) {
+      if (Math.abs(p.y - f.y) > 320) continue;
+      const s = this.sy(p.y);
+      if (s < this.game.safeT + 130 || s > this.H - 30) continue;
+      const d = Math.hypot(p.x - f.x, (p.y - f.y) * 1.25) - p.rx * 0.8;
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    const dl = f.x - TUNING.riverL, dr = TUNING.riverR - f.x;
+    if (Math.min(dl, dr) < bestD) return this.lv.banks[dl <= dr ? 0 : 1];
+    return best;
+  }
+
+  /** Springs out of the water onto `p`, the end of every swim. */
+  private leapOut(p: Plat) {
+    const f = this.frog;
+    let x1: number, y1: number;
+    if (p.kind === 'bank') {
+      x1 = p.side === 0 ? TUNING.riverL - 40 : TUNING.riverR + 40;
+      y1 = f.y - 40;
+    } else if (p.kind === 'house') {
+      x1 = p.x + p.house!.porch.x;
+      y1 = p.y + p.house!.porch.y;
+    } else if (p.kind === 'truck') {
+      x1 = p.x + (p.side === 0 ? 1 : -1) * TUNING.truckSpotX[1];
+      y1 = p.y + 40;
+    } else {
+      x1 = lerp(f.x, p.x, 0.8);
+      y1 = lerp(f.y, p.y, 0.8);
+    }
+    const dist = Math.hypot(x1 - f.x, y1 - f.y);
+    f.state = 'jump';
+    f.on = null;
+    f.jump = { x0: f.x, y0: f.y, x1, y1, t: 0, T: 0.3 + dist / 1100, H: 50 + dist * 0.22, dist, to: p, how: 'climb' };
+    this.bubbles?.stop(0.2);
+    this.bubbles = null;
+    const au = this.game.audio;
+    au.duck(false);
+    au.play('swim_climb');
+    au.play('jump_whoosh', { volume: 0.5 });
+    this.fx.push({ kind: 'splash', x: f.x, y: f.y, t: 0, dur: 0.5 });
+    this.fx.push({ kind: 'drops', x: f.x, y: f.y, t: 0, dur: 0.6, size: 0.8, seed: Math.random() * 100 });
+    this.fx.push({ kind: 'ripple', x: f.x, y: f.y + 4, t: 0, dur: 0.8, size: 60 });
+    this.doneHint('swim');
+  }
+
+  private swimStroke(tgt: { x: number; y: number }) {
+    const f = this.frog;
     const dx = tgt.x - f.x, dy = tgt.y - f.y;
     const d = Math.hypot(dx, dy) || 1;
     f.vx += (dx / d) * TUNING.swimImpulse;
@@ -481,6 +893,7 @@ export class PlayScene implements Scene {
     }
     f.strokeT = 0;
     this.fx.push({ kind: 'ripple', x: f.x, y: f.y + 4, t: 0, dur: 0.6, size: 46 });
+    this.fx.push({ kind: 'drops', x: f.x, y: f.y, t: 0, dur: 0.4, size: 0.35, seed: Math.random() * 100 });
     this.game.audio.play('swim_stroke', { jitter: true });
   }
 
@@ -511,8 +924,18 @@ export class PlayScene implements Scene {
     const power = clamp(len / TUNING.maxDrag, 0, 1);
     const ux = -dx / len, uy = -dy / len;
     const dist = this.jumpDist(power, ux, uy);
-    f.jump = { x0: f.x, y0: f.y, x1: f.x + ux * dist, y1: f.y + uy * dist, t: 0, T: 0.34 + dist / 1000, H: 36 + dist * 0.3, dist };
+    // coughing in exhaust, the frog jumps in slow motion
+    const T = (0.34 + dist / 1000) * (this.smogT > 0 ? SMOG_SLOW : 1);
+    f.jump = { x0: f.x, y0: f.y, x1: f.x + ux * dist, y1: f.y + uy * dist, t: 0, T, H: 36 + dist * 0.3, dist };
     if (this.step === 'aim') this.setStep('go');
+    // the push-off shoves the pad down and away
+    const from = f.on;
+    if (from && (from.kind === 'lily' || from.kind === 'log')) {
+      from.bobT = 0;
+      from.press = (0.3 + power * 0.5) * (from.kind === 'log' ? 0.5 : 1);
+      from.tilt = -ux;
+      this.fx.push({ kind: 'ripple', x: from.x, y: from.y + 6, t: 0, dur: 0.6, size: from.rx });
+    } else if (from) this.fx.push({ kind: 'dust', x: f.x, y: f.y, t: 0, dur: 0.4, size: 0.5 + power * 0.5 });
     f.state = 'jump';
     f.on = null;
     f.settle = null;
@@ -549,7 +972,7 @@ export class PlayScene implements Scene {
         if (o.house !== h || (o.state !== 'pool' && o.state !== 'bag')) continue;
         if (o.state === 'bag') {
           this.bag = this.bag.filter((b) => b !== o);
-          this.showToast(`${h.num}号的包裹没赶上`);
+          this.showToast(`取件码 ${o.code} 的包裹没赶上`);
         }
         o.state = 'missed';
       }
@@ -568,10 +991,12 @@ export class PlayScene implements Scene {
 
   private checkDanger(dt: number) {
     const f = this.frog;
-    const onTruck = f.state === 'stand' && f.on?.kind === 'truck';
+    const onTruck = (f.state === 'stand' && f.on?.kind === 'truck') || f.state === 'board';
     const s = this.sy(f.y);
     if (f.state !== 'jump' && !onTruck && s > this.H + 36) {
-      this.endDay('thrown');
+      // with the round already done, the waiting truck just reels the frog back in
+      if (this.callT !== null) this.yank();
+      else this.endDay('thrown');
       return;
     }
     const inWarn = f.state !== 'jump' && !onTruck && s > this.H * TUNING.warnLine;
@@ -593,28 +1018,96 @@ export class PlayScene implements Scene {
   }
 
   private tutorial() {
-    if (this.step === 'intro' || this.banner) return;
+    if (this.step === 'intro' || this.step === 'rescue' || this.banner) return;
     const f = this.frog;
     const onTruck = f.state === 'stand' && f.on?.kind === 'truck';
-    const goal = this.bag[0]?.house;
+    const goal = this.bag[0];
     if (this.step === 'go' && goal && f.state === 'stand') {
-      this.showHint('go', ['跳到 ', plateSeg(goal), ' 号房子，送出包裹'], { dur: 5, sub: '河水一直在流，别落到红线下面' });
+      this.showHint('go', ['跳到挂着 ', codeSeg(goal), ' 的房子，送出包裹'], { dur: 5, sub: '河水一直在流，别落到红线下面' });
     }
     if (this.step === 'refill' && f.state === 'stand') this.showHint('refill', '送到了！跳回【运输车】取下一个', { dur: 5 });
     if (onTruck && this.poolCards().some((c) => c.order.urgent)) this.showHint('urgent', '【红标签】是加急件，倒计时内送到有奖金', { dur: 5 });
     if (onTruck && this.poolCards().some((c) => c.order.size === 2)) this.showHint('heavy', '【大件】很重，背着它跳不远', { dur: 5 });
-    if (!onTruck && !this.bag.length && !this.lv.orders.some((o) => o.state === 'pool')) {
-      this.showHint('last', '全部送完了！跳回【运输车】就能下班', { dur: 6 });
+  }
+
+  /** Everything is handed out: the trucks wait a while for the frog, honk, then reel it in. */
+  private updateCall(dt: number) {
+    const f = this.frog;
+    const aboard = (f.state === 'stand' && f.on?.kind === 'truck') || f.state === 'board';
+    if (this.callT === null) {
+      if (this.step === 'intro' || this.step === 'rescue' || aboard) return;
+      if (this.bag.length || this.floaters.length || this.tongue || this.lv.orders.some((o) => o.state === 'pool')) return;
+      this.callT = CALL_T;
+      this.lastHonk = CALL_T;
+      this.hint = null;
+      this.showHint('call', `全部送完！【${CALL_T}秒内】跳回运输车下班`, { dur: 6, sub: '时间到会被拽上车；不着急的话，去车后面的路上逛逛' });
+      this.spawnEgg();
+      this.game.audio.play('truck_horn', { volume: 0.6 });
+      return;
     }
+    if (aboard) return;
+    this.callT = Math.max(0, this.callT - dt);
+    const left = Math.ceil(this.callT);
+    if (left < this.lastHonk) {
+      this.lastHonk = left;
+      const au = this.game.audio;
+      if (left >= 1 && left <= 3) {
+        au.play('truck_horn', { rate: 1 + (3 - left) * 0.06 });
+        this.honkT = 0.5;
+        this.game.platform.vibrate(30);
+      } else if (left >= 1 && left <= 6) au.play('ui_tick', { volume: 0.5 });
+    }
+    // a frog in mid-air gets to land first
+    if (this.callT <= 0 && (f.state === 'stand' || f.state === 'swim')) this.yank();
+  }
+
+  /** Time's up (or swept away while the truck waits): the nearest truck hauls the frog aboard. */
+  private yank() {
+    const f = this.frog;
+    if (f.state === 'board') return;
+    const [a, b] = this.lv.trucks;
+    const d = (t: Plat) => Math.hypot(t.x - f.x, t.y - f.y);
+    const t = d(a) <= d(b) ? a : b;
+    if (f.state === 'swim') {
+      this.bubbles?.stop(0.2);
+      this.bubbles = null;
+      this.game.audio.duck(false);
+      this.fx.push({ kind: 'splash', x: f.x, y: f.y, t: 0, dur: 0.5 });
+    }
+    this.hint = null;
+    this.showToast('时间到！被运输车一把拽了回去');
+    this.queueShot('yank', '被拽回车上！', 6, 0.35);
+    this.runToTruck(t, f.x, f.y, true);
+  }
+
+  /** A lost letter lying on the road behind the right-hand truck, for whoever goes looking. */
+  private spawnEgg() {
+    if (this.egg) return;
+    const t = this.lv.trucks[1];
+    this.egg = { x: 692, y: t.y + TUNING.truckHalfH + 110, got: false };
+  }
+
+  private checkEgg() {
+    const e = this.egg, f = this.frog;
+    if (!e || e.got || f.state !== 'stand' || f.on?.kind !== 'bank') return;
+    if (Math.hypot(f.x - e.x, f.y - e.y) > 90) return;
+    e.got = true;
+    this.hint = null;
+    this.showHint('egg', '捡到一封【遗失的信】！', { dur: 5, sub: pick(LETTERS, Math.random) });
+    this.queueShot('egg', '捡到一封遗失的信！', 8, 0.1);
+    this.popups.push({ text: '发现彩蛋！', x: e.x - 60, y: e.y - 60, t: 0, color: P.orangeDeep });
+    this.game.audio.play('paper_flip');
+    this.game.audio.play('coin', { delay: 0.2, volume: 0.7 });
   }
 
   /** Nothing left on the trucks or in the bag: landing on a truck ends the day early. */
   private checkOffwork() {
     const f = this.frog;
     if (f.state !== 'stand' || f.on?.kind !== 'truck' || f.settle || this.step === 'intro') return;
-    if (this.bag.length || this.lv.orders.some((o) => o.state === 'pool')) return;
+    if (this.bag.length || this.floaters.length || this.tongue || this.lv.orders.some((o) => o.state === 'pool')) return;
     const t = f.on;
     this.ended = 'off';
+    this.callT = null;
     this.aim = null;
     this.stopCharge();
     this.hint = null;
@@ -678,7 +1171,10 @@ export class PlayScene implements Scene {
   private finish() {
     if (!this.ended || this.leaving) return;
     this.leaving = true;
-    for (const o of this.lv.orders) if (o.state === 'pool' || o.state === 'bag') o.state = 'missed';
+    for (const o of this.lv.orders) {
+      if (o.state === 'pool' || o.state === 'bag') o.state = 'missed';
+      else if (o.state === 'float') o.state = 'wet';
+    }
     const orders = this.lv.orders;
     const count = (s: Order['state']) => orders.filter((o) => o.state === s).length;
     const delivered = orders.filter((o) => o.state === 'delivered');
@@ -733,6 +1229,15 @@ export class PlayScene implements Scene {
     if (o.urgent) this.game.audio.play('urgent_alert', { delay: 0.25 });
     const c = this.cards.find((c) => c.order === o);
     if (c) this.fx.push({ kind: 'fly', x: c.rect.x + c.rect.w / 2, y: c.rect.y + c.rect.h / 2, x2: 74, y2: this.trayY(), t: 0, dur: 0.35, size: o.size });
+    // off the cargo stack and into the frog's satchel
+    const f = this.frog;
+    const t = f.on;
+    if (t?.kind === 'truck') {
+      const dir = t.side === 0 ? 1 : -1;
+      this.fx.push({ kind: 'arc', x: t.x + dir * 40 * K, y: t.y + 100 * K, x2: f.x + 26 * dir, y2: f.y - 36, t: 0, dur: 0.3, size: o.size, urgent: o.urgent });
+      this.fx.push({ kind: 'dust', x: f.x + 26 * dir, y: f.y - 20, t: -0.3, dur: 0.35, size: 0.4 });
+    }
+    f.swingV += 4;
     this.game.audio.play('parcel_pickup');
     if (this.step === 'pick') {
       this.setStep('aim');
@@ -743,28 +1248,36 @@ export class PlayScene implements Scene {
   private deliver(o: Order, h: House) {
     this.bag = this.bag.filter((b) => b !== o);
     o.deliveredTo = h;
+    const f = this.frog;
     const rx = h.plat.x + h.resident.x, ry = h.plat.y + h.resident.y;
-    const c = this.cards.find((c) => c.order === o);
-    if (c) this.fx.push({ kind: 'fly', x: c.rect.x + c.rect.w / 2, y: c.rect.y + c.rect.h / 2, x2: rx, y2: this.sy(ry) - 30, t: 0, dur: 0.35, size: o.size });
+    // The frog leans in and tosses it over; the resident catches it and holds it up.
+    const T = 0.34;
+    f.give = 1;
+    f.giveDir = rx < f.x ? -1 : 1;
+    f.swingV += 5;
+    this.fx.push({ kind: 'arc', x: f.x + f.giveDir * 24, y: f.y - 44, x2: rx, y2: ry - 64, t: 0, dur: T, size: o.size, urgent: o.urgent });
+    h.hold = { size: o.size, urgent: o.urgent, wrong: o.house !== h, t: -T };
+    const au = this.game.audio;
+    au.play('jump_whoosh', { volume: 0.35, rate: 1.5 });
+    au.play('parcel_place', { delay: T });
     if (o.house === h) {
       o.state = 'delivered';
-      h.react = { kind: 'happy', t: 0 };
+      h.react = { kind: 'happy', t: -T };
       const amount = SIZE_INFO[o.size].pay + (o.urgent && !o.late ? TUNING.urgentBonus : 0);
-      this.popups.push({ text: `+${amount}`, x: rx, y: ry - 70, t: 0, color: P.lilyDeep });
-      this.fx.push({ kind: 'heart', x: rx, y: ry - 60, t: 0, dur: 1.1 });
-      this.game.audio.play('parcel_place');
-      this.game.audio.play('deliver_happy', { delay: 0.12 });
-      this.game.audio.play('coin', { delay: 0.35, volume: 0.8 });
+      this.popups.push({ text: `+${amount}`, x: rx, y: ry - 120, t: -T - 0.1, color: P.lilyDeep });
+      this.fx.push({ kind: 'heart', x: rx, y: ry - 110, t: -T, dur: 1.1 });
+      this.fx.push({ kind: 'coins', x: rx, y: ry - 90, t: -T - 0.05, dur: 0.9, seed: Math.random() * 100 });
+      au.play('deliver_happy', { delay: T + 0.1 });
+      au.play('coin', { delay: T + 0.3, volume: 0.8 });
       const n = this.lv.orders.filter((x) => x.state === 'delivered').length;
-      if (n === 1) this.queueShot('first', '第一单送达！', 4, 0.3);
-      if (o.urgent && !o.late) this.queueShot('urgent', '加急件准时送达！', 5, 0.3);
+      if (n === 1) this.queueShot('first', '第一单送达！', 4, T + 0.3);
+      if (o.urgent && !o.late) this.queueShot('urgent', '加急件准时送达！', 5, T + 0.3);
     } else {
       // Not blocked: the review at HQ catches it. The resident just looks puzzled.
       o.state = 'wrong';
-      h.react = { kind: 'confused', t: 0 };
-      this.game.audio.play('parcel_place');
-      this.game.audio.play('deliver_confused', { delay: 0.15 });
-      this.queueShot('wrong', `${h.name}：这是我的吗？`, 7, 0.5);
+      h.react = { kind: 'confused', t: -T };
+      au.play('deliver_confused', { delay: T + 0.15 });
+      this.queueShot('wrong', `${h.name}：这是我的吗？`, 7, T + 0.5);
     }
     const more = this.lv.orders.some((x) => x.state === 'pool');
     if (this.step === 'deliver') this.setStep(!this.bag.length && more ? 'refill' : null);
@@ -793,6 +1306,15 @@ export class PlayScene implements Scene {
       this.game.audio.play('ui_open');
       return;
     }
+    const fl = this.floaterAt(x, y);
+    if (this.step === 'rescue') {
+      // the lesson only lets go once a parcel is tapped
+      if (fl) {
+        this.endRescueLesson();
+        this.tapFloater(fl);
+      }
+      return;
+    }
     for (const c of this.cards) {
       if (!hit(c.rect, x, y, 4)) continue;
       if (this.trayMode === 'pickup') this.pickup(c.order);
@@ -802,11 +1324,18 @@ export class PlayScene implements Scene {
     // while a card is spotlighted, only the cards respond
     if (this.step === 'pick' || this.step === 'deliver') return;
     const f = this.frog;
-    if (f.state === 'swim') {
-      this.swimStroke();
+    if (fl && (f.state === 'swim' || f.state === 'stand')) {
+      this.tapFloater(fl);
       return;
     }
-    if (f.state === 'stand' && !this.aim) this.aim = { id, sx: x, sy: y, x, y, t: 0 };
+    if (f.state === 'swim') {
+      this.swimTap();
+      return;
+    }
+    if (f.state === 'stand' && !this.aim) {
+      this.aim = { id, sx: x, sy: y, x, y, t: 0 };
+      this.exhaust();
+    }
   }
 
   move(x: number, y: number, id: number) {
@@ -870,8 +1399,9 @@ export class PlayScene implements Scene {
   }
 
   private stopCharge() {
-    this.charge?.stop(0.05);
-    this.charge = null;
+    this.hum?.stop();
+    this.hum = null;
+    this.notch = 0;
   }
 
   private stopLoops() {
@@ -895,13 +1425,17 @@ export class PlayScene implements Scene {
       au.duck(true);
     }
     if (this.aim && this.frog.state === 'stand') {
+      // 跳一跳-style charge: a hum that rises with the pull, plus a click per notch
       const p = this.aimPower();
-      if (!this.charge && p > 0.08 && !this.chargeMax) this.charge = au.loop('jump_charge', { once: true, volume: 0.8 });
-      this.charge?.setRate(0.9 + 0.25 * p);
+      if (!this.hum && p > 0.05) this.hum = au.tone(0.06);
+      this.hum?.setPitch(220 * Math.pow(3, p));
+      const notch = Math.floor(p * 8 + 0.001);
+      if (notch > this.notch) au.play('ui_tick', { rate: 0.8 + notch * 0.12, volume: 0.55 });
+      this.notch = notch;
       if (p >= 0.99 && !this.chargeMax) {
         this.chargeMax = true;
         au.play('jump_charge_max', { volume: 0.8 });
-      }
+      } else if (p < 0.95) this.chargeMax = false;
       if (!this.predicted && this.aim.t >= this.cfg.predictDelay && p > 0.1) {
         this.predicted = true;
         au.play('aim_predict', { volume: 0.6 });
@@ -1019,7 +1553,9 @@ export class PlayScene implements Scene {
       ctx.fillRect(0, 0, 750, H);
     }
     ctx.save();
-    ctx.translate(this.camX, this.panY);
+    // a hard landing gives the camera a little knock
+    const sh = this.shakeT > 0 ? (this.shakeT / 0.22) * 7 : 0;
+    ctx.translate(this.camX + (sh ? Math.sin(this.time * 90) * sh : 0), this.panY + (sh ? Math.cos(this.time * 77) * sh * 0.6 : 0));
     // River background tiles
     const top = this.camY - this.panY;
     for (let k = Math.floor(top / TILE); k * TILE - top < H; k++) {
@@ -1033,6 +1569,7 @@ export class PlayScene implements Scene {
       ctx.save();
       ctx.globalAlpha = hudA;
       this.drawAim(ctx);
+      this.drawPullHandle(ctx);
       this.drawWarn(ctx);
       this.drawHud(ctx);
       ctx.restore();
@@ -1071,13 +1608,18 @@ export class PlayScene implements Scene {
     }
     for (const t of this.lv.trucks) items.push({ y: t.y, draw: () => this.drawTruck(ctx, t) });
     // Effects that sit on the water go first.
-    for (const e of this.fx) if (e.kind === 'ripple' || e.kind === 'floatBox') items.push({ y: e.y - 40, draw: () => this.drawFx(ctx, e) });
-    if (f.state !== 'jump') {
+    for (const e of this.fx) if (e.t >= 0 && (e.kind === 'ripple' || e.kind === 'floatBox' || e.kind === 'sink')) items.push({ y: e.y - 40, draw: () => this.drawFx(ctx, e) });
+    const egg = this.egg;
+    if (egg && !egg.got) items.push({ y: egg.y - 20, draw: () => this.drawEgg(ctx, egg.x, this.sy(egg.y)) });
+    const flying = f.state === 'jump' || f.state === 'board';
+    if (!flying) {
       const key = f.state === 'stand' && f.on ? (f.on.kind === 'bank' ? f.y : f.on.y + 0.5 + (f.on.kind === 'house' ? 40 : 0)) : f.y;
       items.push({ y: key, draw: () => this.drawFrog(ctx) });
     }
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.draw();
+    // parcels adrift stay on top so they're never lost behind a pad
+    for (const fl of this.floaters) this.drawFloater(ctx, fl);
     // Target markers for tutorial days
     if (this.cfg.markTargets) {
       for (const h of this.lv.houses) {
@@ -1098,8 +1640,8 @@ export class PlayScene implements Scene {
         ctx.restore();
       }
     }
-    // Back-to-the-truck arrows while the tutorial asks for a refill
-    if (this.step === 'refill') {
+    // Back-to-the-truck arrows while the tutorial asks for a refill, or the trucks are waiting
+    if (this.step === 'refill' || (this.callT !== null && f.state !== 'board' && !this.off)) {
       for (const t of this.lv.trucks) {
         const dir = t.side === 0 ? -1 : 1;
         const x = t.x - dir * (120 + Math.abs(Math.sin(this.time * 5)) * 14), y = this.sy(t.y) + 30;
@@ -1123,37 +1665,114 @@ export class PlayScene implements Scene {
         ctx.restore();
       }
     }
-    if (f.state === 'jump') this.drawFrog(ctx);
-    for (const e of this.fx) if (e.kind !== 'ripple' && e.kind !== 'floatBox' && e.kind !== 'fly') this.drawFx(ctx, e);
+    if (flying) this.drawFrog(ctx);
+    if (f.board?.yank) this.drawRope(ctx, f.board.truck);
+    this.drawTongue(ctx);
+    for (const e of this.fx) if (e.t >= 0 && e.kind !== 'ripple' && e.kind !== 'floatBox' && e.kind !== 'sink' && e.kind !== 'fly') this.drawFx(ctx, e);
     for (const p of this.popups) {
+      if (p.t < 0) continue;
       const k = p.t / 1.2;
       text(ctx, p.text, p.x, this.sy(p.y) - 40 * easeOutCubic(k), 34, { color: p.color, bold: true, alpha: 1 - k * k });
     }
+    this.drawPuffs(ctx);
+  }
+
+  /** Exhaust clouds: thick enough to hide the road and the frog under them. */
+  private drawPuffs(ctx: Ctx) {
+    if (!this.puffs.length) return;
+    ctx.save();
+    for (const p of this.puffs) {
+      if (p.t < 0) continue;
+      const k = p.t / p.dur;
+      const a = (k < 0.08 ? k / 0.08 : k > 0.7 ? (1 - k) / 0.3 : 1) * 0.9;
+      const r = p.r * (0.45 + easeOutCubic(Math.min(1, k * 2.2)) * 0.95);
+      const x = p.x, y = this.sy(p.y);
+      ctx.globalAlpha = a;
+      ellipse(ctx, x, y, r, r * 0.86);
+      ctx.fillStyle = '#3E3733';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(36,28,22,0.6)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ellipse(ctx, x - r * 0.25, y - r * 0.28, r * 0.55, r * 0.45);
+      ctx.fillStyle = '#5A514B';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** Damped wobble after a landing (positive = pushed down); a pad also sinks under a charging frog. */
+  private wobble(p: Plat) {
+    const t = p.bobT;
+    const w = t < 1.5 ? Math.exp(-4.5 * t) * Math.cos(15 * t) * p.press : 0;
+    const f = this.frog;
+    const load = f.state === 'stand' && f.on === p && this.aim ? this.aimPower() * 0.4 : 0;
+    return w + load;
+  }
+
+  /** How far the frog standing on `p` sinks with it. */
+  private padSink(p: Plat | null) {
+    if (!p) return 0;
+    const a = this.wobble(p);
+    return p.kind === 'lily' ? a * 7 : p.kind === 'log' ? a * 3 : p.kind === 'house' ? a * 2.5 : 0;
   }
 
   private drawPlat(ctx: Ctx, p: Plat) {
     const sp = this.game.sprites;
     const x = p.x, y = this.sy(p.y);
-    const bob = p.bobT < 1 ? springOut(p.bobT / 0.9, 1.5) : 0;
+    const a = this.wobble(p);
+    const dy = this.padSink(p);
+    const w = p.bobT < 1.5 ? Math.exp(-4.5 * p.bobT) * Math.sin(15 * p.bobT) : 0;
     if (p.kind === 'lily') {
       const s = p.rx / (100 * K);
-      sp.draw(ctx, `lily${p.variant}`, x, y + bob * 4, s * (1 + bob * 0.03), s * (1 - bob * 0.06));
+      // squashes flat, then springs back, tipping toward where the frog came down
+      sp.draw(ctx, `lily${p.variant}`, x, y + dy, s * (1 + a * 0.05), s * (1 - a * 0.12), p.tilt * w * p.press * 0.12);
     } else if (p.kind === 'log') {
-      sp.draw(ctx, 'log', x, y + bob * 3, 1, 1, p.rot);
+      // a log barely sinks, it rocks
+      sp.draw(ctx, 'log', x, y + dy, 1, 1 - a * 0.04, p.rot + p.tilt * w * p.press * 0.08);
     } else if (p.kind === 'house') {
       const h = p.house!;
-      sp.draw(ctx, `house_${h.type}`, x, y + bob * 2);
-      this.drawResident(ctx, h, x, y);
-      // number plate on a post
-      const px = x + h.plateAt.x, py = y + h.plateAt.y;
-      ctx.strokeStyle = P.woodDeep;
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(px, py + 8);
-      ctx.lineTo(px, py + 30);
-      ctx.stroke();
-      plate(ctx, px, py, h.num, h.color, 1.1);
+      sp.draw(ctx, `house_${h.type}`, x, y + dy);
+      this.drawResident(ctx, h, x, y + dy);
+      this.drawCodeSign(ctx, h, x + h.plateAt.x, y + dy + h.plateAt.y);
     }
+  }
+
+  /** A post by the door with the pickup codes this house is still waiting for. */
+  private drawCodeSign(ctx: Ctx, h: House, px: number, py: number) {
+    const codes = this.lv.orders.filter((o) => o.house === h && (o.state === 'pool' || o.state === 'bag' || o.state === 'float'));
+    const n = codes.length;
+    const bw = Math.max(1, n) * 40 + 10;
+    ctx.save();
+    ctx.strokeStyle = P.woodDeep;
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(px, py - 30);
+    ctx.lineTo(px, py + 34);
+    ctx.stroke();
+    // crossbar the tags hang from
+    roundRect(ctx, px - bw / 2, py - 36, bw, 10, 4);
+    ctx.fillStyle = P.wood;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = INK;
+    ctx.stroke();
+    ctx.restore();
+    codes.forEach((o, i) => {
+      const tx = px - bw / 2 + 25 + i * 40, sway = Math.sin(this.time * 2 + h.phase + i) * 0.06;
+      ctx.save();
+      ctx.translate(tx, py - 28);
+      ctx.rotate(sway);
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, 6);
+      ctx.stroke();
+      codeTag(ctx, 0, 26, o.code, h.color, 0.95);
+      ctx.restore();
+    });
   }
 
   private drawResident(ctx: Ctx, h: House, x: number, y: number) {
@@ -1166,17 +1785,25 @@ export class PlayScene implements Scene {
       ry -= Math.abs(Math.sin(t * 1.6)) * 1.5;
     } else if (h.species === 'rabbit') sy = 1 + Math.sin(t * 2.4) * 0.035;
     else rot = Math.sin(t * 1.2) * 0.05;
-    const r = h.react;
+    const r = h.react && h.react.t >= 0 ? h.react : null;
     if (r && r.t < 1.8) {
       if (r.kind === 'happy') ry -= Math.abs(Math.sin(r.t * 9)) * 16 * Math.max(0, 1 - r.t / 1.2);
       else rot += 0.2 * Math.sin(Math.min(r.t * 6, Math.PI / 2));
     }
     sp.draw(ctx, h.species, rx, ry, sx * 1.05, sy * 1.05, rot);
+    // the parcel just handed over, held up overhead (and turned about, if it isn't theirs)
+    const hd = h.hold;
+    if (hd && hd.t >= 0) {
+      const up = easeOutBack(Math.min(1, hd.t / 0.25));
+      const a = hd.t > 1.25 ? Math.max(0, (1.6 - hd.t) / 0.35) : 1;
+      const shake = hd.wrong ? Math.sin(hd.t * 26) * 0.12 * Math.max(0, 1 - hd.t / 1.2) : 0;
+      sp.draw(ctx, `box${hd.size}${hd.urgent ? 'u' : ''}`, rx + (hd.wrong ? Math.sin(hd.t * 26) * 3 : 0), ry - 58 - up * 16, 0.85, 0.85, shake + rot, a);
+    }
     if (r && r.kind === 'confused' && r.t < 2) {
       const a = Math.min(1, r.t * 5) * (r.t > 1.6 ? (2 - r.t) / 0.4 : 1);
       ctx.save();
       ctx.globalAlpha = a;
-      const bx = rx + 18, by = ry - 92;
+      const bx = rx + (hd ? 52 : 18), by = ry - (hd ? 118 : 92);
       ellipse(ctx, bx, by, 20, 20);
       ctx.fillStyle = P.white;
       ctx.fill();
@@ -1190,7 +1817,9 @@ export class PlayScene implements Scene {
 
   private drawTruck(ctx: Ctx, t: Plat) {
     const sp = this.game.sprites;
-    const x = t.x, y = this.sy(t.y) + Math.sin(this.time * 13 + t.side) * 0.8;
+    // honking makes the whole truck jitter
+    const honk = this.honkT > 0 ? Math.sin(this.time * 70 + t.side) * 3 * (this.honkT / 0.5) : 0;
+    const x = t.x + honk, y = this.sy(t.y) + Math.sin(this.time * 13 + t.side) * 0.8;
     drawTruckBase(ctx, x, y, -this.camY);
     sp.draw(ctx, t.side === 0 ? 'truck_orange' : 'truck_blue', x, y);
     text(ctx, '蛙趣', x, y + 173 * K + 0.5, 11, { bold: true });
@@ -1201,6 +1830,15 @@ export class PlayScene implements Scene {
     const dir = t.side === 0 ? 1 : -1;
     const drawn = pool.map((o, i) => ({ o, s: slots[i] })).sort((a, b) => a.s[1] - b.s[1]);
     for (const { o, s } of drawn) sp.draw(ctx, `box${o.size}${o.urgent ? 'u' : ''}`, x + dir * s[0] * K, y + s[1] * K);
+    if (this.honkT > 0) {
+      const k = 1 - this.honkT / 0.5;
+      const bx = t.x + dir * 70, by = this.sy(t.y) - 150 - k * 14;
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, (1 - k) * 3);
+      panel(ctx, bx - 58, by - 26, 116, 52, { r: 26, fill: P.gold, shadow: false });
+      text(ctx, '嘀嘀！', bx, by + 1, 28, { bold: true });
+      ctx.restore();
+    }
   }
 
   private drawFrog(ctx: Ctx) {
@@ -1208,26 +1846,47 @@ export class PlayScene implements Scene {
     const f = this.frog;
     const x = f.x, gy = this.sy(f.y);
     if (f.state === 'swim') {
-      const bob = Math.sin(this.time * 7) * 2 - (f.strokeT < 0.2 ? (0.2 - f.strokeT) * 30 : 0);
-      ellipse(ctx, x, gy + 6, 56, 16);
+      // each stroke kicks the frog forward: a squash, a lunge, and a wake behind it
+      const stroke = f.strokeT < 0.3 ? 1 - f.strokeT / 0.3 : 0;
+      const bob = Math.sin(this.time * 7) * 2 - stroke * 5;
+      const v = Math.hypot(f.vx, f.vy);
+      if (v > 40) {
+        const ux = f.vx / v, uy = f.vy / v;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(251,247,238,0.75)';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        for (const side of [-1, 1]) {
+          ctx.beginPath();
+          ctx.moveTo(x - ux * 30 + uy * side * 22, gy + 8 - uy * 14 - ux * side * 8);
+          ctx.lineTo(x - ux * (60 + v * 0.12) + uy * side * (40 + v * 0.06), gy + 10 - uy * 30 - ux * side * 16);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+      ellipse(ctx, x, gy + 6, 56 + stroke * 8, 16 + stroke * 3);
       ctx.strokeStyle = 'rgba(251,247,238,0.7)';
       ctx.lineWidth = 3;
       ctx.stroke();
-      sp.draw(ctx, 'frog_swim', x, gy + 4 + bob, FROG_S, FROG_S, Math.sin(this.time * 9) * 0.05);
+      // leaning into the stroke, or toward a parcel being licked up
+      const lean = this.tongue ? f.giveDir * 0.15 : v > 20 ? clamp(f.vx / 300, -0.3, 0.3) : 0;
+      sp.draw(ctx, 'frog_swim', x, gy + 4 + bob, FROG_S * (1 + stroke * 0.1), FROG_S * (1 - stroke * 0.08), lean + Math.sin(this.time * 9) * 0.05 * (1 - stroke));
       return;
     }
+    const b = f.board;
     // shadow stays on the surface below
     const onWood = f.state === 'stand' && f.on && (f.on.kind === 'house' || f.on.kind === 'truck' || f.on.kind === 'log');
+    const sink = f.state === 'stand' ? this.padSink(f.on) : 0;
     const shrink = 1 - Math.min(0.5, f.z / 300);
     ctx.save();
     ctx.globalAlpha = 0.42 * shrink;
-    ellipse(ctx, x + 5 + f.z * 0.08, gy + 3, 40 * shrink, 11 * shrink);
-    ctx.fillStyle = f.state === 'jump' ? P.tealDeep : onWood ? P.woodDeep : f.on?.kind === 'bank' ? P.bankDeep : P.lilyDeep;
+    ellipse(ctx, x + 5 + f.z * 0.08, gy + 3 + sink, 40 * shrink, 11 * shrink);
+    ctx.fillStyle = f.state === 'jump' ? P.tealDeep : b || f.on?.kind === 'bank' ? P.roadDeep : onWood ? P.woodDeep : P.lilyDeep;
     ctx.fill();
     ctx.restore();
 
-    let sx = 1, sy = 1, rot = 0;
-    let name = this.off ? 'frog_happy' : 'frog_stand';
+    let sx = 1, sy = 1, rot = 0, ox = 0;
+    let name = this.off ? 'frog_happy' : this.smogT > 0 ? 'frog_nervous' : 'frog_stand';
     const power = this.aimPower();
     if (f.state === 'stand') {
       sy *= 1 + Math.sin(this.time * 3) * 0.015;
@@ -1237,12 +1896,28 @@ export class PlayScene implements Scene {
         sx *= 1 + 0.06 * power;
         const [ux] = this.aimDir();
         rot = clamp(ux * 0.2 * power, -0.2, 0.2);
+        // fully wound up: a little tremble
+        if (power >= 0.99) ox = Math.sin(this.time * 70) * 1.6;
       }
-      if (f.landT < 0.32) {
-        const k = springOut(f.landT / 0.32, 2);
-        sy *= 1 - 0.16 * k;
-        sx *= 1 + 0.1 * k;
+      if (f.landT < 0.36) {
+        // harder landings squash further
+        const k = springOut(f.landT / 0.36, 2);
+        sy *= 1 - (0.08 + 0.16 * f.impact) * k;
+        sx *= 1 + (0.05 + 0.1 * f.impact) * k;
       }
+      if (f.give > 0 || this.tongue) {
+        // leaning in to hand a parcel over, or to lick one out of the water
+        const lean = this.tongue ? 1 : Math.sin(f.give * Math.PI);
+        rot += f.giveDir * 0.2 * lean;
+        ox += f.giveDir * 8 * lean;
+        if (this.tongue) name = 'frog_shock';
+      }
+    } else if (b) {
+      // the hop onto the bed is a flip; on the end of the rope it's two panicked spins
+      const k = clamp(b.t / (b.yank ? YANK_T : BOARD_LEAP_T), 0, 1);
+      const dir = b.truck.side === 0 ? -1 : 1;
+      name = b.yank ? 'frog_shock' : f.z > 10 ? 'frog_jump' : 'frog_crouch';
+      rot = dir * Math.PI * 2 * (b.yank ? 2 * k : easeOutCubic(k));
     } else if (f.jump) {
       const k = f.jump.t / f.jump.T;
       name = f.z > 8 ? 'frog_jump' : 'frog_crouch';
@@ -1252,16 +1927,146 @@ export class PlayScene implements Scene {
       }
       rot = ((f.jump.x1 - f.jump.x0) / Math.max(1, f.jump.dist)) * 0.22;
     }
-    const y = gy - f.z;
+    const y = gy - f.z + sink;
     ctx.save();
-    ctx.translate(x, y);
+    // flips turn about the frog's middle rather than its feet
+    const mid = b ? 50 : 0;
+    ctx.translate(x + ox, y - mid);
     ctx.rotate(rot);
+    ctx.translate(0, mid);
     sp.draw(ctx, name, 0, 0, FROG_S * sx, FROG_S * sy);
     // satchel hangs from the strap and swings with the jumps
     const w = this.weight();
     const size = w <= 1 ? 0 : w <= 3 ? 1 : 2;
     const sxp = 30 * K * FROG_S * sx, syp = -40 * K * FROG_S * sy;
     sp.draw(ctx, `satchel${size}`, sxp, syp, FROG_S * (this.bag.length ? 1 : 0.9), FROG_S, clamp(f.swing * 0.1, -0.5, 0.5));
+    ctx.restore();
+  }
+
+  /** A parcel adrift: bobbing, with a ring that runs out as it gets ready to sink. */
+  private drawFloater(ctx: Ctx, fl: Floater) {
+    const sp = this.game.sprites;
+    const x = fl.x, y = this.sy(fl.y);
+    const left = clamp(1 - fl.t / FLOAT_T, 0, 1);
+    const sink = fl.t > FLOAT_T - 1.5 ? (fl.t - (FLOAT_T - 1.5)) / 1.5 : 0;
+    const bob = Math.sin(this.time * 4 + fl.spin) * 3;
+    const reeled = this.tongue?.fl === fl && this.tongue.t >= TONGUE_OUT;
+    if (reeled) {
+      const [tx, ty] = this.tongueTip()!;
+      sp.draw(ctx, `box${fl.o.size}${fl.o.urgent ? 'u' : ''}`, tx, this.sy(ty) + 24, 0.8, 0.8, Math.sin(this.time * 20) * 0.2);
+      return;
+    }
+    ctx.save();
+    ellipse(ctx, x, y + 4, 46, 18);
+    ctx.fillStyle = 'rgba(63,94,120,0.22)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(x, y + 4, 52, 22, 0, -Math.PI / 2, -Math.PI / 2 + left * Math.PI * 2);
+    ctx.strokeStyle = left < 0.35 ? P.red : P.white;
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    ctx.restore();
+    sp.draw(ctx, `box${fl.o.size}${fl.o.urgent ? 'u' : ''}`, x, y + 8 + bob + sink * 16, 0.82, 0.82 * (1 - sink * 0.35), Math.sin(this.time * 2 + fl.spin) * 0.2, 1 - sink * 0.5);
+    // a wavy water line across the bottom of the box
+    ctx.save();
+    ctx.strokeStyle = 'rgba(251,247,238,0.85)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let i = 0; i <= 8; i++) {
+      const wx = x - 34 + i * 8.5, wy = y + 6 + Math.sin(this.time * 6 + i) * 2;
+      if (i === 0) ctx.moveTo(wx, wy);
+      else ctx.lineTo(wx, wy);
+    }
+    ctx.stroke();
+    ctx.restore();
+    codeTag(ctx, x + 34, y - 40 + bob, fl.o.code, fl.o.house.color, 0.75);
+  }
+
+  private drawTongue(ctx: Ctx) {
+    const tip = this.tongueTip();
+    if (!tip) return;
+    const [mx, my] = this.mouth();
+    const ax = mx, ay = this.sy(my), bx = tip[0], by = this.sy(tip[1]);
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 12;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.strokeStyle = '#E07F79';
+    ctx.lineWidth = 8;
+    ctx.stroke();
+    ellipse(ctx, bx, by, 9, 9);
+    ctx.fillStyle = '#E07F79';
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** The tow rope from the cab while the truck hauls the frog in. */
+  private drawRope(ctx: Ctx, t: Plat) {
+    const f = this.frog;
+    const dir = t.side === 0 ? 1 : -1;
+    const ax = t.x + dir * 30, ay = this.sy(t.y) - 70;
+    const bx = f.x, by = this.sy(f.y) - f.z - 40;
+    const sag = 40 * (1 - clamp(f.board!.t / YANK_T, 0, 1));
+    ctx.save();
+    ctx.strokeStyle = P.woodDeep;
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.setLineDash([10, 4]);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 + sag, bx, by);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** The lost letter: an envelope with a red seal, glinting now and then. */
+  private drawEgg(ctx: Ctx, x: number, y: number) {
+    const bob = Math.sin(this.time * 3) * 2;
+    ctx.save();
+    ctx.translate(x, y + bob);
+    ctx.rotate(-0.15);
+    ctx.globalAlpha = 0.35;
+    ellipse(ctx, 2, 18, 30, 7);
+    ctx.fillStyle = P.roadDeep;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    roundRect(ctx, -28, -18, 56, 36, 4);
+    ctx.fillStyle = P.white;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-28, -18);
+    ctx.lineTo(0, 4);
+    ctx.lineTo(28, -18);
+    ctx.stroke();
+    ellipse(ctx, 0, 4, 7, 7);
+    ctx.fillStyle = P.red;
+    ctx.fill();
+    ctx.stroke();
+    const g = (this.time * 0.7) % 1;
+    if (g < 0.25) {
+      // a little sparkle
+      const k = g / 0.25;
+      ctx.globalAlpha = Math.sin(k * Math.PI);
+      ctx.strokeStyle = P.gold;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(22, -34);
+      ctx.lineTo(22, -18);
+      ctx.moveTo(14, -26);
+      ctx.lineTo(30, -26);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -1308,6 +2113,100 @@ export class PlayScene implements Scene {
       case 'heart':
         sp.draw(ctx, 'heart', x + Math.sin(e.t * 6) * 6, y - easeOutCubic(k) * 50, 0.9, 0.9, 0, 1 - k * k);
         break;
+      case 'drops': {
+        // droplets thrown up and falling back
+        const n = Math.round(4 + (e.size ?? 1) * 6);
+        const sd = e.seed ?? 0;
+        ctx.save();
+        ctx.globalAlpha = 1 - k * k;
+        for (let i = 0; i < n; i++) {
+          const ang = Math.PI * (0.15 + 0.7 * frac(sd + i * 0.618));
+          const v = (60 + 90 * frac(sd * 1.7 + i * 0.37)) * (0.6 + (e.size ?? 1) * 0.5);
+          const dx = Math.cos(ang) * v * k * (i % 2 ? 1 : -1);
+          const dy = -Math.sin(ang) * v * k * 1.3 + 260 * k * k;
+          const r = 3 + 3 * frac(sd + i * 0.91);
+          ellipse(ctx, x + dx, y - 14 + dy, r, r * 1.2);
+          ctx.fillStyle = P.white;
+          ctx.fill();
+          ctx.strokeStyle = P.tealDeep;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+        ctx.restore();
+        break;
+      }
+      case 'petals': {
+        // petals knocked off the flower, fluttering down onto the water
+        const sd = e.seed ?? 0;
+        ctx.save();
+        ctx.globalAlpha = k > 0.6 ? (1 - k) / 0.4 : 1;
+        for (let i = 0; i < 5; i++) {
+          const ang = Math.PI * 2 * frac(sd + i * 0.23);
+          const v = (30 + 40 * frac(sd * 2.3 + i * 0.41)) * (0.6 + (e.size ?? 1) * 0.6);
+          const px = x + Math.cos(ang) * v * easeOutCubic(k) + Math.sin(e.t * 6 + i) * 5;
+          const py = y - 20 + Math.sin(ang) * v * 0.5 * easeOutCubic(k) - 40 * Math.sin(k * Math.PI) * (0.6 + frac(sd + i));
+          ctx.save();
+          ctx.translate(px, py);
+          ctx.rotate(e.t * 5 + i);
+          ellipse(ctx, 0, 0, 8, 4.5);
+          ctx.fillStyle = P.pink;
+          ctx.fill();
+          ctx.strokeStyle = INK;
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.restore();
+        break;
+      }
+      case 'sink': {
+        // the lost parcel goes under in a burst of bubbles
+        sp.draw(ctx, `box${e.size ?? 0}${e.urgent ? 'u' : ''}`, x, y + 8 + k * 26, 0.82, 0.82 * (1 - k * 0.7), Math.sin(e.t * 9) * 0.15, (1 - k) * 0.7);
+        ctx.save();
+        ctx.strokeStyle = P.white;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 1 - k;
+        for (let i = 0; i < 4; i++) {
+          const bk = (k * 1.6 + i * 0.25) % 1;
+          ellipse(ctx, x - 18 + i * 12, y - bk * 40, 4 + i, 4 + i);
+          ctx.stroke();
+        }
+        ctx.restore();
+        break;
+      }
+      case 'arc': {
+        // a parcel tossed from one spot to another
+        const kk = easeOutCubic(k);
+        const ax = lerp(x, e.x2!, kk), ay = lerp(y, this.sy(e.y2!), kk) - 90 * Math.sin(k * Math.PI);
+        sp.draw(ctx, `box${e.size ?? 0}${e.urgent ? 'u' : ''}`, ax, ay + 24, 0.8, 0.8, k * 2 * Math.PI * 0.5);
+        break;
+      }
+      case 'coins': {
+        const sd = e.seed ?? 0;
+        for (let i = 0; i < 3; i++) {
+          const dx = (i - 1) * 34 * easeOutCubic(k) + (frac(sd + i) - 0.5) * 10;
+          const dy = -90 * easeOutCubic(k) + 120 * k * k - i * 8;
+          sp.draw(ctx, 'coin', x + dx, y + dy, 0.55, 0.55 * Math.abs(Math.cos(e.t * 10 + i)), 0, 1 - k * k);
+        }
+        break;
+      }
+      case 'say': {
+        // a speech bubble that follows the frog
+        const f = this.frog;
+        const bx = f.x + 54, by = this.sy(f.y) - f.z - 128;
+        const pop = easeOutBack(Math.min(1, e.t / 0.18));
+        const a = k > 0.75 ? (1 - k) / 0.25 : 1;
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.translate(bx, by);
+        ctx.scale(pop, pop);
+        ctx.font = font(30, true);
+        const w = ctx.measureText(e.label ?? '').width + 36;
+        panel(ctx, -w / 2, -26, w, 52, { r: 24, fill: P.white, shadow: false });
+        text(ctx, e.label ?? '', 0, 1, 30, { bold: true });
+        ctx.restore();
+        break;
+      }
       default:
         break;
     }
@@ -1420,6 +2319,77 @@ export class PlayScene implements Scene {
       ctx.lineTo(tx + 9, ty);
       ctx.moveTo(tx, ty - 6);
       ctx.lineTo(tx, ty + 6);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * The slingshot under the finger: where the press started, the band to the finger, and an arrow
+   * the way the frog will go. The pull works anywhere, so this mirrors the frog's own aim.
+   */
+  private drawPullHandle(ctx: Ctx) {
+    const a = this.aim;
+    if (!a || this.frog.state !== 'stand') return;
+    const [dx, dy] = this.aimVec();
+    const len = Math.hypot(dx, dy);
+    const power = this.aimPower();
+    const [ux, uy] = this.aimDir();
+    ctx.save();
+    // anchor ring with the power filling clockwise
+    ellipse(ctx, a.sx, a.sy, 40, 40);
+    ctx.fillStyle = 'rgba(251,247,238,0.35)';
+    ctx.fill();
+    ctx.setLineDash([6, 6]);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (power > 0.01) {
+      ctx.beginPath();
+      ctx.arc(a.sx, a.sy, 40, -Math.PI / 2, -Math.PI / 2 + power * Math.PI * 2);
+      ctx.strokeStyle = power >= 0.99 ? P.red : P.gold;
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+    if (len >= 6) {
+      // rubber band to the finger
+      const pl = Math.min(len, TUNING.maxDrag);
+      const fx = a.sx - ux * pl, fy = a.sy - uy * pl;
+      ctx.strokeStyle = P.blue;
+      ctx.globalAlpha = 0.8;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(fx, fy);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ellipse(ctx, fx, fy, 15, 15);
+      ctx.fillStyle = P.white;
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // arrow out of the anchor, the way the frog will jump
+      const al = 26 + 56 * power;
+      const bx = a.sx + ux * (40 + al), by = a.sy + uy * (40 + al);
+      ctx.strokeStyle = P.orange;
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(a.sx + ux * 44, a.sy + uy * 44);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.fillStyle = P.orange;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = INK;
+      ctx.beginPath();
+      ctx.moveTo(bx + ux * 15, by + uy * 15);
+      ctx.lineTo(bx - uy * 10, by + ux * 10);
+      ctx.lineTo(bx + uy * 10, by - ux * 10);
+      ctx.closePath();
+      ctx.fill();
       ctx.stroke();
     }
     ctx.restore();
@@ -1577,6 +2547,7 @@ export class PlayScene implements Scene {
       sp.draw(ctx, `box${e.size ?? 0}`, x, y + 20, 1 - k * 0.3);
     }
 
+    if (this.callT !== null && !this.off) this.drawCall(ctx);
     // hint bubble
     if (this.hint && !this.paused && (!this.step || this.step === 'go' || this.step === 'refill')) this.drawHint(ctx);
     if (this.toast) {
@@ -1585,12 +2556,34 @@ export class PlayScene implements Scene {
       ctx.globalAlpha = a;
       ctx.font = '26px WK';
       const w = Math.max(220, ctx.measureText(this.toast.text).width + 60);
-      const y = this.trayY() - 190;
+      const y = this.trayY() - (this.callT !== null ? 270 : 190);
       panel(ctx, 375 - w / 2, y, w, 56, { r: 28, fill: P.cream });
       text(ctx, this.toast.text, 375, y + 29, 26);
       ctx.restore();
     }
     if (this.banner) this.drawBanner(ctx);
+  }
+
+  /** The countdown pill while the trucks wait: calm at first, red and honking at the end. */
+  private drawCall(ctx: Ctx) {
+    const left = Math.max(0, Math.ceil(this.callT!));
+    const hurry = left <= 3;
+    const y = this.trayY() - 160;
+    const s = hurry ? 1 + Math.max(0, Math.sin(this.time * 12)) * 0.06 : 1;
+    ctx.save();
+    ctx.translate(375, y);
+    ctx.scale(s, s);
+    panel(ctx, -250, -44, 500, 88, { r: 44, fill: hurry ? '#FBE6DE' : P.paper, stitch: hurry ? P.red : undefined });
+    rich(ctx, segs(`跳回运输车下班  【${left}】秒`), 0, -8, 36, { bold: true, color: hurry ? P.red : INK, hl: hurry ? P.red : undefined });
+    // time bar
+    const k = clamp(this.callT! / CALL_T, 0, 1);
+    roundRect(ctx, -190, 22, 380, 10, 5);
+    ctx.fillStyle = 'rgba(74,59,48,0.15)';
+    ctx.fill();
+    roundRect(ctx, -190, 22, 380 * k, 10, 5);
+    ctx.fillStyle = hurry ? P.red : P.orange;
+    ctx.fill();
+    ctx.restore();
   }
 
   private drawUrgentCard(ctx: Ctx, y: number) {
@@ -1616,7 +2609,7 @@ export class PlayScene implements Scene {
     ctx.stroke();
     text(ctx, '加急', 75, 16, 22, { color: P.white, bold: true });
     sp.draw(ctx, `avatar_${urgent.house.species}`, 38, 66, 0.82);
-    plate(ctx, 98, 52, urgent.house.num, urgent.house.color, 0.95);
+    codeTag(ctx, 100, 54, urgent.code, urgent.house.color, 0.85);
     const late = urgent.late;
     const s = late ? '超时' : `0:${String(Math.max(0, left)).padStart(2, '0')}`;
     text(ctx, s, 104, 88, 26, { color: late || left <= 10 ? P.red : INK, bold: true });
@@ -1635,7 +2628,7 @@ export class PlayScene implements Scene {
       if (this.trayMode === 'pickup') title = this.cards.length ? '取件 · 点包裹装进背包' : '车上的包裹都送出去了';
       else {
         const h = this.frog.on!.house!;
-        title = `交给 ${h.num}号 ${h.name}`;
+        title = `交给 ${h.name}`;
       }
       text(ctx, title, first.x + 2, first.y - 26, 24, { align: 'left', bold: true, maxWidth: tw - 30 });
     }
@@ -1683,7 +2676,7 @@ export class PlayScene implements Scene {
     panel(ctx, x, y, w, h, { r: 12, fill: P.paper });
     const k = small ? 0.78 : 1;
     sp.draw(ctx, `avatar_${o.house.species}`, x + w * 0.32, y + 34 * k, 0.86 * k);
-    plate(ctx, x + w * 0.76, y + 28 * k, o.house.num, o.house.color, 1.1 * k);
+    codeTag(ctx, x + w * 0.76, y + 30 * k, o.code, o.house.color, 1.05 * k);
     sp.draw(ctx, `box${o.size}${o.urgent ? 'u' : ''}`, x + w / 2, y + h - 10 * k, (o.size === 0 ? 1.15 : o.size === 1 ? 1 : 0.9) * k);
     if (o.urgent) {
       roundRect(ctx, x - 6, y + h * 0.5 - 12, 30 * k + 8, 24 * k, 6);
@@ -1741,7 +2734,7 @@ export class PlayScene implements Scene {
       const first = this.cards[0].rect, last = this.cards[this.cards.length - 1].rect;
       holes.push({ x: first.x - 16, y: first.y - 56, w: Math.max(last.x + last.w - first.x + 32, 340), h: first.h + 72, round: false });
       line = segs(this.step === 'pick' ? '点一下【包裹】，装进背包' : '点【包裹】，交给住户');
-      sub = this.step === 'pick' ? '卡片上的数字，就是要送去的门牌号' : '门牌号和颜色要对得上';
+      sub = this.step === 'pick' ? '卡片上的数字是取件码，房子上挂着同样的码' : '取件码和颜色要对得上';
       capY = first.y - 56 - 150;
       hand = { kind: 'tap', x: c.rect.x + c.rect.w * 0.55, y: c.rect.y + c.rect.h * 0.5 };
     } else if (this.step === 'aim') {
@@ -1749,10 +2742,24 @@ export class PlayScene implements Scene {
       holes.push({ x: f.x - 100, y: fy - 160, w: 200, h: 210, round: true });
       const t = this.aimTarget;
       if (t) holes.push({ x: t.x - t.rx - 30, y: this.sy(t.y) - t.ry - 44, w: (t.rx + 30) * 2, h: (t.ry + 44) * 2, round: true });
-      line = segs('【按住屏幕往下拉】，松手就跳');
-      sub = '往反方向跳出去，拉得越长跳得越远';
+      const zx = 470, zy = clamp(fy - 40, H * 0.4, H * 0.62);
+      holes.push({ x: zx - 90, y: zy - 90, w: 180, h: 180, round: true });
+      line = segs('在【任意空白处】按住往下拉');
+      sub = '不用按青蛙，松手就往反方向跳，拉得越长跳得越远';
       capY = this.game.safeT + 100;
-      if (!this.aim) hand = { kind: 'drag', x: f.x + 40, y: fy + 30 };
+      if (!this.aim) hand = { kind: 'drag', x: zx, y: zy };
+    } else if (this.step === 'rescue') {
+      for (const fl of this.floaters) {
+        const fy = this.sy(fl.y);
+        holes.push({ x: fl.x - 66, y: fy - 80, w: 132, h: 130, round: true });
+      }
+      holes.push({ x: f.x - 70, y: this.sy(f.y) - 70, w: 140, h: 100, round: true });
+      line = segs('包裹掉水里了！【点一下包裹】');
+      sub = '青蛙会用舌头捞回来；时间圈走完或漂太远就沉了';
+      const fl = this.floaters[0];
+      const up = fl && this.sy(fl.y) < H * 0.45;
+      capY = up ? H * 0.6 : this.game.safeT + 100;
+      if (fl) hand = { kind: 'tap', x: fl.x + 8, y: this.sy(fl.y) + 4 };
     }
     // Dim everything but the holes; while dragging, ease off so the aim line shows.
     const a = Math.min(1, this.stepT * 4) * (this.aim ? 0.35 : 1);
@@ -1867,7 +2874,7 @@ export class PlayScene implements Scene {
       ctx.strokeStyle = INK;
       ctx.lineWidth = 2;
       ctx.stroke();
-      if (icon === 'plate') plate(ctx, 128, ry, 9, P.tealDeep, 1.7);
+      if (icon === 'code') codeTag(ctx, 128, ry, 7, P.tealDeep, 1.4);
       else {
         const [dx, dy, sc] = ICONS[icon] ?? [0, 0, 0.6];
         sp.draw(ctx, icon, 128 + dx, ry + dy, sc);

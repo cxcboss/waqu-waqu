@@ -93,6 +93,26 @@ export function ellipse(ctx: Ctx, x: number, y: number, rx: number, ry: number) 
   ctx.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), 0, 0, Math.PI * 2);
 }
 
+/** Pickup-code tag: a little luggage label with a big digit, in the house's color. Centered on (x, y). */
+export function codeTag(ctx: Ctx, x: number, y: number, code: number, color: string, size = 1) {
+  const w = 34 * size, h = 40 * size;
+  ctx.save();
+  roundRect(ctx, x - w / 2, y - h / 2, w, h, 8 * size);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = INK;
+  ctx.stroke();
+  // string hole
+  ctx.beginPath();
+  ctx.arc(x, y - h / 2 + 6 * size, 2.6 * size, 0, Math.PI * 2);
+  ctx.fillStyle = P.paper;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+  text(ctx, String(code), x, y + 4 * size, 28 * size, { color: color === P.gold ? INK : P.white, bold: true });
+}
+
 /** Small house-number plate in the house's color. */
 export function plate(ctx: Ctx, x: number, y: number, num: number, color: string, size = 1) {
   const w = 30 * size, h = 24 * size;
@@ -118,7 +138,7 @@ export const hit = (r: Rect | null | undefined, x: number, y: number, pad = 0) =
  * A run of caption text: plain strings, highlighted words, and inline house plates.
  * Written as a string, 【...】 marks a highlight.
  */
-export type Seg = string | { hl: string } | { plate: number; color: string };
+export type Seg = string | { hl: string } | { code: number; color: string };
 
 export function segs(s: string): Seg[] {
   return s.split(/(【[^】]*】)/).filter(Boolean).map((p) => (p.startsWith('【') ? { hl: p.slice(1, -1) } : p));
@@ -133,7 +153,7 @@ function segWidth(ctx: Ctx, s: Seg, size: number, bold: boolean) {
     ctx.font = font(size, true);
     return ctx.measureText(s.hl).width;
   }
-  return 30 * (size / 22) + 10;
+  return 34 * (size / 26) + 10;
 }
 
 export function richWidth(ctx: Ctx, line: Seg[], size: number, bold = false) {
@@ -165,7 +185,7 @@ export function rich(ctx: Ctx, line: Seg[], x: number, y: number, size: number, 
       ctx.fillStyle = o.hl || P.orangeDeep;
       ctx.fillText(s.hl, cx, y);
     } else {
-      plate(ctx, cx + w / 2, y, s.plate, s.color, size / 22);
+      codeTag(ctx, cx + w / 2, y, s.code, s.color, size / 26);
     }
     cx += w;
   }

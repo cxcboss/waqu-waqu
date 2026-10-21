@@ -159,6 +159,45 @@ export class Audio {
     };
   }
 
+  /**
+   * A synthesized hum whose pitch follows the caller, like the charge-up in 跳一跳: the longer the
+   * pull, the higher it goes, so you can hear how far the jump will be.
+   */
+  tone(volume = 0.06): { setPitch(hz: number): void; stop(): void } | null {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || !this.sfxBus) return null;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    const g = ctx.createGain();
+    g.gain.value = 0.0001;
+    g.gain.setTargetAtTime(volume, now, 0.03);
+    const g2 = ctx.createGain();
+    g2.gain.value = 0.5;
+    osc.connect(g);
+    sub.connect(g2).connect(g);
+    g.connect(this.sfxBus);
+    osc.start(now);
+    sub.start(now);
+    let stopped = false;
+    return {
+      setPitch: (hz: number) => {
+        if (stopped) return;
+        osc.frequency.setTargetAtTime(hz, ctx.currentTime, 0.02);
+        sub.frequency.setTargetAtTime(hz / 2, ctx.currentTime, 0.02);
+      },
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        g.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.03);
+        osc.stop(ctx.currentTime + 0.2);
+        sub.stop(ctx.currentTime + 0.2);
+      },
+    };
+  }
+
   /** Switches the background track (null = silence), crossfading. */
   setMusic(id: string | null) {
     this.wantMusic = id;

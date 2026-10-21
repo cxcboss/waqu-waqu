@@ -21,6 +21,8 @@ export interface SaveData {
   coins: number;
   best: Record<number, string>;
   sound: boolean;
+  /** One-time lessons already shown, e.g. how to rescue parcels from the river. */
+  tips: Record<string, boolean>;
 }
 
 const SAVE_KEY = 'waqu.save.v1';
@@ -164,7 +166,7 @@ export class Game {
   }
 
   readSave(): SaveData {
-    const base: SaveData = { day: 1, coins: 0, best: {}, sound: true };
+    const base: SaveData = { day: 1, coins: 0, best: {}, sound: true, tips: {} };
     try {
       const raw = this.platform.storageGet(SAVE_KEY);
       if (raw) return { ...base, ...JSON.parse(raw) };
