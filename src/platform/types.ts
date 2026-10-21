@@ -7,6 +7,7 @@ export type Ctx = CanvasRenderingContext2D;
 export type ImageSource = CanvasImageSource & { width: number; height: number };
 
 export type TouchKind = 'start' | 'move' | 'end' | 'cancel';
+export type SaveResult = 'shared' | 'downloaded' | 'longpress' | 'cancelled' | 'failed';
 /** Pointer position in CSS pixels relative to the main canvas. */
 export interface TouchPoint {
   id: number;
@@ -48,7 +49,19 @@ export interface Platform {
   createAudioContext(): AudioContext | null;
 
   vibrate(ms: number): void;
-  saveImage(canvas: Canvas, filename: string): void;
+  /**
+   * Hands a picture to the player to keep: the share sheet on iPhone (where "Save Image" puts it
+   * in Photos), a download elsewhere. 'longpress' means this browser can't do either (WeChat's)
+   * and the player should long-press the picture shown with `showImage` instead.
+   */
+  saveImage(canvas: Canvas, filename: string): Promise<SaveResult>;
+  /** Starts encoding a picture that may be saved soon, so saving can still run inside the tap. */
+  prepareImage(canvas: Canvas): void;
+  /**
+   * Lays a real image of `canvas` over the game at `rect` (CSS pixels from the game canvas'
+   * top-left) so it can be long-pressed and saved like any picture; null takes it away.
+   */
+  showImage(canvas: Canvas | null, rect?: { x: number; y: number; w: number; h: number }): void;
   share(opts: { title: string; canvas?: Canvas }): void;
 
   now(): number;

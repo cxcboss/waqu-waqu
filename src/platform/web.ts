@@ -1,4 +1,4 @@
-import type { Canvas, ImageSource, Platform, ScreenInfo, TouchKind, TouchPoint } from './types';
+import type { Canvas, ImageSource, Platform, SaveResult, ScreenInfo, TouchKind, TouchPoint } from './types';
 
 /** Narrowest and widest portrait aspect (height / width) the game lays out for. */
 const MIN_ASPECT = 1334 / 750;
@@ -7,6 +7,12 @@ export class WebPlatform implements Platform {
   readonly kind = 'web' as const;
   readonly canvas: Canvas;
   private probe: HTMLElement | null;
+  private touch: ((kind: TouchKind, t: TouchPoint) => void) | null = null;
+  /** Encoded pictures, so a save can start right inside the tap. */
+  private encoded = new WeakMap<Canvas, Promise<Blob | null>>();
+  private blobs = new WeakMap<Canvas, Blob>();
+  private urls = new WeakMap<Canvas, string>();
+  private overlay: { el: HTMLImageElement; src: Canvas | null; key: string } | null = null;
 
   constructor() {
     this.canvas = document.getElementById('game') as Canvas;
@@ -14,7 +20,10 @@ export class WebPlatform implements Platform {
     // Keep iOS from scrolling or zooming the page while playing.
     document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
     document.addEventListener('gesturestart', (e) => e.preventDefault());
-    document.addEventListener('contextmenu', (e) => e.preventDefault());
+    // (except on a picture laid over the game, which is there to be saved)
+    document.addEventListener('contextmenu', (e) => {
+      if ((e.target as Element | null)?.tagName !== 'IMG') e.preventDefault();
+    });
   }
 
   screen(): ScreenInfo {
@@ -48,12 +57,15 @@ export class WebPlatform implements Platform {
     window.visualViewport?.addEventListener('resize', fire);
   }
 
+  private pt(e: PointerEvent): TouchPoint {
+    const r = this.canvas.getBoundingClientRect();
+    return { id: e.pointerId, x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
   onTouch(cb: (kind: TouchKind, t: TouchPoint) => void): void {
     const c = this.canvas;
-    const pt = (e: PointerEvent): TouchPoint => {
-      const r = c.getBoundingClientRect();
-      return { id: e.pointerId, x: e.clientX - r.left, y: e.clientY - r.top };
-    };
+    const pt = (e: PointerEvent) => this.pt(e);
+    this.touch = cb;
     c.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       try {
@@ -139,13 +151,95 @@ export class WebPlatform implements Platform {
     }
   }
 
-  saveImage(canvas: Canvas, filename: string): void {
-    const a = document.createElement('a');
-    a.download = filename;
-    a.href = canvas.toDataURL('image/png');
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+  private encode(canvas: Canvas): Promise<Blob | null> {
+    let p = this.encoded.get(canvas);
+    if (!p) {
+      p = new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92)).then((b) => {
+        if (b) {
+          this.blobs.set(canvas, b);
+          this.urls.set(canvas, URL.createObjectURL(b));
+        }
+        return b;
+      });
+      this.encoded.set(canvas, p);
+    }
+    return p;
+  }
+
+  prepareImage(canvas: Canvas): void {
+    void this.encode(canvas);
+  }
+
+  async saveImage(canvas: Canvas, filename: string): Promise<SaveResult> {
+    // WeChat's browser ignores downloads; the picture can be long-pressed there instead.
+    if (/MicroMessenger/i.test(navigator.userAgent)) return 'longpress';
+    // No await before the share sheet when the picture is ready: it has to open inside the tap.
+    const blob = this.blobs.get(canvas) ?? (await this.encode(canvas));
+    if (!blob) return 'failed';
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const file = new File([blob], filename, { type: blob.type });
+    const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+    if (ios && nav.canShare?.({ files: [file] })) {
+      try {
+        await nav.share({ files: [file] });
+        return 'shared';
+      } catch (e) {
+        if ((e as DOMException).name === 'AbortError') return 'cancelled';
+        // otherwise fall back to a download
+      }
+    }
+    try {
+      const a = document.createElement('a');
+      a.download = filename;
+      a.href = this.urls.get(canvas) ?? URL.createObjectURL(blob);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return 'downloaded';
+    } catch {
+      return 'failed';
+    }
+  }
+
+  showImage(canvas: Canvas | null, rect?: { x: number; y: number; w: number; h: number }): void {
+    if (!canvas || !rect) {
+      if (this.overlay) this.overlay.el.style.display = 'none';
+      return;
+    }
+    let o = this.overlay;
+    if (!o) {
+      const el = document.createElement('img');
+      el.alt = '';
+      el.draggable = false;
+      el.style.cssText = 'position:fixed;z-index:2;display:none;-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto;touch-action:none;';
+      // taps and swipes on the picture still steer the game
+      for (const [type, kind] of [['pointerdown', 'start'], ['pointermove', 'move'], ['pointerup', 'end'], ['pointercancel', 'cancel']] as const) {
+        el.addEventListener(type, (e) => this.touch?.(kind, this.pt(e)));
+      }
+      document.body.appendChild(el);
+      o = this.overlay = { el, src: null, key: '' };
+    }
+    if (o.src !== canvas) {
+      o.src = canvas;
+      o.key = '';
+      o.el.removeAttribute('src');
+      const ov = o;
+      void this.encode(canvas).then(() => {
+        const url = this.urls.get(canvas);
+        if (ov.src === canvas && url) ov.el.src = url;
+      });
+    }
+    const r = this.canvas.getBoundingClientRect();
+    const key = [r.left + rect.x, r.top + rect.y, rect.w, rect.h].map((v) => v.toFixed(1)).join();
+    if (key !== o.key) {
+      o.key = key;
+      const s = o.el.style;
+      s.left = `${r.left + rect.x}px`;
+      s.top = `${r.top + rect.y}px`;
+      s.width = `${rect.w}px`;
+      s.height = `${rect.h}px`;
+    }
+    o.el.style.display = o.el.getAttribute('src') ? 'block' : 'none';
   }
 
   share(opts: { title: string; canvas?: Canvas }): void {

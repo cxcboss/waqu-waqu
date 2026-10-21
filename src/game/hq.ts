@@ -1,8 +1,8 @@
 import { INK, P } from '../art/palette';
 import { HQ_ROOM, K } from '../art/sprites';
 import { button, ellipse, hit, panel, roundRect, text, type Rect } from '../art/ui';
-import { clamp, easeInCubic, easeOutBack, easeOutCubic } from '../engine/math';
-import type { Canvas, Ctx } from '../platform/types';
+import { approach, clamp, easeInCubic, easeOutBack, easeOutCubic } from '../engine/math';
+import type { Canvas, Ctx, SaveResult } from '../platform/types';
 import type { Game, Scene } from './game';
 import { PlayScene } from './play';
 
@@ -12,6 +12,8 @@ export interface Photo {
   prio: number;
   kind: string;
   t: number;
+  /** Where the frog is in the picture (0–1 each way); the polaroid crops in around it. */
+  focus: [number, number];
 }
 
 export interface DayResult {
@@ -43,6 +45,16 @@ const ORDER = 'SABCD';
 
 const ROW_GAP = 0.28;
 const SHEET_H = 622;
+/** Share of the wide shot the polaroid shows. */
+const THUMB_CROP = 0.6;
+
+const SAVED: Record<SaveResult, string> = {
+  shared: '搞定！',
+  downloaded: '图片已保存',
+  longpress: '长按图片，选「保存图片」',
+  cancelled: '',
+  failed: '没存上，试试长按图片保存',
+};
 
 interface Row {
   icon: 'ok' | 'wrong' | 'wet' | 'miss' | 'urgent' | 'heart';
@@ -64,8 +76,17 @@ export class HqScene implements Scene {
   private stampAt: number;
   private endAt: number;
   private btns: { id: string; rect: Rect }[] = [];
-  private saveBtn: Rect | null = null;
+  private viewBtn: Rect | null = null;
   private pressed: string | null = null;
+  /** Polaroids on the sheet, in screen coordinates, for opening the big view. */
+  private thumbs: Rect[] = [];
+  /** The big view: which photo, how long it's been open, and the sideways drag/slide offset. */
+  private view: { i: number; t: number; dx: number } | null = null;
+  private swipe: { x: number; y: number; moved: boolean } | null = null;
+  private viewBtns: { id: string; rect: Rect }[] = [];
+  private cardRect: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  private cards = new Map<Photo, Canvas>();
+  private toast: { text: string; t: number } | null = null;
   private stamped = false;
   private ticks = 0;
   private snaps = 0;
@@ -115,6 +136,11 @@ export class HqScene implements Scene {
 
   update(dt: number) {
     this.t += dt;
+    if (this.view) {
+      this.view.t += dt;
+      if (!this.swipe) this.view.dx = approach(this.view.dx, 0, 16, dt);
+    }
+    if (this.toast && (this.toast.t += dt) > 2.4) this.toast = null;
     const rowsShown = Math.floor((this.t - 0.7) / ROW_GAP) + 1;
     const nRows = this.left.length + this.right.length + 1;
     if (rowsShown > this.ticks && this.ticks < nRows && this.t >= 0.7) {
@@ -134,8 +160,16 @@ export class HqScene implements Scene {
   }
 
   down(x: number, y: number) {
+    if (this.view) {
+      for (const b of this.viewBtns) if (hit(b.rect, x, y, 8)) this.pressed = b.id;
+      if (!this.pressed) this.swipe = { x, y, moved: false };
+      return;
+    }
     for (const b of this.btns) if (hit(b.rect, x, y)) this.pressed = b.id;
-    if (hit(this.saveBtn, x, y, 8)) this.pressed = 'save';
+    if (this.viewBtn && hit(this.viewBtn, x, y, 8)) this.pressed = 'view0';
+    this.thumbs.forEach((r, i) => {
+      if (!this.pressed && hit(r, x, y, 6)) this.pressed = `view${i}`;
+    });
     if (!this.pressed && this.t < this.endAt) {
       // tap to skip the paperwork animation
       this.t = this.endAt;
@@ -148,39 +182,173 @@ export class HqScene implements Scene {
     }
   }
 
+  move(x: number) {
+    const sw = this.swipe;
+    if (!this.view || !sw) return;
+    const dx = x - sw.x;
+    if (Math.abs(dx) > 12) sw.moved = true;
+    // one photo only: it gives a little and springs back
+    this.view.dx = this.r.photos.length > 1 ? dx : dx * 0.25;
+  }
+
   up(x: number, y: number) {
     const id = this.pressed;
     this.pressed = null;
+    if (this.view) {
+      const sw = this.swipe;
+      this.swipe = null;
+      if (id) {
+        const b = this.viewBtns.find((b) => b.id === id);
+        if (b && hit(b.rect, x, y, 8)) this.viewAction(id);
+      } else if (sw && sw.moved && Math.abs(this.view.dx) > 80) this.flip(this.view.dx < 0 ? 1 : -1);
+      else if (sw && !sw.moved && !hit(this.cardRect, x, y)) this.closeView();
+      return;
+    }
     if (!id) return;
-    if (id === 'save') {
-      if (hit(this.saveBtn, x, y, 8)) this.savePhotos();
+    if (id.startsWith('view')) {
+      const i = Number(id.slice(4));
+      const r = id === 'view0' && this.viewBtn && hit(this.viewBtn, x, y, 8) ? this.viewBtn : this.thumbs[i];
+      if (r && hit(r, x, y, 8)) this.openView(i);
       return;
     }
     const b = this.btns.find((b) => b.id === id);
     if (!b || !hit(b.rect, x, y)) return;
     this.game.audio.play('ui_tap');
+    this.game.platform.showImage(null);
     if (id === 'retry') this.game.go(new PlayScene(this.game, this.r.day));
     else if (id === 'next') this.game.go(new PlayScene(this.game, this.r.day >= this.game.lastDay ? 1 : this.r.day + 1));
   }
 
-  private savePhotos() {
-    const photos = this.r.photos;
-    if (!photos.length) return;
-    const pw = 300, ph = 230, pad = 24;
-    const c = this.game.platform.createCanvas(photos.length * (pw + pad) + pad, ph + 110);
+  // ---------------------------------------------------------------- big view
+
+  private openView(i: number) {
+    if (!this.r.photos[i]) return;
+    this.view = { i, t: 0, dx: 0 };
+    this.game.audio.play('ui_open');
+    // get every picture ready to save, so the save can happen right inside the tap
+    for (const p of this.r.photos) this.game.platform.prepareImage(this.card(p));
+  }
+
+  private closeView() {
+    this.view = null;
+    this.swipe = null;
+    this.game.platform.showImage(null);
+    this.game.audio.play('ui_close');
+  }
+
+  /** Next (1) or previous (-1) photo; the new one slides in from that side. */
+  private flip(d: number) {
+    const v = this.view!;
+    const n = this.r.photos.length;
+    if (n < 2) return;
+    v.i = (v.i + d + n) % n;
+    v.dx = d * 750 + v.dx;
+    this.game.audio.play('paper_flip', { volume: 0.7 });
+  }
+
+  private viewAction(id: string) {
+    const v = this.view!;
+    if (id === 'close') this.closeView();
+    else if (id === 'prev') this.flip(-1);
+    else if (id === 'next') this.flip(1);
+    else if (id === 'save') {
+      this.game.audio.play('ui_tap');
+      const p = this.r.photos[v.i];
+      void this.game.platform.saveImage(this.card(p), `waqu-day${this.r.day}-${v.i + 1}.jpg`).then((res) => {
+        if (SAVED[res]) this.toast = { text: SAVED[res], t: 0 };
+        if (res === 'shared' || res === 'downloaded') this.game.audio.play('photo_shutter', { volume: 0.6 });
+      });
+    }
+  }
+
+  /** The photo as a keepsake: polaroid border, the caption, and a footer. Shown big and saved as is. */
+  private card(p: Photo): Canvas {
+    const have = this.cards.get(p);
+    if (have) return have;
+    const iw = p.img.width, ih = p.img.height;
+    const u = iw / 600;
+    const pad = Math.round(26 * u), capH = Math.round(124 * u);
+    const c = this.game.platform.createCanvas(iw + pad * 2, ih + pad + capH);
     const g = c.getContext('2d')!;
-    g.fillStyle = P.paper;
+    g.fillStyle = '#FFFDF7';
     g.fillRect(0, 0, c.width, c.height);
-    photos.forEach((p, i) => {
-      const x = pad + i * (pw + pad);
-      g.drawImage(p.img, x, pad, pw, ph);
-      g.strokeStyle = INK;
-      g.lineWidth = 2;
-      g.strokeRect(x, pad, pw, ph);
-      text(g, p.caption, x + pw / 2, pad + ph + 34, 26, { maxWidth: pw });
-    });
-    text(g, `蛙趣快递 · 第 ${this.r.day} 天精彩瞬间`, c.width / 2, ph + 92, 20, { color: P.inkSoft });
-    this.game.platform.saveImage(c, `waqu-day${this.r.day}.png`);
+    g.drawImage(p.img, pad, pad);
+    g.strokeStyle = INK;
+    g.lineWidth = 2 * u;
+    g.strokeRect(pad, pad, iw, ih);
+    text(g, p.caption, c.width / 2, pad + ih + 54 * u, 40 * u, { bold: true, maxWidth: iw - 20 * u });
+    text(g, `蛙趣快递 · 第 ${this.r.day} 天 · 今日精彩瞬间`, c.width / 2, pad + ih + 100 * u, 22 * u, { color: P.inkSoft });
+    g.lineWidth = 3 * u;
+    g.strokeRect(1.5 * u, 1.5 * u, c.width - 3 * u, c.height - 3 * u);
+    this.cards.set(p, c);
+    return c;
+  }
+
+  private drawViewer(ctx: Ctx) {
+    const v = this.view!;
+    const H = this.game.H;
+    const photos = this.r.photos;
+    const p = photos[v.i];
+    const card = this.card(p);
+    const a = easeOutCubic(clamp(v.t / 0.25, 0, 1));
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(28,22,18,0.9)';
+    ctx.fillRect(0, 0, 750, H);
+    ctx.restore();
+
+    const top = this.game.safeT + 96;
+    const btnY = H - this.game.safeB - 30 - 84;
+    const maxW = 690, maxH = btnY - 150 - top;
+    const s = Math.min(maxW / card.width, maxH / card.height);
+    const pop = 0.88 + 0.12 * easeOutBack(clamp(v.t / 0.3, 0, 1));
+    const w = card.width * s * pop, h = card.height * s * pop;
+    const x = 375 - w / 2 + v.dx, y = top + (maxH - h) / 2;
+    this.cardRect = { x, y, w, h };
+    ctx.save();
+    ctx.globalAlpha = 0.35 * a;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x + 8, y + 12, w, h);
+    ctx.restore();
+    ctx.drawImage(card, x, y, w, h);
+    // a real picture over it, for long-press saving
+    const k = this.game.cssScale;
+    this.game.platform.showImage(card, { x: x * k, y: y * k, w: w * k, h: h * k });
+
+    text(ctx, '今日精彩瞬间', 375, this.game.safeT + 48, 34, { bold: true, color: P.cream, alpha: a });
+    this.viewBtns = [];
+    const ry = y + h + 50;
+    if (photos.length > 1) {
+      text(ctx, `${v.i + 1} / ${photos.length}`, 375, ry, 30, { bold: true, color: P.cream, alpha: a });
+      for (const [id, cx, dir] of [['prev', 245, -1], ['next', 505, 1]] as const) {
+        const r = { x: cx - 36, y: ry - 36, w: 72, h: 72 };
+        this.viewBtns.push({ id, rect: r });
+        ctx.save();
+        ctx.globalAlpha = a;
+        ellipse(ctx, cx, ry, 32, 32);
+        ctx.fillStyle = this.pressed === id ? P.paperShade : P.paper;
+        ctx.fill();
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - dir * 5, ry - 12);
+        ctx.lineTo(cx + dir * 7, ry);
+        ctx.lineTo(cx - dir * 5, ry + 12);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    text(ctx, photos.length > 1 ? '左右滑动换一张 · 长按图片也能保存' : '长按图片也能保存', 375, btnY - 34, 24, { color: P.cream, alpha: 0.7 * a });
+    ctx.save();
+    ctx.globalAlpha = a;
+    this.viewBtns.push({ id: 'close', rect: { x: 40, y: btnY, w: 250, h: 84 } }, { id: 'save', rect: { x: 310, y: btnY, w: 400, h: 84 } });
+    button(ctx, 40, btnY, 250, 84, '关闭', { pressed: this.pressed === 'close', size: 32 });
+    button(ctx, 310, btnY, 400, 84, '保存这张', { primary: true, pressed: this.pressed === 'save', size: 32 });
+    ctx.restore();
   }
 
   render(ctx: Ctx) {
@@ -267,6 +435,20 @@ export class HqScene implements Scene {
     button(ctx, 40, btnTop, 310, 84, '再来一次', { pressed: this.pressed === 'retry', size: 32 });
     button(ctx, 390, btnTop, 320, 84, last ? '从第1天再玩 →' : '下一天 →', { primary: true, pressed: this.pressed === 'next', size: 32 });
     ctx.restore();
+
+    if (this.view) this.drawViewer(ctx);
+    if (this.toast) {
+      const tt = this.toast.t;
+      const a = Math.min(1, tt * 6) * (tt > 2 ? (2.4 - tt) / 0.4 : 1);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.font = '28px WK';
+      const w = Math.max(240, ctx.measureText(this.toast.text).width + 64);
+      const y = this.game.safeT + 110;
+      panel(ctx, 375 - w / 2, y, w, 60, { r: 30, fill: P.cream });
+      text(ctx, this.toast.text, 375, y + 31, 28);
+      ctx.restore();
+    }
   }
 
   private drawBubble(ctx: Ctx, x: number, y: number) {
@@ -355,21 +537,24 @@ export class HqScene implements Scene {
     ctx.quadraticCurveTo(351, 422, 431, 414);
     ctx.stroke();
     const photos = this.r.photos;
+    const sheetTop = this.sheetScreenTop();
     if (photos.length) {
-      this.saveBtn = { x: 24 + 590, y: this.sheetScreenTop() + 376, w: 80, h: 38 };
-      roundRect(ctx, 590, 376, 80, 38, 19);
-      ctx.fillStyle = P.cream;
+      this.viewBtn = { x: 24 + 560, y: sheetTop + 376, w: 110, h: 38 };
+      roundRect(ctx, 560, 376, 110, 38, 19);
+      ctx.fillStyle = this.pressed === 'view0' ? P.paperShade : P.cream;
       ctx.fill();
       ctx.strokeStyle = INK;
       ctx.lineWidth = 1.8;
       ctx.stroke();
-      text(ctx, '保存', 630, 396, 22, { bold: true });
+      text(ctx, '看大图', 615, 396, 22, { bold: true });
     }
     const n = photos.length;
+    this.thumbs = [];
     photos.forEach((p, i) => {
       const k = clamp((this.t - this.stampAt - 0.5 - i * 0.28) / 0.3, 0, 1);
       if (k <= 0) return;
       const cx = n === 1 ? 351 : n === 2 ? 236 + i * 230 : 120 + i * 231;
+      this.thumbs[i] = { x: 24 + cx - 100, y: sheetTop + 512 - 96, w: 200, h: 192 };
       const rot = [-0.05, 0.035, -0.03][i];
       ctx.save();
       ctx.globalAlpha = k;
@@ -423,7 +608,10 @@ export class HqScene implements Scene {
     ctx.lineWidth = 2;
     ctx.strokeRect(-w / 2, -h / 2, w, h);
     const iw = 182, ih = 140;
-    ctx.drawImage(p.img, -iw / 2, -h / 2 + 9, iw, ih);
+    const sw = p.img.width * THUMB_CROP, sh = p.img.height * THUMB_CROP;
+    const sx = clamp(p.focus[0] * p.img.width - sw / 2, 0, p.img.width - sw);
+    const sy = clamp(p.focus[1] * p.img.height - sh / 2, 0, p.img.height - sh);
+    ctx.drawImage(p.img, sx, sy, sw, sh, -iw / 2, -h / 2 + 9, iw, ih);
     ctx.strokeRect(-iw / 2, -h / 2 + 9, iw, ih);
     text(ctx, p.caption, 0, h / 2 - 22, 22, { bold: true, maxWidth: w - 16 });
     // tape

@@ -98,6 +98,11 @@ export class Game {
 
   private cssW = 375;
 
+  /** CSS pixels per design unit, for placing page elements over the canvas. */
+  get cssScale() {
+    return this.cssW / this.W;
+  }
+
   resize() {
     const s = this.platform.screen();
     const c = this.platform.canvas;

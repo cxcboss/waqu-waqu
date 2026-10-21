@@ -1514,17 +1514,20 @@ export class PlayScene implements Scene {
     const sc = this.game.scale;
     const f = this.frog;
     for (const s of due) {
-      const w = 300, h = 230;
-      const cx = clamp(f.x + this.camX, w / 2, 750 - w / 2);
+      // a wide shot for the big view; the polaroid crops in around the frog
+      const w = 600, h = 460;
+      const fx = f.x + this.camX;
       const fy = s.thrown ? this.H - 90 : this.sy(f.y) + this.panY - f.z - 50;
+      const cx = clamp(fx, w / 2, 750 - w / 2);
       const cy = clamp(fy, h / 2, this.H - h / 2);
-      const ps = Math.min(sc, 1.5);
+      const ps = Math.min(sc, 2);
       const c = this.game.platform.createCanvas(w * ps, h * ps);
       c.getContext('2d')!.drawImage(src, (cx - w / 2) * sc, (cy - h / 2) * sc, w * sc, h * sc, 0, 0, c.width, c.height);
-      this.photos.push({ img: c, caption: s.caption, prio: s.prio, kind: s.kind, t: this.time });
-      if (this.photos.length > 10) {
+      const focus: [number, number] = [(fx - (cx - w / 2)) / w, (fy - (cy - h / 2)) / h];
+      this.photos.push({ img: c, caption: s.caption, prio: s.prio, kind: s.kind, t: this.time, focus });
+      if (this.photos.length > 8) {
         this.photos.sort((a, b) => b.prio - a.prio);
-        this.photos.length = 10;
+        this.photos.length = 8;
       }
     }
   }
