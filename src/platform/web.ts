@@ -248,6 +248,46 @@ export class WebPlatform implements Platform {
     nav.share?.({ title: opts.title, url: location.href }).catch(() => undefined);
   }
 
+  deviceInfo(): Record<string, string | number | boolean> {
+    const ua = navigator.userAgent;
+    const os = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 'ios'
+      : /Android|HarmonyOS/.test(ua) ? 'android' : /Mac/.test(ua) ? 'mac' : /Win/.test(ua) ? 'win' : 'other';
+    // the app the link was opened in matters more than the engine (WeChat's browser behaves differently)
+    const apps: [RegExp, string][] = [
+      [/MicroMessenger/i, 'wechat'], [/QQ\//, 'qq'], [/DingTalk/i, 'dingtalk'], [/Lark|Feishu/i, 'feishu'], [/Weibo/i, 'weibo'],
+      [/UCBrowser/i, 'uc'], [/Quark/i, 'quark'], [/HuaweiBrowser/i, 'huawei'], [/MiuiBrowser/i, 'xiaomi'],
+      [/baiduboxapp|baidubrowser/i, 'baidu'], [/EdgA?\/|EdgiOS/, 'edge'], [/FxiOS|Firefox\//, 'firefox'],
+      [/CriOS|Chrome\//, 'chrome'], [/Safari\//, 'safari'],
+    ];
+    const browser = apps.find(([re]) => re.test(ua))?.[1] ?? 'other';
+    return {
+      os, browser,
+      w: window.innerWidth, h: window.innerHeight, dpr: Math.round((window.devicePixelRatio || 1) * 100) / 100,
+      touch: navigator.maxTouchPoints > 0,
+      standalone: window.matchMedia?.('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true,
+    };
+  }
+
+  async postJson(url: string, body: string, headers: Record<string, string>, keepalive = false): Promise<number> {
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body, keepalive });
+      return r.status;
+    } catch {
+      return 0;
+    }
+  }
+
+  onError(cb: (msg: string, where: string) => void): void {
+    window.addEventListener('error', (e) => {
+      const stack = (e.error as Error | undefined)?.stack?.split('\n').slice(0, 3).join(' | ') ?? '';
+      cb(String(e.message).slice(0, 200), `${(e.filename || '').split('/').pop()}:${e.lineno}:${e.colno} ${stack}`.slice(0, 400));
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const r = e.reason as Error | undefined;
+      cb(String(r?.message ?? r).slice(0, 200), `promise ${r?.stack?.split('\n').slice(0, 3).join(' | ') ?? ''}`.slice(0, 400));
+    });
+  }
+
   now(): number {
     return performance.now();
   }

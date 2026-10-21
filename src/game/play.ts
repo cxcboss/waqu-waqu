@@ -3,6 +3,7 @@ import { K, TILE_H } from '../art/sprites';
 import { button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
 import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
+import type { Data } from '../engine/telemetry';
 import type { Canvas, Ctx } from '../platform/types';
 import { SIZE_INFO, TUNING } from './config';
 import type { Game, Scene } from './game';
@@ -23,6 +24,9 @@ interface Jump {
   /** Set for jumps that land on a chosen spot whatever is underneath (leaping out of the water). */
   to?: Plat;
   how?: How;
+  /** Where it took off from, and what the pull looked like, for the play statistics. */
+  src?: Plat | null;
+  info?: Data;
 }
 
 /**
@@ -109,6 +113,8 @@ interface Offwork { truck: Plat; t: number; line: string; baseY: number; drive: 
 
 const codeSeg = (o: Order): Seg => ({ code: o.code, color: o.house.color });
 const frac = (v: number) => v - Math.floor(v);
+const r1 = (v: number) => Math.round(v * 10) / 10;
+const r2 = (v: number) => Math.round(v * 100) / 100;
 
 /** How to fit each briefing icon in its circle: offset from the circle center and scale. */
 const ICONS: Record<string, [number, number, number]> = {
@@ -155,6 +161,7 @@ const LETTERS = [
 ];
 
 export class PlayScene implements Scene {
+  readonly id = 'play';
   private lv: Level;
   private camY = 0;
   private speedK = 1;
@@ -235,6 +242,16 @@ export class PlayScene implements Scene {
   private rushing = false;
   /** Legs still aching after a charge held too long: no new pull until this runs out. */
   private tiredT = 0;
+  /** Counters for the run's summary in the play statistics. */
+  private tally = {
+    taps: 0, tired: 0, miss: 0, far: 0, climbOk: 0, climbFail: 0, strokes: 0, swimSec: 0, warn: 0, warnSec: 0,
+    rush: 0, pauses: 0, putBack: 0, bagFull: 0, exhaust: 0, rescued: 0, sunk: 0, idle: 0,
+    hints: {} as Record<string, number>, misses: {} as Record<string, number>,
+  };
+  /** The swim in progress, summed up when the frog gets out. */
+  private swim: { t: number; strokes: number; fails: number } | null = null;
+  private lastInput = 0;
+  private wall: number;
 
   constructor(private game: Game, readonly day: number) {
     const cfg = dayConfig(day);
@@ -249,6 +266,44 @@ export class PlayScene implements Scene {
     this.slowT = TUNING.truckSlowSec;
     this.slowCd = TUNING.truckSlowSec + TUNING.slowCooldown;
     game.audio.setMusic('bgm_work');
+    const tm = game.tm;
+    tm.day = day;
+    tm.run++;
+    game.perf = { frames: 0, slow: 0, time: 0 };
+    this.wall = game.platform.now();
+    const s = game.save;
+    this.log('run_start', { attempt: tm.count(`day${day}`), unlocked: s.day, best: s.best[day] ?? null, stamps: s.stamps[day] ?? [] });
+  }
+
+  /** An event for the play statistics, stamped with the run's clock and how far along the route it happened. */
+  private log(ev: string, d: Data = {}) {
+    this.game.tm.log(ev, { ...d, p: Math.round(clamp(-this.camY / this.cfg.length, 0, 1) * 1000) / 1000 }, this.time);
+  }
+
+  /** A tap that did nothing where the game was waiting for something else (a few of each kind are logged). */
+  private miss(where: string) {
+    const t = this.tally;
+    t.miss++;
+    const n = (t.misses[where] = (t.misses[where] ?? 0) + 1);
+    if (n <= 5) this.log('miss', { where });
+  }
+
+  /** The run so far: how it ended (or that it's still going), the parcels, and the counters. */
+  private summary(how: string): Data {
+    const orders = this.lv.orders;
+    const n = (...st: Order['state'][]) => orders.filter((o) => st.includes(o.state)).length;
+    const perf = this.game.perf;
+    const t = this.tally;
+    return {
+      how, total: orders.length, delivered: n('delivered'), wrong: n('wrong'), wet: n('wet', 'float'), missed: n('missed'), left: n('pool', 'bag'),
+      urgent: orders.filter((o) => o.urgent).length, urgentOnTime: orders.filter((o) => o.state === 'delivered' && o.urgent && !o.late).length,
+      cod: orders.filter((o) => o.cod).length, codRight: this.stats.codRight,
+      falls: this.stats.falls, jumps: this.stats.jumps, longest: Math.round(this.stats.longest), closeCalls: this.stats.closeCalls, bestTrip: this.stats.bestTrip,
+      ...t, swimSec: r1(t.swimSec), warnSec: r1(t.warnSec),
+      real: Math.round((this.game.platform.now() - this.wall) / 1000),
+      fps: perf.time > 1 ? Math.round(perf.frames / perf.time) : null, slow: perf.slow,
+      state: this.frog.state, on: this.frog.on?.kind ?? null, step: this.step,
+    };
   }
 
   private get H() {
@@ -371,6 +426,8 @@ export class PlayScene implements Scene {
   private updateRush(rush: number) {
     if (!this.rushing && rush > 0.08) {
       this.rushing = true;
+      this.tally.rush++;
+      this.log('rush');
       this.game.audio.play('truck_speedup', { volume: 0.8, rate: 1.15 });
       this.game.audio.play('truck_horn', { volume: 0.4, rate: 1.3, delay: 0.15 });
       this.showHint('rush', '跑太靠前了，车队【加速】追上来！', { dur: 4, sub: '待在屏幕中间最稳当' });
@@ -378,6 +435,7 @@ export class PlayScene implements Scene {
   }
 
   private setStep(step: Step) {
+    if (step !== this.step) this.log('step', { from: this.step, to: step, sec: r1(this.stepT) });
     this.step = step;
     this.stepT = 0;
   }
@@ -509,13 +567,18 @@ export class PlayScene implements Scene {
     const c = f.cling!;
     const off = Math.abs(this.climbNeedle(c.t) - 0.5);
     f.cling = null;
-    if (off <= this.climbZone() / 2) {
+    const ok = off <= this.climbZone() / 2;
+    this.log('climb', { ok, off: r2(off), zone: r2(this.climbZone()), w: this.weight(), on: c.p.kind, wait: r1(c.t) });
+    if (ok) {
+      this.tally.climbOk++;
       if (off <= CLIMB_PERFECT) this.popups.push({ text: '完美上岸！', x: f.x, y: f.y - 80, t: 0, color: P.lilyDeep });
       this.doneHint('climb');
       this.leapOut(c.p);
       return;
     }
     // slipped: back under for a moment, pushed off the edge
+    this.tally.climbFail++;
+    if (this.swim) this.swim.fails++;
     const p = c.p;
     let ux = -1, uy = 0;
     if (p.kind !== 'bank' && p.kind !== 'truck') {
@@ -729,6 +792,7 @@ export class PlayScene implements Scene {
     const s = this.sy(f.y), ts = this.sy(t.y);
     if (!this.roadSpot) {
       this.roadSpot = s > ts + t.ry ? 'behind' : 'ahead';
+      this.log('road', { spot: this.roadSpot });
       if (this.roadSpot === 'ahead' && s < ts - t.ry - 70) this.fx.push({ kind: 'say', x: 0, y: 0, t: 0, dur: 1.4, label: '等车来…' });
       else if (this.roadSpot === 'behind' && this.callT === null) {
         this.showHint('road', '落在【车尾】了！不跳会被甩出去', { dur: 4, sub: '在车尾起跳，卡车会喷尾气：跳得慢、看不清', warn: true, again: true });
@@ -742,6 +806,8 @@ export class PlayScene implements Scene {
     const f = this.frog;
     if (this.puffed || this.callT !== null || this.roadSpot !== 'behind' || f.on?.kind !== 'bank') return;
     this.puffed = true;
+    this.tally.exhaust++;
+    this.log('exhaust');
     const t = this.lv.truck;
     const dir = -1;
     const px = t.x + dir * 40, py = t.y + t.ry - 6;
@@ -764,6 +830,8 @@ export class PlayScene implements Scene {
   private land(x: number, y: number) {
     const j = this.frog.jump!;
     const p = this.findPlat(x, y);
+    const aimed = j.info?.step === 'aim' ? { target: !!p && p === this.aimTarget } : {};
+    this.log('jump', { ...j.info, dist: Math.round(j.dist), on: p?.kind ?? 'water', ...aimed, ...(p ? {} : this.missBy(x, y, j)) });
     if (p) {
       this.standOn(p, x, y, 'jump');
       if (j.dist > 285 && p.kind !== 'bank' && j.dist > this.stats.longest) {
@@ -773,6 +841,29 @@ export class PlayScene implements Scene {
         this.queueShot('long', `飞跃${(j.dist / 100).toFixed(1)}米！`, 5, 0.15);
       }
     } else this.fall(x, y);
+  }
+
+  /** For a jump into the water: how far off the nearest place to stand was, and whether the jump fell short of it or overshot. */
+  private missBy(x: number, y: number, j: Jump): Data {
+    let best: Plat | null = null;
+    let bestD = Infinity;
+    for (const p of this.lv.plats) {
+      if (p === j.src || Math.abs(p.y - y) > 500) continue;
+      // distance to the edge along the line from its center, in its own (possibly tilted) frame
+      const c = Math.cos(-p.rot), sn = Math.sin(-p.rot);
+      const lx = (x - p.x) * c - (y - p.y) * sn, ly = (x - p.x) * sn + (y - p.y) * c;
+      const n = p.kind === 'log' ? Math.max(Math.abs(lx) / p.rx, Math.abs(ly) / p.ry) : Math.hypot(lx / p.rx, ly / p.ry);
+      const d = Math.hypot(lx, ly) * Math.max(0, 1 - 1 / n);
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    const ux = j.x1 - j.x0, uy = j.y1 - j.y0;
+    const road = TUNING.riverR - x;
+    if (road < bestD) return { near: Math.round(Math.max(0, road)), to: 'bank', short: ux > 0 };
+    if (!best) return {};
+    return { near: Math.round(Math.max(0, bestD)), to: best.kind, short: (best.x - x) * ux + (best.y - y) * uy > 0 };
   }
 
   private fall(x: number, y: number) {
@@ -805,6 +896,8 @@ export class PlayScene implements Scene {
     }
     const floating = spilled.filter((o) => o.dunks < DUNK_MAX);
     const n = floating.length;
+    this.log('fall', { n: spilled.length, gone: gone.length, fy: r2(this.sy(y) / this.H) });
+    this.swim = { t: this.time, strokes: 0, fails: 0 };
     floating.forEach((o, i) => {
       o.state = 'float';
       const side = i - (n - 1) / 2;
@@ -872,14 +965,16 @@ export class PlayScene implements Scene {
     }
     for (const fl of [...this.floaters]) {
       if (this.tongue?.fl === fl || this.tongueQ.includes(fl)) continue;
-      if (f.state === 'swim' && fl.t > 0.6 && Math.hypot(fl.x - f.x, fl.y - f.y) < GRAB_R) this.catchParcel(fl);
+      if (f.state === 'swim' && fl.t > 0.6 && Math.hypot(fl.x - f.x, fl.y - f.y) < GRAB_R) this.catchParcel(fl, 'swim');
       else if (fl.t >= FLOAT_T || this.sy(fl.y) > this.H - 20) this.loseParcel(fl);
     }
   }
 
-  private catchParcel(fl: Floater) {
+  private catchParcel(fl: Floater, how: 'swim' | 'tongue') {
     const f = this.frog;
     const o = fl.o;
+    this.tally.rescued++;
+    this.log('rescue', { code: o.code, how, after: r1(fl.t), late: o.house.passed });
     this.floaters = this.floaters.filter((x) => x !== fl);
     this.fx.push({ kind: 'drops', x: fl.x, y: fl.y, t: 0, dur: 0.5, size: 0.6, seed: Math.random() * 100 });
     const au = this.game.audio;
@@ -901,6 +996,8 @@ export class PlayScene implements Scene {
   }
 
   private loseParcel(fl: Floater) {
+    this.tally.sunk++;
+    this.log('sunk', { code: fl.o.code });
     this.floaters = this.floaters.filter((x) => x !== fl);
     fl.o.state = 'wet';
     this.fx.push({ kind: 'sink', x: fl.x, y: fl.y, t: 0, dur: 1, size: fl.o.size, urgent: fl.o.urgent });
@@ -935,7 +1032,10 @@ export class PlayScene implements Scene {
     else if (f.state === 'swim') {
       f.cling = null;
       this.swimStroke(fl);
-    } else this.showToast('太远了，舌头够不着');
+    } else {
+      this.tally.far++;
+      this.showToast('太远了，舌头够不着');
+    }
   }
 
   /** One parcel at a time; any others tapped meanwhile wait their turn. */
@@ -956,7 +1056,7 @@ export class PlayScene implements Scene {
     tg.t += dt;
     if (tg.t < TONGUE_OUT + TONGUE_IN) return;
     this.tongue = null;
-    this.catchParcel(tg.fl);
+    this.catchParcel(tg.fl, 'tongue');
     this.game.audio.play('frog_croak', { volume: 0.4, rate: 1.3 });
     while (this.tongueQ.length) {
       const next = this.tongueQ.shift()!;
@@ -1037,6 +1137,7 @@ export class PlayScene implements Scene {
       y1 = lerp(f.y, p.y, 0.8);
     }
     const dist = Math.hypot(x1 - f.x, y1 - f.y);
+    this.endSwim(p.kind);
     f.state = 'jump';
     f.on = null;
     f.jump = { x0: f.x, y0: f.y, x1, y1, t: 0, T: 0.3 + dist / 1100, H: 50 + dist * 0.22, dist, to: p, how: 'climb' };
@@ -1052,8 +1153,20 @@ export class PlayScene implements Scene {
     this.doneHint('swim');
   }
 
+  /** Out of the water (climbed out, or hauled in by the truck): how long it took. */
+  private endSwim(to: string) {
+    const sw = this.swim;
+    if (!sw) return;
+    this.swim = null;
+    const sec = this.time - sw.t;
+    this.tally.swimSec += sec;
+    this.log('swim_out', { sec: r1(sec), strokes: sw.strokes, fails: sw.fails, to });
+  }
+
   private swimStroke(tgt: { x: number; y: number }) {
     const f = this.frog;
+    this.tally.strokes++;
+    if (this.swim) this.swim.strokes++;
     const dx = tgt.x - f.x, dy = tgt.y - f.y;
     const d = Math.hypot(dx, dy) || 1;
     f.vx += (dx / d) * TUNING.swimImpulse;
@@ -1085,16 +1198,25 @@ export class PlayScene implements Scene {
     return best;
   }
 
-  private startJump(dx: number, dy: number) {
+  private startJump(dx: number, dy: number, held: number, x: number, y: number) {
     const f = this.frog;
     const len = Math.hypot(dx, dy);
-    if (len < TUNING.deadDrag || f.state !== 'stand') return;
+    if (f.state !== 'stand') return;
+    if (len < TUNING.deadDrag) {
+      // a tap (or a nudge) where a pull was wanted: what was under the finger says what the player was after
+      const n = ++this.tally.taps;
+      if (n <= 20) this.log('tap', { len: Math.round(len), held: r1(held), under: this.findPlat(x, y + this.camY)?.kind ?? 'water', on: f.on?.kind ?? null, step: this.step });
+      return;
+    }
     const power = clamp(len / TUNING.maxDrag, 0, 1);
     const ux = -dx / len, uy = -dy / len;
     const dist = this.jumpDist(power, ux, uy);
     // coughing in exhaust, the frog jumps in slow motion
     const T = (0.34 + dist / 1000) * (this.smogT > 0 ? SMOG_SLOW : 1);
-    f.jump = { x0: f.x, y0: f.y, x1: f.x + ux * dist, y1: f.y + uy * dist, t: 0, T, H: 36 + dist * 0.3, dist };
+    const info: Data = { pow: r2(power), dx: Math.round(dx), dy: Math.round(dy), held: r1(held), from: f.on?.kind ?? null, w: this.weight(), fy: r2(this.sy(f.y) / this.H) };
+    if (this.smogT > 0) info.smog = true;
+    if (this.step) info.step = this.step;
+    f.jump = { x0: f.x, y0: f.y, x1: f.x + ux * dist, y1: f.y + uy * dist, t: 0, T, H: 36 + dist * 0.3, dist, src: f.on, info };
     if (this.step === 'aim') this.setStep('go');
     // the push-off shoves the pad down and away
     const from = f.on;
@@ -1138,6 +1260,7 @@ export class PlayScene implements Scene {
       h.passed = true;
       for (const o of this.lv.orders) {
         if (o.house !== h || (o.state !== 'pool' && o.state !== 'bag')) continue;
+        this.log('missed', { code: o.code, inBag: o.state === 'bag' });
         if (o.state === 'bag') {
           this.bag = this.bag.filter((b) => b !== o);
           this.showToast(`取件码 ${o.code} 的包裹没赶上`);
@@ -1151,6 +1274,7 @@ export class PlayScene implements Scene {
     for (const o of this.bag) {
       if (o.urgent && !o.late && this.time > o.deadline) {
         o.late = true;
+        this.log('urgent_late', { code: o.code });
         this.showToast('加急件超时了，还是要送到哦');
         this.game.audio.play('urgent_late');
       }
@@ -1164,13 +1288,21 @@ export class PlayScene implements Scene {
     if (f.state !== 'jump' && !onTruck && s > this.H + 36) {
       // with the round already done, the waiting truck just reels the frog back in
       if (this.callT !== null) this.yank();
-      else this.endDay('thrown');
+      else {
+        this.log('thrown', { state: f.state, on: f.on?.kind ?? null, warnSec: r1(this.inWarnT) });
+        this.endDay('thrown');
+      }
       return;
     }
     const inWarn = f.state !== 'jump' && !onTruck && s > this.H * TUNING.warnLine;
     this.warnK = approach(this.warnK, inWarn ? 1 : 0, 6, dt);
     if (inWarn) {
+      if (this.inWarnT === 0) {
+        this.tally.warn++;
+        this.log('warn', { state: f.state, on: f.on?.kind ?? null });
+      }
       this.inWarnT += dt;
+      this.tally.warnSec += dt;
       this.warnBuzz -= dt;
       this.warnSfx -= dt;
       if (this.warnBuzz <= 0) {
@@ -1208,6 +1340,7 @@ export class PlayScene implements Scene {
       if (this.bag.length || this.floaters.length || this.tongue || this.lv.orders.some((o) => o.state === 'pool')) return;
       this.callT = CALL_T;
       this.lastHonk = CALL_T;
+      this.log('all_out');
       this.hint = null;
       this.showHint('call', `全部送完！【${CALL_T}秒内】跳回运输车下班`, { dur: 6, sub: '时间到会被拽上车；不着急的话，去车后面的路上逛逛' });
       this.spawnEgg();
@@ -1234,6 +1367,8 @@ export class PlayScene implements Scene {
   private yank() {
     const f = this.frog;
     if (f.state === 'board') return;
+    this.log('yank', { state: f.state, on: f.on?.kind ?? null });
+    this.endSwim('yank');
     const t = this.lv.truck;
     if (f.state === 'swim') {
       this.bubbles?.stop(0.2);
@@ -1259,6 +1394,7 @@ export class PlayScene implements Scene {
     if (!e || e.got || f.state !== 'stand' || f.on?.kind !== 'bank') return;
     if (Math.hypot(f.x - e.x, f.y - e.y) > 90) return;
     e.got = true;
+    this.log('egg');
     this.hint = null;
     this.showHint('egg', '捡到一封【遗失的信】！', { dur: 5, sub: pick(LETTERS, Math.random) });
     this.queueShot('egg', '捡到一封遗失的信！', 8, 0.1);
@@ -1338,6 +1474,7 @@ export class PlayScene implements Scene {
   private finish() {
     if (!this.ended || this.leaving) return;
     this.leaving = true;
+    this.log('run_end', this.summary(this.ended));
     for (const o of this.lv.orders) {
       if (o.state === 'pool' || o.state === 'bag') o.state = 'missed';
       else if (o.state === 'float') o.state = 'wet';
@@ -1404,6 +1541,8 @@ export class PlayScene implements Scene {
   private pickup(o: Order) {
     const used = this.slotsUsed();
     if (used + SIZE_INFO[o.size].slots > this.cfg.bagSlots) {
+      this.tally.bagFull++;
+      this.log('bag_full', { code: o.code, size: o.size, used });
       this.shakeCard = { id: o.id, t: 0 };
       this.game.audio.play('bag_full');
       this.showToast('背包装不下了');
@@ -1419,6 +1558,7 @@ export class PlayScene implements Scene {
       o.deadline = this.time + Math.max(TUNING.urgentSeconds, ahead / this.cfg.speed + 16);
     }
     this.bag.push(o);
+    this.log('pickup', { code: o.code, size: o.size, urgent: o.urgent, cod: !!o.cod, used: this.slotsUsed() });
     if (o.urgent) this.game.audio.play('urgent_alert', { delay: 0.25 });
     // off the cargo stack and into the frog's satchel
     const f = this.frog;
@@ -1436,6 +1576,8 @@ export class PlayScene implements Scene {
 
   /** On the truck, a parcel tapped in the satchel goes back onto the cargo stack. */
   private putBack(o: Order) {
+    this.tally.putBack++;
+    this.log('put_back', { code: o.code, size: o.size });
     this.fly(o);
     this.bag = this.bag.filter((b) => b !== o);
     o.state = 'pool';
@@ -1451,6 +1593,13 @@ export class PlayScene implements Scene {
   private deliver(o: Order, h: House) {
     this.bag = this.bag.filter((b) => b !== o);
     o.deliveredTo = h;
+    const d: Data = { code: o.code, ok: o.house === h, size: o.size, urgent: o.urgent, late: o.late, cod: !!o.cod, sec: r1(this.time - o.pickedAt) };
+    if (o.house !== h) {
+      // what this house was waiting for, and whether it was in the bag all along (a mis-tap rather than a mix-up)
+      d.want = this.lv.orders.filter((x) => x.house === h && (x.state === 'pool' || x.state === 'bag')).map((x) => x.code);
+      d.hadRight = this.bag.some((b) => b.house === h);
+    }
+    this.log('deliver', d);
     const f = this.frog;
     const rx = h.plat.x + h.resident.x, ry = h.plat.y + h.resident.y;
     // The frog leans in and tosses it over; the resident catches it and holds it up.
@@ -1510,6 +1659,7 @@ export class PlayScene implements Scene {
     const c = this.cod!;
     const { price, paid } = c.o.cod!;
     const ok = c.opts[i] === paid - price;
+    this.log('cod', { ok, pick: c.opts[i], right: paid - price, price, paid, sec: r1(c.t) });
     c.pick = i;
     c.pickT = 0;
     c.o.codOk = ok;
@@ -1550,6 +1700,13 @@ export class PlayScene implements Scene {
       for (const b of this.menuBtns) if (hit(b.rect, x, y)) this.pressed = b.id;
       return;
     }
+    // a long stretch without touching anything: stuck, or just riding along?
+    const gap = this.time - this.lastInput;
+    this.lastInput = this.time;
+    if (gap >= 8 && !this.ended && !this.off && this.step !== 'intro') {
+      this.tally.idle++;
+      this.log('idle', { sec: r1(gap), step: this.step, state: this.frog.state, on: this.frog.on?.kind ?? null });
+    }
     if (this.off) {
       // a tap brings the card up at once; on the card, it goes straight to HQ
       if (this.off.t < CARD_AT) this.off.t = CARD_AT;
@@ -1559,6 +1716,7 @@ export class PlayScene implements Scene {
     if (this.ended) return;
     if (this.step === 'intro') {
       if (this.stepT > 0.4 && hit(this.introBtn, x, y, 24)) this.pressed = 'intro';
+      else this.miss('intro');
       return;
     }
     if (hit(this.pauseBtn, x, y, 14)) {
@@ -1571,13 +1729,15 @@ export class PlayScene implements Scene {
       if (fl) {
         this.endRescueLesson();
         this.tapFloater(fl);
-      }
+      } else this.miss('rescue');
       return;
     }
     if (this.cod) {
       const c = this.cod;
-      if (c.pick === null && c.t > 0.3) c.btns.forEach((r, i) => hit(r, x, y, 8) && (this.pressed = `chg${i}`));
-      else if (c.pick !== null && c.pickT > 0.5) this.closeCod();
+      if (c.pick === null && c.t > 0.3) {
+        c.btns.forEach((r, i) => hit(r, x, y, 8) && (this.pressed = `chg${i}`));
+        if (!this.pressed) this.miss('cod');
+      } else if (c.pick !== null && c.pickT > 0.5) this.closeCod();
       return;
     }
     // cards act when let go, so the press shows first
@@ -1589,7 +1749,10 @@ export class PlayScene implements Scene {
       }
     }
     // while a card is spotlighted, only the cards respond
-    if (this.step === 'pick' || this.step === 'deliver') return;
+    if (this.step === 'pick' || this.step === 'deliver') {
+      this.miss(this.step);
+      return;
+    }
     const f = this.frog;
     if (fl && (f.state === 'swim' || f.state === 'stand')) {
       this.tapFloater(fl);
@@ -1650,7 +1813,7 @@ export class PlayScene implements Scene {
     if (!this.aim || this.aim.id !== id) return;
     const a = this.aim;
     this.aim = null;
-    if (this.frog.state === 'stand') this.startJump(x - a.sx, y - a.sy);
+    if (this.frog.state === 'stand') this.startJump(x - a.sx, y - a.sy, a.t, a.sx, a.sy);
     this.stopCharge();
   }
 
@@ -1690,6 +1853,8 @@ export class PlayScene implements Scene {
 
   /** Held the pull too long: the legs give out and the jump is called off. */
   private tired() {
+    this.tally.tired++;
+    this.log('tired', { step: this.step, on: this.frog.on?.kind ?? null });
     this.aim = null;
     this.stopCharge();
     this.tiredT = 0.6;
@@ -1759,6 +1924,8 @@ export class PlayScene implements Scene {
   }
 
   blur() {
+    // the page may be closing: keep a snapshot of the run in case it never comes back
+    if (!this.leaving) this.log('run_snap', this.summary('hidden'));
     if (!this.ended) this.setPaused(true);
     this.aim = null;
     this.stopCharge();
@@ -1770,6 +1937,8 @@ export class PlayScene implements Scene {
     this.paused = on;
     const au = this.game.audio;
     if (on) {
+      this.tally.pauses++;
+      this.log('pause');
       this.aim = null;
       this.stopLoops();
       au.pauseMusic();
@@ -1777,6 +1946,8 @@ export class PlayScene implements Scene {
   }
 
   private menu(id: string) {
+    this.log('menu', { id });
+    if (id === 'restart' || id === 'map') this.log('run_end', this.summary(id === 'restart' ? 'restart' : 'quit'));
     this.game.audio.play(id === 'resume' ? 'ui_close' : 'ui_tap');
     if (id === 'resume') this.setPaused(false);
     else if (id === 'restart') {
@@ -1796,6 +1967,8 @@ export class PlayScene implements Scene {
     if (this.hint && this.hint.dur > 50 && key !== 'swim' && key !== 'warn' && key !== 'wrongHouse') return;
     this.hint = { key, line: typeof line === 'string' ? segs(line) : line, sub: o.sub, t: 0, dur: o.dur ?? 5, warn: o.warn };
     if (!o.again) this.hintsDone.add(key);
+    const n = (this.tally.hints[key] = (this.tally.hints[key] ?? 0) + 1);
+    if (n <= 3) this.log('hint', { key });
   }
 
   private doneHint(key: HintKey) {

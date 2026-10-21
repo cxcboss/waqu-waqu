@@ -10,6 +10,7 @@ import { drawTruckBase } from './play';
 const TILE = TILE_H * K;
 
 export class TitleScene implements Scene {
+  readonly id = 'title';
   private t = 0;
   private cam = 0;
   private btns: { id: string; rect: Rect }[] = [];
@@ -21,6 +22,7 @@ export class TitleScene implements Scene {
 
   constructor(private game: Game) {
     game.audio.setMusic('bgm_title');
+    game.tm.day = null;
   }
 
   update(dt: number) {

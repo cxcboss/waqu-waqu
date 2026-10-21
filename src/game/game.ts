@@ -2,10 +2,13 @@ import { P } from '../art/palette';
 import { SpriteBank } from '../art/sprites';
 import { text } from '../art/ui';
 import { Audio } from '../engine/audio';
+import { Telemetry, type TelemetryOptions } from '../engine/telemetry';
 import type { Ctx, Platform } from '../platform/types';
 import { DAYS } from './config';
 
 export interface Scene {
+  /** Short name for the play statistics. */
+  readonly id: string;
   update(dt: number): void;
   render(ctx: Ctx): void;
   down?(x: number, y: number, id: number): void;
@@ -41,6 +44,10 @@ export class Game {
   ctx: Ctx;
   sprites: SpriteBank;
   audio: Audio;
+  /** Anonymous play statistics (see docs/telemetry.md). */
+  tm: Telemetry;
+  /** Frames drawn, slow ones (over 50 ms) and seconds on screen since the last reset, to spot devices that stutter. */
+  perf = { frames: 0, slow: 0, time: 0 };
   save: SaveData;
   scene: Scene | null = null;
   ready = false;
@@ -51,15 +58,26 @@ export class Game {
   /** Fade through black between scenes: out over the old one, then in over the new one. */
   private fade: { next: Scene | null; t: number } | null = null;
 
-  constructor(readonly platform: Platform) {
+  constructor(readonly platform: Platform, tm: TelemetryOptions = {}) {
     this.ctx = platform.canvas.getContext('2d')!;
     this.sprites = new SpriteBank(platform);
     this.audio = new Audio(platform);
     this.save = this.readSave();
     this.audio.enabled = this.save.sound;
+    this.tm = new Telemetry(platform, tm);
   }
 
-  async start(first: () => Scene) {
+  async start(first: () => Scene, entry: Record<string, unknown> = {}) {
+    const t0 = this.platform.now();
+    const s = this.save;
+    this.tm.log('open', {
+      ...this.platform.deviceInfo(), ...entry, visit: this.tm.visits,
+      unlocked: s.day, coins: s.coins, sound: s.sound, stamps: Object.values(s.stamps).flat().filter(Boolean).length,
+    });
+    this.platform.onError((msg, where) => {
+      this.tm.log('error', { msg, where, scene: this.scene?.id ?? null });
+      this.tm.soon();
+    });
     this.resize();
     this.platform.onResize(() => this.resize());
     this.platform.onTouch((kind, t) => {
@@ -79,6 +97,8 @@ export class Game {
         this.audio.suspend();
         this.scene?.blur?.();
       }
+      this.tm.log(v ? 'show' : 'hide', { scene: this.scene?.id ?? 'loading' });
+      if (!v) this.tm.hide();
       this.last = this.platform.now();
     });
     this.last = this.platform.now();
@@ -94,6 +114,7 @@ export class Game {
     });
     await fonts;
     void this.audio.load('audio/');
+    this.tm.log('loaded', { ms: Math.round(this.platform.now() - t0) });
     this.ready = true;
     this.go(first());
   }
@@ -136,6 +157,12 @@ export class Game {
   private frame = (t: number) => {
     let dt = (t - this.last) / 1000;
     this.last = t;
+    if (dt > 0 && dt < 1) {
+      this.perf.frames++;
+      this.perf.time += dt;
+      if (dt > 0.05) this.perf.slow++;
+    }
+    this.tm.tick();
     if (!(dt >= 0) || dt > 0.25) dt = STEP; // tab switches, hiccups
     this.acc += dt;
     let steps = 0;
@@ -188,6 +215,7 @@ export class Game {
   }
 
   setSound(on: boolean) {
+    this.tm.log('sound', { on, scene: this.scene?.id ?? null });
     this.save.sound = on;
     this.audio.setEnabled(on);
     this.writeSave();

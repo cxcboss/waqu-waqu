@@ -18,6 +18,7 @@ const HOP_T = 0.45;
  * its best grade and the three stamps collected. Tap a stop to see what it asks for and start it.
  */
 export class MapScene implements Scene {
+  readonly id = 'map';
   private t = 0;
   private sel: number;
   /** The frog hopping from one stop to another. */
@@ -31,6 +32,8 @@ export class MapScene implements Scene {
   constructor(private game: Game, day?: number) {
     this.sel = clamp(day ?? game.save.day, 1, this.unlocked);
     game.audio.setMusic('bgm_title');
+    game.tm.day = null;
+    game.tm.log('map', { sel: this.sel, unlocked: this.unlocked });
   }
 
   private get unlocked() {
@@ -66,6 +69,7 @@ export class MapScene implements Scene {
     const b = this.btns.find((b) => b.id === id && hit(b.rect, x, y, 6));
     if (!b) return;
     const au = this.game.audio;
+    this.game.tm.log(b.id === 'go' ? 'map_go' : 'map_back', { sel: this.sel, sec: Math.round(this.t) });
     if (b.id === 'back') {
       au.play('ui_back');
       this.game.go(new TitleScene(this.game));
@@ -78,6 +82,7 @@ export class MapScene implements Scene {
   private select(day: number) {
     const au = this.game.audio;
     if (day > this.unlocked) {
+      this.game.tm.log('map_locked', { day });
       au.play('ui_error');
       this.toast = { text: `先通过第${day - 1}天，才能解锁这一站`, t: 0 };
       return;

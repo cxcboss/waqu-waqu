@@ -64,6 +64,13 @@ export interface Platform {
   showImage(canvas: Canvas | null, rect?: { x: number; y: number; w: number; h: number }): void;
   share(opts: { title: string; canvas?: Canvas }): void;
 
+  /** Coarse, non-identifying facts for the play statistics: system, browser or host app, screen size. */
+  deviceInfo(): Record<string, string | number | boolean>;
+  /** POSTs a JSON body; resolves to the HTTP status, or 0 when it didn't get through. */
+  postJson(url: string, body: string, headers: Record<string, string>, keepalive?: boolean): Promise<number>;
+  /** Uncaught errors, for the play statistics. */
+  onError(cb: (msg: string, where: string) => void): void;
+
   now(): number;
   requestFrame(cb: (t: number) => void): void;
 }

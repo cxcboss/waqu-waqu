@@ -28,3 +28,5 @@ TypeScript + Canvas 2D，没有用游戏引擎。所有浏览器相关的调用�
 - `src/art/`：占位美术（代码绘制的 SVG）。正式美术放进 `public/art/<名字>.png` 并把名字写进
   `public/art/manifest.json`，就会替换同名占位图（名字和尺寸见 `src/art/sprites.ts`）
 - `public/audio/`：音效和音乐，来源和授权见 `public/audio/CREDITS.md`
+- 试玩数据：游戏会匿名记录游玩过程（不含个人信息），说明和事件表见 `docs/telemetry.md`，
+  `python3 scripts/stats.py` 出报告。自己测试时网址加 `?tm=off`，这台设备就不记了

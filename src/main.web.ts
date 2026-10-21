@@ -4,8 +4,13 @@ import { PlayScene } from './game/play';
 import { TitleScene } from './game/title';
 import { WebPlatform } from './platform/web';
 
-const game = new Game(new WebPlatform());
+const q = new URLSearchParams(location.search);
+// Play statistics: ?tm=off keeps this device out of them for good (?tm=on lets it back in);
+// nothing is collected on a local dev server unless asked with ?tm=on.
+const tm = q.get('tm');
+const dev = /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) || location.protocol === 'file:';
+const game = new Game(new WebPlatform(), { toggle: tm === 'on' || tm === 'off' ? tm : null, dev });
 // ?day=N jumps straight into a day (handy for testing).
-const day = Number(new URLSearchParams(location.search).get('day'));
-void game.start(() => (day >= 1 ? new PlayScene(game, day) : new TitleScene(game)));
+const day = Number(q.get('day'));
+void game.start(() => (day >= 1 ? new PlayScene(game, day) : new TitleScene(game)), day >= 1 ? { jump: day } : {});
 (window as unknown as { __game: Game }).__game = game;

@@ -77,6 +77,7 @@ interface Row {
 }
 
 export class HqScene implements Scene {
+  readonly id = 'hq';
   private t = 0;
   private grade: string;
   private income: number;
@@ -147,6 +148,7 @@ export class HqScene implements Scene {
     const prev = s.best[r.day];
     if (!prev || ORDER.indexOf(grade) < ORDER.indexOf(prev)) s.best[r.day] = grade;
     game.writeSave();
+    game.tm.log('hq', { grade, pass: this.pass, stamps: this.stamps, fresh: this.fresh, income: this.income, coins: s.coins, photos: r.photos.length });
     game.audio.setMusic('bgm_hq');
     game.audio.play('paper_flip', { delay: 0.15 });
     game.audio.play('owl_hoot', { delay: 0.5, volume: 0.8 });
@@ -248,6 +250,7 @@ export class HqScene implements Scene {
     if (!b || !hit(b.rect, x, y)) return;
     this.game.audio.play('ui_tap');
     this.game.platform.showImage(null);
+    this.game.tm.log('hq_btn', { id, open: id !== 'next' || this.canNext, sec: Math.round(this.t) });
     if (id === 'retry') this.game.go(new PlayScene(this.game, this.r.day));
     else if (id === 'map') this.game.go(new MapScene(this.game, this.canNext ? this.r.day + 1 : this.r.day));
     else if (id === 'next') {
@@ -260,6 +263,7 @@ export class HqScene implements Scene {
 
   private openView(i: number) {
     if (!this.r.photos[i]) return;
+    this.game.tm.log('photo', { i, kind: this.r.photos[i].kind });
     this.view = { i, t: 0, dx: 0 };
     this.game.audio.play('ui_open');
     // get every picture ready to save, so the save can happen right inside the tap
@@ -292,6 +296,7 @@ export class HqScene implements Scene {
       this.game.audio.play('ui_tap');
       const p = this.r.photos[v.i];
       void this.game.platform.saveImage(this.card(p), `waqu-day${this.r.day}-${v.i + 1}.jpg`).then((res) => {
+        this.game.tm.log('photo_save', { i: v.i, kind: p.kind, res });
         if (SAVED[res]) this.toast = { text: SAVED[res], t: 0 };
         if (res === 'shared' || res === 'downloaded') this.game.audio.play('photo_shutter', { volume: 0.6 });
       });
