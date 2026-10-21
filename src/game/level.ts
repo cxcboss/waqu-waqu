@@ -39,7 +39,7 @@ export interface House {
   plateAt: { x: number; y: number };
   react: { kind: 'happy' | 'confused'; t: number } | null;
   /** The parcel the resident is holding up after a hand-over; t < 0 while it's still flying over. */
-  hold: { size: Size; urgent: boolean; wrong: boolean; t: number } | null;
+  hold: { size: Size; urgent: boolean; cod: boolean; wrong: boolean; t: number } | null;
   passed: boolean;
   phase: number;
 }

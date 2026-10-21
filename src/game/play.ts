@@ -1,5 +1,5 @@
 import { INK, P } from '../art/palette';
-import { K, TILE_H } from '../art/sprites';
+import { K, TILE_H, boxSprite } from '../art/sprites';
 import { button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
 import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
@@ -74,7 +74,7 @@ interface Floater { o: Order; x: number; y: number; vx: number; vy: number; t: n
 interface Fx {
   kind: 'ripple' | 'splash' | 'dust' | 'floatBox' | 'washed' | 'heart' | 'qmark' | 'drops' | 'petals' | 'sink' | 'arc' | 'coins' | 'say';
   x: number; y: number; t: number; dur: number;
-  size?: number; urgent?: boolean;
+  size?: number; urgent?: boolean; cod?: boolean;
   /** For 'arc' (world space): where it ends. */
   x2?: number; y2?: number;
   label?: string;
@@ -895,7 +895,7 @@ export class PlayScene implements Scene {
     const gone = spilled.filter((o) => o.dunks >= DUNK_MAX);
     gone.forEach((o, i) => {
       o.state = 'wet';
-      this.fx.push({ kind: 'washed', x: x + (i - (gone.length - 1) / 2) * 40, y, t: -0.1 - i * 0.1, dur: 1.6, size: o.size, urgent: o.urgent, seed: Math.random() * 6 });
+      this.fx.push({ kind: 'washed', x: x + (i - (gone.length - 1) / 2) * 40, y, t: -0.1 - i * 0.1, dur: 1.6, size: o.size, urgent: o.urgent, cod: !!o.cod, seed: Math.random() * 6 });
     });
     if (gone.length) {
       this.showToast(`取件码 ${gone.map((o) => o.code).join('、')} 第${DUNK_MAX}次落水，被冲走了`);
@@ -1007,7 +1007,7 @@ export class PlayScene implements Scene {
     this.log('sunk', { code: fl.o.code });
     this.floaters = this.floaters.filter((x) => x !== fl);
     fl.o.state = 'wet';
-    this.fx.push({ kind: 'sink', x: fl.x, y: fl.y, t: 0, dur: 1, size: fl.o.size, urgent: fl.o.urgent });
+    this.fx.push({ kind: 'sink', x: fl.x, y: fl.y, t: 0, dur: 1, size: fl.o.size, urgent: fl.o.urgent, cod: !!fl.o.cod });
     this.fx.push({ kind: 'ripple', x: fl.x, y: fl.y + 6, t: 0, dur: 0.9, size: 44 });
     this.game.audio.play('parcel_soaked');
     this.showToast(`取件码 ${fl.o.code} 的包裹沉下去了……`);
@@ -1074,11 +1074,14 @@ export class PlayScene implements Scene {
     }
   }
 
-  /** Where the tongue starts, in world coordinates. */
+  /**
+   * Where the tongue starts, in world coordinates: the painted frog's mouth (frog_swim, or
+   * frog_lick leaning toward the parcel as drawFrog draws it).
+   */
   private mouth(): [number, number] {
     const f = this.frog;
-    if (f.state === 'swim') return [f.x, f.y - 20];
-    return [f.x + f.giveDir * 4, f.y - f.z - 58];
+    if (f.state === 'swim') return [f.x + f.giveDir * 1.3, f.y - 4.5];
+    return [f.x + f.giveDir * 24, f.y - f.z - 63];
   }
 
   /** Tongue tip and the parcel it holds while reeling in, in world coordinates. */
@@ -1573,7 +1576,7 @@ export class PlayScene implements Scene {
     // off the cargo stack and into the frog's satchel
     const f = this.frog;
     const [cx, cy] = this.cargoSpot();
-    this.fx.push({ kind: 'arc', x: cx, y: cy, x2: f.x - 26, y2: f.y - 36, t: 0, dur: 0.32, size: o.size, urgent: o.urgent });
+    this.fx.push({ kind: 'arc', x: cx, y: cy, x2: f.x - 26, y2: f.y - 36, t: 0, dur: 0.32, size: o.size, urgent: o.urgent, cod: !!o.cod });
     this.fx.push({ kind: 'dust', x: f.x - 26, y: f.y - 20, t: -0.32, dur: 0.35, size: 0.4 });
     f.swingV += 4;
     this.game.audio.play('parcel_pickup');
@@ -1593,7 +1596,7 @@ export class PlayScene implements Scene {
     o.state = 'pool';
     const f = this.frog;
     const [cx, cy] = this.cargoSpot();
-    this.fx.push({ kind: 'arc', x: f.x - 26, y: f.y - 36, x2: cx, y2: cy, t: 0, dur: 0.32, size: o.size, urgent: o.urgent });
+    this.fx.push({ kind: 'arc', x: f.x - 26, y: f.y - 36, x2: cx, y2: cy, t: 0, dur: 0.32, size: o.size, urgent: o.urgent, cod: !!o.cod });
     this.fx.push({ kind: 'dust', x: cx, y: cy, t: -0.32, dur: 0.35, size: 0.4 });
     f.swingV -= 4;
     this.game.audio.play('parcel_place', { volume: 0.8, rate: 1.1 });
@@ -1617,8 +1620,8 @@ export class PlayScene implements Scene {
     f.give = 1;
     f.giveDir = rx < f.x ? -1 : 1;
     f.swingV += 5;
-    this.fx.push({ kind: 'arc', x: f.x + f.giveDir * 24, y: f.y - 44, x2: rx, y2: ry - 64, t: 0, dur: T, size: o.size, urgent: o.urgent });
-    h.hold = { size: o.size, urgent: o.urgent, wrong: o.house !== h, t: -T };
+    this.fx.push({ kind: 'arc', x: f.x + f.giveDir * 24, y: f.y - 44, x2: rx, y2: ry - 64, t: 0, dur: T, size: o.size, urgent: o.urgent, cod: !!o.cod });
+    h.hold = { size: o.size, urgent: o.urgent, cod: !!o.cod, wrong: o.house !== h, t: -T };
     const au = this.game.audio;
     au.play('jump_whoosh', { volume: 0.35, rate: 1.5 });
     au.play('parcel_place', { delay: T });
@@ -2370,7 +2373,7 @@ export class PlayScene implements Scene {
       const up = easeOutBack(Math.min(1, hd.t / 0.25));
       const a = hd.t > 1.25 ? Math.max(0, (1.6 - hd.t) / 0.35) : 1;
       const shake = hd.wrong ? Math.sin(hd.t * 26) * 0.12 * Math.max(0, 1 - hd.t / 1.2) : 0;
-      sp.draw(ctx, `box${hd.size}${hd.urgent ? 'u' : ''}`, rx + (hd.wrong ? Math.sin(hd.t * 26) * 3 : 0), ry - 58 - up * 16, 0.85, 0.85, shake + rot, a);
+      sp.draw(ctx, boxSprite(hd.size, hd.urgent, hd.cod), rx + (hd.wrong ? Math.sin(hd.t * 26) * 3 : 0), ry - 58 - up * 16, 0.85, 0.85, shake + rot, a);
     }
     if (r && r.kind === 'confused' && r.t < 2) {
       const a = Math.min(1, r.t * 5) * (r.t > 1.6 ? (2 - r.t) / 0.4 : 1);
@@ -2402,7 +2405,7 @@ export class PlayScene implements Scene {
     const slots: [number, number][] = [[20, 74], [62, 80], [30, 106], [66, 140], [24, 156]];
     const dir = -1;
     const drawn = pool.map((o, i) => ({ o, s: slots[i] })).sort((a, b) => a.s[1] - b.s[1]);
-    for (const { o, s } of drawn) sp.draw(ctx, `box${o.size}${o.urgent ? 'u' : ''}`, x + dir * s[0] * K, y + s[1] * K);
+    for (const { o, s } of drawn) sp.draw(ctx, boxSprite(o.size, o.urgent, o.cod), x + dir * s[0] * K, y + s[1] * K);
     if (this.honkT > 0) {
       const k = 1 - this.honkT / 0.5;
       const bx = t.x + dir * 70, by = this.sy(t.y) - 150 - k * 14;
@@ -2435,7 +2438,7 @@ export class PlayScene implements Scene {
         ctx.lineWidth = 3;
         ctx.stroke();
         const lean = c.p.kind === 'bank' || c.p.kind === 'truck' ? 0.25 : clamp((c.p.x - f.x) / 200, -0.3, 0.3);
-        sp.draw(ctx, 'frog_swim', x, gy - 4 + this.padSink(c.p), FROG_S, FROG_S * (1.05 + strain), lean + strain);
+        sp.draw(ctx, 'frog_cling', x, gy - 4 + this.padSink(c.p), FROG_S, FROG_S * (1.05 + strain), lean + strain);
         return;
       }
       // just gone under: spluttering, spinning a little, bubbles coming up
@@ -2477,7 +2480,7 @@ export class PlayScene implements Scene {
       // leaning into the stroke, or toward a parcel being licked up
       const lean = this.tongue ? f.giveDir * 0.15 : v > 20 ? clamp(f.vx / 300, -0.3, 0.3) : 0;
       const flail = Math.sin(this.time * 18) * 0.35 * dunk;
-      sp.draw(ctx, 'frog_swim', x, gy + 4 + bob, FROG_S * (1 + stroke * 0.1), FROG_S * (1 - stroke * 0.08 - dunk * 0.15), lean + flail + Math.sin(this.time * 9) * 0.05 * (1 - stroke));
+      sp.draw(ctx, dunk > 0 ? 'frog_dunk' : 'frog_swim', x, gy + 4 + bob, FROG_S * (1 + stroke * 0.1), FROG_S * (1 - stroke * 0.08 - dunk * 0.15), lean + flail + Math.sin(this.time * 9) * 0.05 * (1 - stroke));
       return;
     }
     const b = f.board;
@@ -2492,7 +2495,7 @@ export class PlayScene implements Scene {
     ctx.fill();
     ctx.restore();
 
-    let sx = 1, sy = 1, rot = 0, ox = 0;
+    let sx = 1, sy = 1, rot = 0, ox = 0, flip = false;
     let name = this.off ? 'frog_happy' : this.smogT > 0 ? 'frog_nervous' : 'frog_stand';
     const power = this.aimPower();
     if (f.state === 'stand') {
@@ -2522,7 +2525,11 @@ export class PlayScene implements Scene {
         const lean = this.tongue ? 1 : Math.sin(f.give * Math.PI);
         rot += f.giveDir * 0.2 * lean;
         ox += f.giveDir * 8 * lean;
-        if (this.tongue) name = 'frog_shock';
+        if (this.tongue) {
+          // the licking pose looks up and to the right: turn it toward the parcel
+          name = 'frog_lick';
+          flip = f.giveDir < 0;
+        }
       }
     } else if (b) {
       // the hop onto the bed is a flip; on the end of the rope it's two panicked spins
@@ -2545,6 +2552,7 @@ export class PlayScene implements Scene {
     const mid = b ? 50 : 0;
     ctx.translate(x + ox, y - mid);
     ctx.rotate(rot);
+    if (flip) ctx.scale(-1, 1);
     ctx.translate(0, mid);
     sp.draw(ctx, name, 0, 0, FROG_S * sx, FROG_S * sy);
     // satchel hangs from the strap and swings with the jumps
@@ -2565,7 +2573,7 @@ export class PlayScene implements Scene {
     const reeled = this.tongue?.fl === fl && this.tongue.t >= TONGUE_OUT;
     if (reeled) {
       const [tx, ty] = this.tongueTip()!;
-      sp.draw(ctx, `box${fl.o.size}${fl.o.urgent ? 'u' : ''}`, tx, this.sy(ty) + 24, 0.8, 0.8, Math.sin(this.time * 20) * 0.2);
+      sp.draw(ctx, boxSprite(fl.o.size, fl.o.urgent, fl.o.cod), tx, this.sy(ty) + 24, 0.8, 0.8, Math.sin(this.time * 20) * 0.2);
       return;
     }
     ctx.save();
@@ -2579,7 +2587,7 @@ export class PlayScene implements Scene {
     ctx.lineCap = 'round';
     ctx.stroke();
     ctx.restore();
-    sp.draw(ctx, `box${fl.o.size}${fl.o.urgent ? 'u' : ''}`, x, y + 8 + bob + sink * 16, 0.82, 0.82 * (1 - sink * 0.35), Math.sin(this.time * 2 + fl.spin) * 0.2, 1 - sink * 0.5);
+    sp.draw(ctx, boxSprite(fl.o.size, fl.o.urgent, fl.o.cod), x, y + 8 + bob + sink * 16, 0.82, 0.82 * (1 - sink * 0.35), Math.sin(this.time * 2 + fl.spin) * 0.2, 1 - sink * 0.5);
     // a wavy water line across the bottom of the box
     ctx.save();
     ctx.strokeStyle = 'rgba(251,247,238,0.85)';
@@ -2641,6 +2649,7 @@ export class PlayScene implements Scene {
 
   /** The lost letter: an envelope with a red seal, glinting now and then. */
   private drawEgg(ctx: Ctx, x: number, y: number) {
+    const sp = this.game.sprites;
     const bob = Math.sin(this.time * 3) * 2;
     ctx.save();
     ctx.translate(x, y + bob);
@@ -2650,21 +2659,8 @@ export class PlayScene implements Scene {
     ctx.fillStyle = P.roadDeep;
     ctx.fill();
     ctx.globalAlpha = 1;
-    roundRect(ctx, -28, -18, 56, 36, 4);
-    ctx.fillStyle = P.white;
-    ctx.fill();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2.2;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(-28, -18);
-    ctx.lineTo(0, 4);
-    ctx.lineTo(28, -18);
-    ctx.stroke();
-    ellipse(ctx, 0, 4, 7, 7);
-    ctx.fillStyle = P.red;
-    ctx.fill();
-    ctx.stroke();
+    if (sp.has('letter')) sp.draw(ctx, 'letter', 0, 0);
+    else this.drawEnvelope(ctx);
     const g = (this.time * 0.7) % 1;
     if (g < 0.25) {
       // a little sparkle
@@ -2680,6 +2676,25 @@ export class PlayScene implements Scene {
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  /** The code-drawn envelope, for when there's no painted letter. */
+  private drawEnvelope(ctx: Ctx) {
+    roundRect(ctx, -28, -18, 56, 36, 4);
+    ctx.fillStyle = P.white;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-28, -18);
+    ctx.lineTo(0, 4);
+    ctx.lineTo(28, -18);
+    ctx.stroke();
+    ellipse(ctx, 0, 4, 7, 7);
+    ctx.fillStyle = P.red;
+    ctx.fill();
+    ctx.stroke();
   }
 
   private drawFx(ctx: Ctx, e: Fx) {
@@ -2719,14 +2734,14 @@ export class PlayScene implements Scene {
       case 'floatBox': {
         const bob = Math.sin(e.t * 4 + x) * 3;
         const fy = y + e.t * TUNING.current * 0.6;
-        sp.draw(ctx, `box${e.size ?? 0}${e.urgent ? 'u' : ''}`, x, fy + bob, 0.9, 0.9, Math.sin(e.t * 2 + x) * 0.2, k > 0.7 ? (1 - k) / 0.3 : 1);
+        sp.draw(ctx, boxSprite(e.size ?? 0, e.urgent, e.cod), x, fy + bob, 0.9, 0.9, Math.sin(e.t * 2 + x) * 0.2, k > 0.7 ? (1 - k) / 0.3 : 1);
         break;
       }
       case 'washed': {
         // swept off downstream, tumbling, going under
         const sd = e.seed ?? 0;
         const wx = x + Math.sin(e.t * 5 + sd) * 16, wy = y + e.t * 240 + e.t * e.t * 60;
-        sp.draw(ctx, `box${e.size ?? 0}${e.urgent ? 'u' : ''}`, wx, wy, 0.82, 0.82 * (1 - k * 0.4), e.t * 4 + sd, 1 - k);
+        sp.draw(ctx, boxSprite(e.size ?? 0, e.urgent, e.cod), wx, wy, 0.82, 0.82 * (1 - k * 0.4), e.t * 4 + sd, 1 - k);
         if (k < 0.5) {
           ctx.save();
           ctx.globalAlpha = 1 - k * 2;
@@ -2786,7 +2801,7 @@ export class PlayScene implements Scene {
       }
       case 'sink': {
         // the lost parcel goes under in a burst of bubbles
-        sp.draw(ctx, `box${e.size ?? 0}${e.urgent ? 'u' : ''}`, x, y + 8 + k * 26, 0.82, 0.82 * (1 - k * 0.7), Math.sin(e.t * 9) * 0.15, (1 - k) * 0.7);
+        sp.draw(ctx, boxSprite(e.size ?? 0, e.urgent, e.cod), x, y + 8 + k * 26, 0.82, 0.82 * (1 - k * 0.7), Math.sin(e.t * 9) * 0.15, (1 - k) * 0.7);
         ctx.save();
         ctx.strokeStyle = P.white;
         ctx.lineWidth = 2;
@@ -2803,7 +2818,7 @@ export class PlayScene implements Scene {
         // a parcel tossed from one spot to another
         const kk = easeOutCubic(k);
         const ax = lerp(x, e.x2!, kk), ay = lerp(y, this.sy(e.y2!), kk) - 90 * Math.sin(k * Math.PI);
-        sp.draw(ctx, `box${e.size ?? 0}${e.urgent ? 'u' : ''}`, ax, ay + 24, 0.8, 0.8, k * 2 * Math.PI * 0.5);
+        sp.draw(ctx, boxSprite(e.size ?? 0, e.urgent, e.cod), ax, ay + 24, 0.8, 0.8, k * 2 * Math.PI * 0.5);
         break;
       }
       case 'coins': {
@@ -3355,7 +3370,7 @@ export class PlayScene implements Scene {
     const k = h / 124;
     sp.draw(ctx, `avatar_${o.house.species}`, x + w * 0.32, y + 34 * k, 0.86 * k);
     codeTag(ctx, x + w * 0.76, y + 30 * k, o.code, o.house.color, 1.05 * k);
-    sp.draw(ctx, `box${o.size}${o.urgent ? 'u' : ''}`, x + w / 2, y + h - 10 * k, (o.size === 0 ? 1.15 : o.size === 1 ? 1 : 0.9) * k);
+    sp.draw(ctx, boxSprite(o.size, o.urgent, o.cod), x + w / 2, y + h - 10 * k, (o.size === 0 ? 1.15 : o.size === 1 ? 1 : 0.9) * k);
     if (o.urgent || o.cod) {
       const label = o.urgent ? '急' : `到付¥${o.cod!.price}`;
       ctx.font = font(18 * k, true);
@@ -3653,9 +3668,16 @@ export class PlayScene implements Scene {
 
   /** A banknote: green paper, a frog-head watermark and the amount. */
   private drawBill(ctx: Ctx, x: number, y: number, v: number) {
+    const sp = this.game.sprites;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(-0.06);
+    if (sp.has('bill')) {
+      sp.draw(ctx, 'bill', 0, 0);
+      text(ctx, `¥${v}`, 30, 2, 40, { bold: true, color: P.lilyDeep });
+      ctx.restore();
+      return;
+    }
     roundRect(ctx, -86, -44, 172, 88, 8);
     ctx.fillStyle = '#B9D7A6';
     ctx.fill();

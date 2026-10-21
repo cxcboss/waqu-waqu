@@ -21,11 +21,16 @@ interface SpriteDef {
   b: [number, number, number, number];
   /** Design units per concept unit. */
   s: number;
-  svg: () => string;
+  /** Placeholder drawing; null for art that only exists painted. */
+  svg: (() => string) | null;
+  /** Painted-only art without its PNG borrows this sprite instead (same anchor). */
+  alias?: string;
 }
 
 const D: Record<string, SpriteDef> = {};
 const def = (name: string, b: SpriteDef['b'], svg: () => string, s = K) => (D[name] = { b, s, svg });
+/** Art with no placeholder: missing its PNG, it's the `alias` sprite, or not there at all (see `has`). */
+const paintedOnly = (name: string, b: SpriteDef['b'], alias?: string) => (D[name] = { b, s: K, svg: null, alias });
 
 // River
 const lilyOpts = [
@@ -53,6 +58,9 @@ def('frog_swim', [-104, -116, 104, 44], () => A.frog({ pose: 'swim', mood: 'nerv
 def('frog_nervous', FB, () => A.frog({ pose: 'stand', mood: 'nervous', look: [6, -4] }));
 def('frog_happy', FB, () => A.frog({ pose: 'stand', mood: 'happy' }));
 def('frog_shock', FB, () => A.frog({ pose: 'stand', mood: 'shock', look: [0, -2] }));
+paintedOnly('frog_lick', FB, 'frog_shock');
+paintedOnly('frog_cling', [-104, -116, 104, 44], 'frog_swim');
+paintedOnly('frog_dunk', [-104, -116, 104, 44], 'frog_swim');
 def('satchel0', [-30, -12, 36, 40], () => A.satchel(0));
 def('satchel1', [-36, -12, 42, 48], () => A.satchel(1));
 def('satchel2', [-42, -12, 48, 58], () => A.satchel(2));
@@ -69,17 +77,27 @@ def('avatar_hedgehog', [-38, -38, 38, 38], () => A.avatar('hedgehog'));
 for (const size of [0, 1, 2] as const) {
   def(`box${size}`, [-44, -80, 44, 6], () => A.box(size, 'label'));
   def(`box${size}u`, [-44, -80, 44, 6], () => A.box(size, 'urgent'));
+  paintedOnly(`box${size}c`, [-44, -80, 44, 6], `box${size}`);
 }
+
+/** A parcel's sprite: plain, urgent (red label) or cash on delivery (gold label). */
+export const boxSprite = (size: number, urgent?: boolean, cod?: unknown) => `box${size}${urgent ? 'u' : cod ? 'c' : ''}`;
 
 // UI bits
 def('coin', [-30, -30, 30, 30], () => A.coin(26));
 def('hand', [-44, -6, 64, 120], A.hand);
+paintedOnly('letter', [-42, -28, 42, 28]);
+paintedOnly('bill', [-135.4, -74.9, 135.4, 74.9]);
+
+// Route map
+paintedOnly('willow', [-89.3, -132.5, 89.3, 92.2]);
+paintedOnly('map_meadow', [0, 0, 1080, 1620]);
 
 // HQ
 const HQ_ROOM_H = 1296;
 export const HQ_ROOM = { h: HQ_ROOM_H * K, contentH: 800 * K };
 def('hq_room', [0, 0, 1080, HQ_ROOM_H], () => A.hqRoom(HQ_ROOM_H));
-def('hq_counter', [-20, -56, 1100, 236], A.hqCounter);
+def('hq_counter', [-20, -68, 1100, 236], A.hqCounter);
 def('owl', [-150, -320, 150, 6], A.owl);
 def('owl_wing', [-10, -190, 210, 20], A.owlWing);
 
@@ -89,12 +107,15 @@ def('river', [0, 0, 1080, TILE_H], () => A.riverTile(TILE_H));
 export const SPRITE_NAMES = Object.keys(D);
 
 /**
- * Holds the game's art. Painted PNGs listed in `art/manifest.json` are used where they exist;
+ * Holds the game's art. Painted images listed in `art/manifest.json` are used where they exist
+ * (a bare name is a PNG; backgrounds may be listed with their extension, e.g. "river.jpg");
  * everything else is rasterized from the SVG placeholders once, at the current render scale.
- * A PNG covers its sprite's bounds box exactly, so it lines up with the same anchor.
+ * A painting covers its sprite's bounds box exactly, so it lines up with the same anchor.
  */
 export class SpriteBank {
   private map = new Map<string, Sprite>();
+  /** How many sprites are painted art rather than placeholders. */
+  painted = 0;
 
   constructor(private platform: Platform) {}
 
@@ -107,22 +128,37 @@ export class SpriteBank {
     for (let i = 0; i < names.length; i += batch) {
       await Promise.all(
         names.slice(i, i + batch).map(async (name) => {
-          const png = painted.has(name) ? await this.png(D[name], artBase + name + '.png') : null;
-          this.map.set(name, png ?? (await this.raster(D[name], pxPerUnit)));
+          const d = D[name];
+          const file = painted.get(name);
+          const png = file ? await this.png(d, artBase + file) : null;
+          if (png) this.painted++;
+          const s = png ?? (d.svg ? await this.raster(d, pxPerUnit) : null);
+          if (s) this.map.set(name, s);
           onProgress?.(++done, names.length);
         }),
       );
     }
+    for (const name of names) {
+      const alias = D[name].alias;
+      if (!this.map.has(name) && alias) this.map.set(name, this.get(alias));
+    }
   }
 
-  private async paintedList(base: string): Promise<Set<string>> {
+  /** Painted art listed in the manifest: sprite name -> file name. */
+  private async paintedList(base: string): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
     try {
       const raw = await this.platform.loadBinary(base + 'manifest.json');
       const list: unknown = JSON.parse(new TextDecoder().decode(raw));
-      return new Set(Array.isArray(list) ? list.filter((n): n is string => typeof n === 'string' && n in D) : []);
+      for (const n of Array.isArray(list) ? list : []) {
+        if (typeof n !== 'string') continue;
+        const name = n.replace(/\.(png|jpg|jpeg|webp)$/i, '');
+        if (name in D) out.set(name, name === n ? n + '.png' : n);
+      }
     } catch {
-      return new Set(); // no painted art yet
+      // no painted art yet
     }
+    return out;
   }
 
   private async png(d: SpriteDef, url: string): Promise<Sprite | null> {
@@ -142,7 +178,7 @@ export class SpriteBank {
     const k = d.s * Math.min(pxPerUnit, (x1 - x0) * d.s > 600 ? 1.6 : 2.5);
     const wpx = Math.ceil((x1 - x0) * k);
     const hpx = Math.ceil((y1 - y0) * k);
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${wpx}" height="${hpx}" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}">${defs()}${d.svg()}</svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${wpx}" height="${hpx}" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}">${defs()}${d.svg?.() ?? ''}</svg>`;
     const c = this.platform.createCanvas(wpx, hpx);
     try {
       const img = await this.platform.loadImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
@@ -151,6 +187,11 @@ export class SpriteBank {
       console.warn(e);
     }
     return { img: c, w: (x1 - x0) * d.s, h: (y1 - y0) * d.s, ax: -x0 * d.s, ay: -y0 * d.s };
+  }
+
+  /** Whether there's art for this sprite (painted-only sprites may be missing). */
+  has(name: string) {
+    return this.map.has(name);
   }
 
   get(name: string): Sprite {

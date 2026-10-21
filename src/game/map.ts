@@ -102,14 +102,20 @@ export class MapScene implements Scene {
     const sheetH = 300;
     const sheetTop = H - this.game.safeB - 24 - sheetH;
 
-    // spring meadow
-    ctx.fillStyle = '#E3E6C0';
-    ctx.fillRect(0, 0, 750, H);
-    ctx.fillStyle = P.bankDeep;
-    for (let i = 0; i < 70; i++) {
-      const x = (i * 263) % 750, y = (i * 409) % H;
-      ellipse(ctx, x, y, 5 + (i % 3) * 2, 3 + (i % 2) * 2);
-      ctx.fill();
+    // spring meadow: the painted one covers the screen, cropped a little at the sides on tall phones
+    if (sp.has('map_meadow')) {
+      const m = sp.get('map_meadow');
+      const k = Math.max(750 / m.w, H / m.h);
+      sp.draw(ctx, 'map_meadow', 375 - (m.w * k) / 2, (H - m.h * k) / 2, k);
+    } else {
+      ctx.fillStyle = '#E3E6C0';
+      ctx.fillRect(0, 0, 750, H);
+      ctx.fillStyle = P.bankDeep;
+      for (let i = 0; i < 70; i++) {
+        const x = (i * 263) % 750, y = (i * 409) % H;
+        ellipse(ctx, x, y, 5 + (i % 3) * 2, 3 + (i % 2) * 2);
+        ctx.fill();
+      }
     }
 
     // stops zigzag up the river, day 1 at the bottom
@@ -262,6 +268,16 @@ export class MapScene implements Scene {
   }
 
   private willow(ctx: Ctx, x: number, y: number, s: number) {
+    const sp = this.game.sprites;
+    if (sp.has('willow')) {
+      // the painted tree sways as a whole, about the foot of its trunk
+      ctx.save();
+      ctx.translate(x, y + 60 * s);
+      ctx.rotate(Math.sin(this.t * 1.3 + x) * 0.025);
+      sp.draw(ctx, 'willow', 0, -60 * s, s);
+      ctx.restore();
+      return;
+    }
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(s, s);

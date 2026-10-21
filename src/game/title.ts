@@ -114,6 +114,7 @@ export class TitleScene implements Scene {
       sp.draw(ctx, 'coin', 58, st + 28, 0.7);
       text(ctx, String(this.game.save.coins), 140, st + 29, 26, { bold: true });
     }
+    if (sp.painted) return;
     const fy = H - this.game.safeB - 40;
     ctx.save();
     ctx.globalAlpha = 0.8;
