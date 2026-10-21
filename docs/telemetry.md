@@ -10,8 +10,10 @@
 - 存储：Supabase 的 `events` 表，建表语句 `scripts/telemetry.sql`。项目地址和 publishable key 写在
   `telemetry.ts` 顶部（这把钥匙本来就是公开放在网页里的，只能加数据和读数据，不能改、不能删）。
   没配置时事件先存在玩家设备上（最多 3000 条），配置好后玩家下次打开会补发。
+- 项目：`https://oitbtkfwybkuqddqggsg.supabase.co`（用户的 Supabase 组织 waqu，东京区，免费版）。
 - 读数据：`python3 scripts/stats.py`（出一份中文报告），`--dump rows.json` 存原始数据，
-  `--since 2026-10-22`、`--build <commit>`、`--exclude <pid>` 过滤。
+  `--since 2026-10-22`、`--build <commit>`、`--exclude <pid>` 过滤。玩家 ID 以 `claude-` 开头的是
+  Claude 自己的连通测试，报告里自动去掉。
 - 排除自己：网址加 `?tm=off`，这台设备以后都不记（`?tm=on` 恢复）。本地开发服务器默认不记，
   要测试加 `?tm=on`。自动测试机器人请用 `?tm=off`。
 

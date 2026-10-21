@@ -225,7 +225,8 @@ def main():
         rows = fetch(*config(), since=a.since)
     if a.build:
         rows = [r for r in rows if (r.get('v') or '').startswith(a.build)]
-    rows = [r for r in rows if r['pid'] not in set(a.exclude)]
+    # Claude's own connection checks and test runs use player ids starting with "claude-"
+    rows = [r for r in rows if r['pid'] not in set(a.exclude) and not r['pid'].startswith('claude-')]
     if a.dump:
         json.dump(rows, open(a.dump, 'w', encoding='utf-8'), ensure_ascii=False)
     if not rows:

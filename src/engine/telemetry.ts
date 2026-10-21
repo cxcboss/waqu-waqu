@@ -9,8 +9,8 @@
 import type { Platform } from '../platform/types';
 
 /** Supabase project the events go to (the publishable key is meant to sit in client code). Empty: keep events on the device. */
-const ENDPOINT: string = '';
-const KEY: string = '';
+const ENDPOINT: string = 'https://oitbtkfwybkuqddqggsg.supabase.co';
+const KEY: string = 'sb_publishable_iUroq94LRRYbyfo0EKXsWw_2nb8yCt9';
 const TABLE = 'events';
 const SENDING = !!(ENDPOINT && KEY);
 
