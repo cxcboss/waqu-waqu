@@ -59,7 +59,7 @@
 - `miss`：在等别的操作时点了没用的地方，`where`：intro（说明卡上没点按钮）/ pick / deliver（引导要点卡片时）/ rescue（教学要点包裹时）/ cod（找零时没点到选项）（每种每局最多 5 条）
 - `idle`：隔了 ≥8 秒才再点屏幕，`sec`、`step`、`state`、`on`（站在车上等房子是正常的）
 - `fall`：落水 `n` 掉出几个包裹、`gone` 被冲走几个、`fy`
-- `climb`：扒住后点了一下，`ok`、`off`（指针离中间多远）、`zone`（绿区宽度）、`w`、`on`、`wait`（扒住后等了几秒才点）
+- `climb`：扒住后点了一下，`ok`、`off`（指针离中间多远）、`zone`（绿区宽度）、`w`、`on`、`wait`（扒住后等了几秒才点）。扒住后 0.3 秒内的点击不算爬（是游泳连点还没停手），不记 `climb`，只计入 run_end 的 `climbEarly`（10-21 晚起的版本）
 - `swim_out`：出水，`sec`、`strokes`、`fails`（爬岸失败次数）、`to`（爬上了什么；yank 表示被车拽走）
 - `rescue`：捞回包裹 `code`、`how`（tongue 舌头 / swim 游过去）、`after`（漂了几秒）、`late`（房子已经过去了）· `sunk`：包裹沉了 `code`
 - `pickup`：`code`、`size`、`urgent`、`cod`、`used`（背包占了几格）· `bag_full`：装不下还点 · `put_back`：放回车上
@@ -73,6 +73,6 @@
 - `pause`、`menu`：`id`（resume/restart/map/sound）
 - `run_end`：一局结束的汇总。`how`：off（送完提前下班）/ done（车开到终点）/ thrown / restart / quit（暂停菜单回路线图）；
   `total`、`delivered`、`wrong`、`wet`、`missed`、`left`、`urgent`、`urgentOnTime`、`cod`、`codRight`、`falls`、`jumps`、`longest`、`closeCalls`、`bestTrip`，
-  计数 `taps`、`tired`、`miss`、`far`（舌头够不着）、`climbOk`、`climbFail`、`strokes`、`swimSec`、`warn`、`warnSec`、`rush`、`pauses`、`putBack`、`bagFull`、`exhaust`、`rescued`、`sunk`、`idle`、`hints`、`misses`，
+  计数 `taps`、`tired`、`miss`、`far`（舌头够不着）、`climbOk`、`climbFail`、`climbEarly`（扒住后 0.3 秒内被忽略的点击）、`strokes`、`swimSec`、`warn`、`warnSec`、`rush`、`pauses`、`putBack`、`bagFull`、`exhaust`、`rescued`、`sunk`、`idle`、`hints`、`misses`，
   `real`（实际秒数，含暂停）、`fps`、`slow`（卡顿帧数）、`state`/`on`/`step`（结束时青蛙在干什么）
 - `run_snap`：切到后台时的同样汇总（`how: hidden`）。一局没有 `run_end`，就看最后一条 `run_snap`，那多半是中途关掉了

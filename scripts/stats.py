@@ -175,6 +175,18 @@ def report(rows):
     if cl:
         say(f"爬岸时机：成功 {pct(sum(1 for c in cl if c['ok']), len(cl))}；按背重：" + ', '.join(
             f"重{w}: {pct(sum(1 for c in cl if c['w'] == w and c['ok']), sum(1 for c in cl if c['w'] == w))}" for w in sorted({c['w'] for c in cl})))
+        # a tap right after grabbing is a swim stroke still landing, not a look at the gauge
+        quick = [c for c in cl if c['wait'] < 0.6]
+        say(f"  扒住后不到 0.6 秒就点（多半是游泳连点停不下来）：{pct(len(quick), len(cl))}，其中成功 {pct(sum(1 for c in quick if c['ok']), len(quick))}"
+            f" · 等过 0.6 秒再点的成功 {pct(sum(1 for c in cl if c['wait'] >= 0.6 and c['ok']), len(cl) - len(quick))}")
+    # counters only grow within a run, so its last summary (end or snapshot) holds the total
+    last = {}
+    for r in by_ev['run_snap'] + by_ev['run_end']:
+        k = (r['sid'], r['run'])
+        last[k] = max(last.get(k, 0), r['d'].get('climbEarly', 0))
+    early = sum(last.values())
+    if early:
+        say(f"  扒住后 0.3 秒内被忽略的点击（新版才有）：{early}")
     say(f"捞包裹：{len(by_ev['rescue'])}（" + top(Counter(r['d']['how'] for r in by_ev['rescue'])) + f"）· 沉了 {len(by_ev['sunk'])} · 冲走 {sum(r['d'].get('gone', 0) for r in by_ev['fall'])}")
     say('落水时屏幕位置(0顶1底) 中位 ' + str(med([r['d'].get('fy') for r in by_ev['fall']])))
 

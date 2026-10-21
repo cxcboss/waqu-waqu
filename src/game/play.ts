@@ -142,6 +142,10 @@ const TONGUE_IN = 0.22;
 const CLIMB_T = 1.2;
 /** Within this much of the gauge's middle, the climb counts as perfect. */
 const CLIMB_PERFECT = 0.06;
+/** Taps this soon after grabbing an edge are swim strokes still landing, too quick to be aimed at the gauge. */
+const CLIMB_GUARD = 0.3;
+/** Just climbed out at the bottom of the screen: this long to jump before being swept off. */
+const CLIMB_GRACE = 0.8;
 /** Countdown once everything is handed out, before the truck hauls the frog in. */
 const CALL_T = 15;
 const BOARD_LEAP_T = 0.4;
@@ -197,6 +201,8 @@ export class PlayScene implements Scene {
   private warnBuzz = 0;
   private warnSfx = 0;
   private inWarnT = 0;
+  /** Counts down after climbing out, while being low on the screen doesn't throw the frog off yet. */
+  private climbGrace = 0;
   private stats = { falls: 0, jumps: 0, longest: 0, closeCalls: 0, bestTrip: 0, fastUrgent: false, codRight: 0, codTips: 0, codLoss: 0 };
   /** Parcels handed over since the frog last left the truck. */
   private trip = 0;
@@ -244,7 +250,7 @@ export class PlayScene implements Scene {
   private tiredT = 0;
   /** Counters for the run's summary in the play statistics. */
   private tally = {
-    taps: 0, tired: 0, miss: 0, far: 0, climbOk: 0, climbFail: 0, strokes: 0, swimSec: 0, warn: 0, warnSec: 0,
+    taps: 0, tired: 0, miss: 0, far: 0, climbOk: 0, climbFail: 0, climbEarly: 0, strokes: 0, swimSec: 0, warn: 0, warnSec: 0,
     rush: 0, pauses: 0, putBack: 0, bagFull: 0, exhaust: 0, rescued: 0, sunk: 0, idle: 0,
     hints: {} as Record<string, number>, misses: {} as Record<string, number>,
   };
@@ -687,6 +693,7 @@ export class PlayScene implements Scene {
     p.bobT = 0;
     p.tilt = 0;
     const au = this.game.audio;
+    if (how === 'climb') this.climbGrace = CLIMB_GRACE;
     if (how === 'climb' && this.sy(y) > this.H * TUNING.warnLine) {
       this.stats.closeCalls++;
       this.queueShot('close', '极限上岸！', 7, 0.2);
@@ -1095,7 +1102,8 @@ export class PlayScene implements Scene {
     const f = this.frog;
     if (f.dunkT > 0) return;
     if (f.cling) {
-      this.tryClimb();
+      if (f.cling.t >= CLIMB_GUARD) this.tryClimb();
+      else this.tally.climbEarly++;
       return;
     }
     const p = this.findPlat(x, y + this.camY);
@@ -1133,8 +1141,9 @@ export class PlayScene implements Scene {
       x1 = p.x - TUNING.truckSpotX[1];
       y1 = p.y + 40;
     } else {
+      // onto the pad, but no lower down the screen than where the frog hung on
       x1 = lerp(f.x, p.x, 0.8);
-      y1 = lerp(f.y, p.y, 0.8);
+      y1 = Math.min(lerp(f.y, p.y, 0.8), f.y);
     }
     const dist = Math.hypot(x1 - f.x, y1 - f.y);
     this.endSwim(p.kind);
@@ -1285,7 +1294,8 @@ export class PlayScene implements Scene {
     const f = this.frog;
     const onTruck = (f.state === 'stand' && f.on?.kind === 'truck') || f.state === 'board';
     const s = this.sy(f.y);
-    if (f.state !== 'jump' && !onTruck && s > this.H + 36) {
+    this.climbGrace = f.state === 'stand' ? Math.max(0, this.climbGrace - dt) : 0;
+    if (f.state !== 'jump' && !onTruck && s > this.H + 36 && this.climbGrace <= 0) {
       // with the round already done, the waiting truck just reels the frog back in
       if (this.callT !== null) this.yank();
       else {
