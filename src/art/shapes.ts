@@ -432,7 +432,7 @@ function mailbox(x: number, y: number) {
 
 /** River edge x (concept units) at height y; periodic in the tile height so tiles stack seamlessly. */
 export function riverEdge(side: 'L' | 'R', y: number, tileH: number) {
-  const base = side === 'L' ? 246 : 836;
+  const base = side === 'L' ? 180 : 900;
   const k = (2 * Math.PI) / tileH;
   return base + Math.sin(y * k * 3 + (side === 'L' ? 0 : 2)) * 12 + Math.sin(y * k * 7) * 5;
 }
@@ -442,10 +442,10 @@ export function riverTile(tileH: number) {
   const W = 1080;
   let s = '';
   s += rr(0, 0, W, tileH, 0, P.bank, 0);
-  s += rr(18, -10, 196, tileH + 20, 0, P.road, 0) + rr(866, -10, 196, tileH + 20, 0, P.road, 0);
+  s += rr(-40, -10, 188, tileH + 20, 0, P.road, 0) + rr(932, -10, 188, tileH + 20, 0, P.road, 0);
   const R = rng(5);
   for (let i = 0; i < 80; i++) {
-    const x = R() < 0.5 ? 24 + R() * 186 : 872 + R() * 186;
+    const x = R() < 0.5 ? 4 + R() * 136 : 940 + R() * 136;
     s += circ(x, 10 + R() * (tileH - 20), 2 + R() * 3, P.roadDeep, 0, { opacity: 0.8 });
   }
   // river body
@@ -470,7 +470,7 @@ export function riverTile(tileH: number) {
   // flow curls (kept away from the seams)
   const R2 = rng(12);
   for (let i = 0; i < 40; i++) {
-    const x = 290 + R2() * 480, y = 30 + R2() * (tileH - 60);
+    const x = 240 + R2() * 600, y = 30 + R2() * (tileH - 60);
     s += R2() < 0.7 ? curl(x, y, 0.6 + R2() * 0.5, P.tealDeep, 0.4) : spiral(x, y, 0.8, P.white, 0.5);
   }
   // bank plants and stones
@@ -478,17 +478,17 @@ export function riverTile(tileH: number) {
   const step = tileH / 12;
   for (let i = 0; i < 12; i++) {
     const y = i * step + 40;
-    plants += reeds(236, y + 60, 3, 100 + i, 0.85) + reeds(846, y + 110, 3, 200 + i, 0.85);
-    plants += stone(240 + (i % 3) * 4, y + 100, 13) + stone(842, y + 40, 11);
-    plants += tuft(226, y + 130) + tuft(860, y + 80);
+    plants += reeds(168, y + 60, 3, 100 + i, 0.7) + reeds(912, y + 110, 3, 200 + i, 0.7);
+    plants += stone(172 + (i % 3) * 4, y + 100, 11) + stone(908, y + 40, 10);
+    plants += tuft(160, y + 130) + tuft(922, y + 80);
   }
-  const fl: [number, number, string][] = [[230, 0.26, '#F2C9C0'], [232, 0.62, '#F4E2B0'], [852, 0.45, '#F2C9C0'], [848, 0.86, '#EDE6D6'], [236, 0.9, '#F4E2B0'], [850, 0.12, '#EDE6D6']];
+  const fl: [number, number, string][] = [[160, 0.26, '#F2C9C0'], [162, 0.62, '#F4E2B0'], [918, 0.45, '#F2C9C0'], [914, 0.86, '#EDE6D6'], [166, 0.9, '#F4E2B0'], [916, 0.12, '#EDE6D6']];
   for (const [x, t, c] of fl) plants += wildflower(x, t * tileH, c, 1.1) + wildflower(x + 10, t * tileH + 16, c, 0.8);
-  plants += fern(226, tileH * 0.4, 100, 20) + fern(858, tileH * 0.55, 96, -20) + fern(230, tileH * 0.75, 90, 26) + fern(854, tileH * 0.95 - 20, 100, -24);
-  plants += mailbox(226, tileH * 0.34) + mailbox(858, tileH * 0.7);
+  plants += fern(158, tileH * 0.4, 84, 20) + fern(922, tileH * 0.55, 80, -20) + fern(160, tileH * 0.75, 76, 26) + fern(920, tileH * 0.95 - 20, 84, -24);
+  plants += mailbox(156, tileH * 0.34) + mailbox(924, tileH * 0.7);
   s += g(plants, { filter: 'url(#wobbleSoft)', opacity: 0.95 });
   // road center dashes: period 48 divides the tile height
-  for (const x of [58, 172, 906, 1020]) s += line(x, -14, x, tileH + 14, P.roadDeep, 4, { 'stroke-dasharray': '28 20', opacity: 0.9 });
+  for (const x of [54, 1026]) s += line(x, -14, x, tileH + 14, P.roadDeep, 4, { 'stroke-dasharray': '28 20', opacity: 0.9 });
   s += overlays(0, 0, W, tileH);
   return s;
 }

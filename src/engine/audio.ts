@@ -28,8 +28,10 @@ export class Audio {
   private defs: Record<string, SoundDef> = {};
   private buffers = new Map<string, AudioBuffer>();
   private loading = new Map<string, Promise<AudioBuffer | null>>();
-  private music: { id: string; src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  private music: { id: string; src: AudioBufferSourceNode; gain: GainNode; start: number; loop: [number, number] } | null = null;
   private wantMusic: string | null = null;
+  /** Where the track stopped when the game was paused, to pick up from there. */
+  private paused: { id: string; at: number } | null = null;
   private base = 'audio/';
 
   constructor(private platform: Platform) {}
@@ -160,6 +162,7 @@ export class Audio {
   /** Switches the background track (null = silence), crossfading. */
   setMusic(id: string | null) {
     this.wantMusic = id;
+    this.paused = null;
     if (this.music?.id === id) return;
     this.fadeOutMusic();
     if (!id || !this.ctx) return;
@@ -173,10 +176,29 @@ export class Audio {
 
   /** Retries the wanted track after the first tap unlocks audio. */
   kick() {
-    if (this.wantMusic && !this.music) this.setMusic(this.wantMusic);
+    if (this.wantMusic && !this.music && !this.paused) this.setMusic(this.wantMusic);
   }
 
-  private startMusic(id: string, buf: AudioBuffer) {
+  /** Stops the music where it is (pause menu); `resumeMusic` carries on from the same spot. */
+  pauseMusic() {
+    const m = this.music;
+    if (!m || !this.ctx) return;
+    const [a, b] = m.loop;
+    const played = (this.ctx.currentTime - m.start) % (b - a);
+    this.paused = { id: m.id, at: a + Math.max(0, played) };
+    this.fadeOutMusic(0.08);
+  }
+
+  resumeMusic() {
+    const p = this.paused;
+    this.paused = null;
+    if (!p || this.wantMusic !== p.id) return;
+    const buf = this.buffers.get(p.id);
+    if (buf) this.startMusic(p.id, buf, p.at);
+    else this.setMusic(p.id);
+  }
+
+  private startMusic(id: string, buf: AudioBuffer, at?: number) {
     const ctx = this.ctx!;
     if (ctx.state !== 'running') return;
     const src = ctx.createBufferSource();
@@ -187,17 +209,19 @@ export class Audio {
     src.loopEnd = b;
     const g = ctx.createGain();
     g.gain.value = 0.0001;
-    g.gain.setTargetAtTime(this.defs[id]?.volume ?? 0.6, ctx.currentTime, 0.4);
+    g.gain.setTargetAtTime(this.defs[id]?.volume ?? 0.6, ctx.currentTime, at === undefined ? 0.4 : 0.1);
     src.connect(g).connect(this.musicBus!);
-    src.start(ctx.currentTime, a);
-    this.music = { id, src, gain: g };
+    const from = at ?? a;
+    src.start(ctx.currentTime, from);
+    // `start` is when the loop region began, so the play position can be worked out later
+    this.music = { id, src, gain: g, start: ctx.currentTime - (from - a), loop: [a, b] };
   }
 
-  private fadeOutMusic() {
+  private fadeOutMusic(fade = 0.25) {
     if (!this.music || !this.ctx) return;
     const { src, gain } = this.music;
-    gain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.25);
-    src.stop(this.ctx.currentTime + 1.2);
+    gain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, fade);
+    src.stop(this.ctx.currentTime + fade * 4.8);
     this.music = null;
   }
 

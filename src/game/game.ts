@@ -25,6 +25,7 @@ export interface SaveData {
 
 const SAVE_KEY = 'waqu.save.v1';
 const STEP = 1 / 60;
+const FADE = 0.5;
 
 export class Game {
   readonly W = 750;
@@ -43,6 +44,8 @@ export class Game {
   private last = 0;
   private loadDone = 0;
   private loadTotal = 1;
+  /** Fade through black between scenes: out over the old one, then in over the new one. */
+  private fade: { next: Scene | null; t: number } | null = null;
 
   constructor(readonly platform: Platform) {
     this.ctx = platform.canvas.getContext('2d')!;
@@ -58,6 +61,7 @@ export class Game {
     this.platform.onTouch((kind, t) => {
       const x = t.x * (this.W / this.cssW);
       const y = t.y * (this.W / this.cssW);
+      if (this.fade) return;
       if (kind === 'start') {
         this.audio.unlock();
         this.audio.kick();
@@ -104,8 +108,20 @@ export class Game {
     this.safeB = s.safeBottom * (this.W / s.width);
   }
 
-  go(scene: Scene) {
-    this.scene = scene;
+  go(scene: Scene, fade = false) {
+    if (fade && this.scene) this.fade = { next: scene, t: 0 };
+    else this.scene = scene;
+  }
+
+  private stepFade(dt: number) {
+    const f = this.fade;
+    if (!f) return;
+    f.t += dt;
+    if (f.next && f.t >= FADE) {
+      this.scene = f.next;
+      f.next = null;
+      f.t = 0;
+    } else if (!f.next && f.t >= FADE) this.fade = null;
   }
 
   private frame = (t: number) => {
@@ -115,6 +131,7 @@ export class Game {
     this.acc += dt;
     let steps = 0;
     while (this.acc >= STEP && steps < 5) {
+      this.stepFade(STEP);
       this.scene?.update(STEP);
       this.acc -= STEP;
       steps++;
@@ -124,6 +141,11 @@ export class Game {
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     if (this.ready && this.scene) this.scene.render(ctx);
     else this.renderLoading(ctx);
+    if (this.fade) {
+      const k = Math.min(1, this.fade.t / FADE);
+      ctx.fillStyle = `rgba(28,22,18,${this.fade.next ? k : 1 - k})`;
+      ctx.fillRect(0, 0, this.W, this.H);
+    }
     this.platform.requestFrame(this.frame);
   };
 

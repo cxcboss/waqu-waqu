@@ -1,13 +1,14 @@
 import { INK, P } from '../art/palette';
 import { K, TILE_H } from '../art/sprites';
-import { button, ellipse, hit, panel, plate, roundRect, text, type Rect } from '../art/ui';
-import { approach, clamp, easeOutBack, easeOutCubic, lerp, springOut } from '../engine/math';
+import { button, ellipse, font, hit, panel, plate, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
+import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
 import type { Canvas, Ctx } from '../platform/types';
 import { SIZE_INFO, TUNING } from './config';
 import type { Game, Scene } from './game';
 import { HqScene, type DayResult, type Photo } from './hq';
 import { buildLevel, dayConfig, type House, type Level, type Order, type Plat } from './level';
+import { OFFWORK_LINES } from './lines';
 import { TitleScene } from './title';
 
 const FROG_S = 0.92; // frog sprite scale on top of K, matching the concept art
@@ -17,6 +18,8 @@ interface Jump {
   x0: number; y0: number; x1: number; y1: number;
   t: number; T: number; H: number; dist: number;
   whistled?: boolean;
+  /** Set for the automatic hop from a bank onto a truck: lands there whatever is underneath. */
+  to?: Plat;
 }
 
 interface Frog {
@@ -47,7 +50,29 @@ interface Shot { at: number; caption: string; prio: number; kind: string; thrown
 
 interface Card { order: Order; rect: Rect }
 
-type HintKey = 'pick' | 'aim' | 'deliver' | 'refill' | 'swim' | 'warn' | 'urgent' | 'heavy';
+type HintKey = 'go' | 'refill' | 'last' | 'swim' | 'warn' | 'urgent' | 'heavy' | 'wrongHouse';
+
+/**
+ * Coached steps at the start of a day. 'intro' is the briefing card (every day); day 1 then walks
+ * through pick → aim → go → deliver → refill. The river holds still during the hands-on steps.
+ */
+type Step = 'intro' | 'pick' | 'aim' | 'go' | 'deliver' | 'refill' | null;
+
+/** The drive home after everything is handed out: camera pans to the truck, it drives off. */
+interface Offwork { truck: Plat; t: number; line: string; baseY: number; drive: number; panX: number; panY: number; horn: boolean; card: boolean }
+
+const plateSeg = (h: House): Seg => ({ plate: h.num, color: h.color });
+
+/** How to fit each briefing icon in its circle: offset from the circle center and scale. */
+const ICONS: Record<string, [number, number, number]> = {
+  box0: [0, 34, 1.2], box0u: [0, 34, 1.2], box1: [0, 32, 1.05], box2: [0, 32, 0.85],
+  hand: [-8, -38, 0.62], frog_swim: [0, 14, 0.42], coin: [0, 0, 1.15], satchel2: [-4, -28, 1.1], lily1: [0, -4, 0.4],
+};
+
+const PAN_T = 0.8;
+const DRIVE_AT = 0.95;
+const CARD_AT = 1.5;
+const OFF_END = 5.2;
 
 export class PlayScene implements Scene {
   private lv: Level;
@@ -64,10 +89,21 @@ export class PlayScene implements Scene {
   private photos: Photo[] = [];
   private shots: Shot[] = [];
   private hintsDone = new Set<HintKey>();
-  private hint: { key: HintKey; text: string; t: number; hand: boolean; dur: number } | null = null;
+  private hint: { key: HintKey; line: Seg[]; sub?: string; t: number; dur: number; warn?: boolean } | null = null;
+  private step: Step = 'intro';
+  private stepT = 0;
+  /** Lily the aim step points at. */
+  private aimTarget: Plat | null = null;
+  private introBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  private off: Offwork | null = null;
+  /** Set once the day's result is handed to HQ, while the screen fades out. */
+  private leaving = false;
+  /** World-to-screen shift, used by the drive-home camera. */
+  private camX = 0;
+  private panY = 0;
   private banner: { title: string; sub: string; t: number; dur: number } | null = null;
   private toast: { text: string; t: number } | null = null;
-  private ended: null | 'done' | 'thrown' = null;
+  private ended: null | 'done' | 'thrown' | 'off' = null;
   private endT = 0;
   private paused = false;
   private warnK = 0;
@@ -94,16 +130,14 @@ export class PlayScene implements Scene {
     this.lv = buildLevel(cfg, game.H);
     const truck = this.lv.trucks[0];
     this.placeTrucks();
+    const lx = TUNING.truckSpotX[1];
     this.frog = {
-      state: 'stand', x: truck.x, y: truck.y + 40, z: 0, on: truck, lx: 0, ly: 40, settle: null, jump: null,
+      state: 'stand', x: truck.x + lx, y: truck.y + 40, z: 0, on: truck, lx, ly: 40, settle: null, jump: null,
       vx: 0, vy: 0, swimT: 0, strokeT: 9, landT: 9, swing: 0, swingV: 0,
     };
     this.slowT = TUNING.truckSlowSec;
     this.slowCd = TUNING.truckSlowSec + TUNING.slowCooldown;
-    this.banner = { title: `第${day}天 · 开工！`, sub: cfg.intro, t: 0, dur: 2.2 };
-    game.audio.play('truck_horn', { delay: 0.2 });
     game.audio.setMusic('bgm_work');
-    this.queueShot('start', '上班出发！', 1, 1.2);
   }
 
   private get H() {
@@ -119,17 +153,21 @@ export class PlayScene implements Scene {
   // ---------------------------------------------------------------- update
 
   update(dt: number) {
-    if (this.paused) return;
+    if (this.paused || this.leaving) return;
     this.time += dt;
+    this.stepT += dt;
     const cfg = this.cfg;
 
-    this.slowT = Math.max(0, this.slowT - dt);
-    this.slowCd = Math.max(0, this.slowCd - dt);
-    const target = this.ended === 'done' ? 0 : this.slowT > 0 ? TUNING.slowFactor : 1;
-    this.speedK = approach(this.speedK, target, 4, dt);
-    this.camY -= cfg.speed * this.speedK * dt;
-
-    this.placeTrucks();
+    if (this.off) this.updateOffwork(dt);
+    else {
+      this.slowT = Math.max(0, this.slowT - dt);
+      this.slowCd = Math.max(0, this.slowCd - dt);
+      const target = this.ended === 'done' ? 0 : this.slowT > 0 ? TUNING.slowFactor : 1;
+      this.speedK = approach(this.speedK, target, 4, dt);
+      // The river holds still while the tutorial has the player's hands busy.
+      if (!this.frozen()) this.camY -= cfg.speed * this.speedK * dt;
+      this.placeTrucks();
+    }
     for (const p of this.lv.plats) {
       p.bobT += dt;
       if (p.kind === 'log') {
@@ -149,8 +187,9 @@ export class PlayScene implements Scene {
       this.checkUrgent();
       this.checkDanger(dt);
       this.tutorial();
-      if (-this.camY >= cfg.length) this.endDay('done');
-    } else {
+      this.checkOffwork();
+      if (!this.ended && -this.camY >= cfg.length) this.endDay('done');
+    } else if (this.ended !== 'off') {
       this.endT += dt;
       if (this.endT > 2.6) this.finish();
     }
@@ -163,6 +202,15 @@ export class PlayScene implements Scene {
     if (this.toast && (this.toast.t += dt) > 2.2) this.toast = null;
     if (this.hint && (this.hint.t += dt) > this.hint.dur) this.hint = null;
     if (this.shakeCard && (this.shakeCard.t += dt) > 0.4) this.shakeCard = null;
+  }
+
+  private frozen() {
+    return this.step === 'intro' || this.step === 'pick' || this.step === 'aim' || this.step === 'deliver';
+  }
+
+  private setStep(step: Step) {
+    this.step = step;
+    this.stepT = 0;
   }
 
   private placeTrucks() {
@@ -192,11 +240,14 @@ export class PlayScene implements Scene {
       f.x = lerp(j.x0, j.x1, k);
       f.y = lerp(j.y0, j.y1, k);
       f.z = 4 * j.H * k * (1 - k);
-      if (k >= 0.55 && !j.whistled) {
+      if (k >= 0.55 && !j.whistled && !j.to) {
         j.whistled = true;
         if (!this.findPlat(j.x1, j.y1)) this.game.audio.play('fall_whistle', { volume: 0.8 });
       }
-      if (k >= 1) this.land(j.x1, j.y1);
+      if (k >= 1) {
+        if (j.to) this.standOn(j.to, j.x1, j.y1, 'jump');
+        else this.land(j.x1, j.y1);
+      }
     } else if (f.state === 'swim') {
       f.swimT += dt;
       f.strokeT += dt;
@@ -257,22 +308,21 @@ export class PlayScene implements Scene {
 
   private standOn(p: Plat, x: number, y: number, how: 'jump' | 'climb') {
     const f = this.frog;
-    // Climbing out next to a truck puts you on the truck.
+    // Nobody stays on the bank: the frog scurries straight onto that side's truck.
     if (p.kind === 'bank') {
-      for (const t of this.lv.trucks) {
-        if (t.side === p.side && Math.abs(y - t.y) <= t.ry + 30) {
-          p = t;
-          break;
-        }
-      }
+      this.hopToTruck(this.lv.trucks[p.side], x, y, how);
+      return;
     }
     let tx: number, ty: number;
     let cx = x - p.x, cy = y - p.y;
     switch (p.kind) {
-      case 'truck':
-        tx = clamp(cx, -34, 34);
+      case 'truck': {
+        // the inner half of the bed, which is the part on screen
+        const [a, b] = TUNING.truckSpotX;
+        tx = p.side === 0 ? clamp(cx, a, b) : clamp(cx, -b, -a);
         ty = clamp(cy, 8, 72);
         break;
+      }
       case 'house':
         tx = p.house!.porch.x;
         ty = p.house!.porch.y;
@@ -329,13 +379,46 @@ export class PlayScene implements Scene {
         au.play('truck_slowdown', { volume: 0.7, delay: 0.1 });
       }
       this.doneHint('refill');
+      if (this.step === 'refill') this.setStep(null);
     } else if (p.kind === 'house' && this.bag.length) {
       if (this.slowCd <= 0) {
         this.slowT = TUNING.houseSlowSec;
         this.slowCd = TUNING.houseSlowSec + TUNING.slowCooldown;
       }
-      if (this.cfg.tutorial) this.showHint('deliver', '看门牌号和颜色，点对应的包裹交给住户', { dur: 8 });
+      const h = p.house!;
+      if (this.step === 'go' && this.bag.some((o) => o.house === h)) {
+        this.setStep('deliver');
+        this.hint = null;
+      } else if (this.cfg.tutorial && !this.bag.some((o) => o.house === h)) {
+        const want = this.bag[0].house;
+        this.showHint('wrongHouse', ['这是 ', plateSeg(h), ' 号，要找 ', plateSeg(want), ' 号'], { dur: 4, again: true });
+      }
     }
+  }
+
+  /** Quick automatic hop from wherever the frog reached the bank onto that side's truck bed. */
+  private hopToTruck(t: Plat, x: number, y: number, how: 'jump' | 'climb') {
+    const f = this.frog;
+    const T = 0.36;
+    const lx = (t.side === 0 ? 1 : -1) * TUNING.truckSpotX[1];
+    // the truck keeps pace with the camera, so aim where it will be on landing
+    const x1 = t.x + lx, y1 = t.y + 40 - this.cfg.speed * this.speedK * T;
+    const dist = Math.hypot(x1 - x, y1 - y);
+    f.state = 'jump';
+    f.on = null;
+    f.settle = null;
+    f.z = 0;
+    f.jump = { x0: x, y0: y, x1, y1, t: 0, T, H: 40 + Math.min(60, dist * 0.12), dist, to: t };
+    const au = this.game.audio;
+    if (how === 'climb') {
+      au.play('swim_climb');
+      this.bubbles?.stop(0.2);
+      this.bubbles = null;
+      au.duck(false);
+      this.doneHint('swim');
+    } else au.play('land_pad', { volume: 0.6, jitter: true });
+    au.play('jump_whoosh', { volume: 0.5, delay: 0.05 });
+    this.fx.push({ kind: 'dust', x, y, t: 0, dur: 0.5 });
   }
 
   private land(x: number, y: number) {
@@ -380,7 +463,7 @@ export class PlayScene implements Scene {
     this.bubbles = au.loop('swim_bubbles', { volume: 0.5, fadeIn: 0.6 });
     this.game.platform.vibrate(70);
     this.queueShot('splash', `扑通！第${this.stats.falls}次落水`, this.stats.falls === 1 ? 8 : 6, 0.28);
-    this.showHint('swim', '快速连点屏幕，游上岸！', { dur: 6 });
+    this.showHint('swim', '掉水里了！【快速连点屏幕】', { dur: 6, sub: '游到最近的荷叶或岸边', warn: true, again: true });
     if (wet.length) this.showToast(`${wet.length} 个包裹泡水了……`);
   }
 
@@ -426,10 +509,10 @@ export class PlayScene implements Scene {
     const len = Math.hypot(dx, dy);
     if (len < TUNING.deadDrag || f.state !== 'stand') return;
     const power = clamp(len / TUNING.maxDrag, 0, 1);
-    const maxJ = this.maxJump();
-    const dist = TUNING.minJump + power * (maxJ - TUNING.minJump);
     const ux = -dx / len, uy = -dy / len;
+    const dist = this.jumpDist(power, ux, uy);
     f.jump = { x0: f.x, y0: f.y, x1: f.x + ux * dist, y1: f.y + uy * dist, t: 0, T: 0.34 + dist / 1000, H: 36 + dist * 0.3, dist };
+    if (this.step === 'aim') this.setStep('go');
     f.state = 'jump';
     f.on = null;
     f.settle = null;
@@ -442,7 +525,20 @@ export class PlayScene implements Scene {
     au.play('jump_release');
     if (Math.random() < 0.25) au.play('frog_croak', { volume: 0.55, delay: 0.08, jitter: true });
     if (dist > 250) au.play('jump_whoosh', { volume: 0.7, delay: 0.1 });
-    this.doneHint('aim');
+  }
+
+  /** How far a jump goes with this much pull, shortened so it never leaves the screen. */
+  private jumpDist(power: number, ux: number, uy: number) {
+    const f = this.frog;
+    const want = TUNING.minJump + power * (this.maxJump() - TUNING.minJump);
+    const x = f.x, y = this.sy(f.y);
+    const x0 = 26, x1 = 724, y0 = this.game.safeT + 110, y1 = this.H - 24;
+    let d = want;
+    if (ux < -1e-3) d = Math.min(d, (x - x0) / -ux);
+    if (ux > 1e-3) d = Math.min(d, (x1 - x) / ux);
+    if (uy < -1e-3) d = Math.min(d, (y - y0) / -uy);
+    if (uy > 1e-3) d = Math.min(d, (y1 - y) / uy);
+    return Math.max(0, d);
   }
 
   private checkHouses() {
@@ -488,7 +584,7 @@ export class PlayScene implements Scene {
         this.game.platform.vibrate(40);
         this.warnBuzz = 0.9;
       }
-      if (f.state === 'stand') this.showHint('warn', '太靠下了！快往上跳，或跳回运输车', { dur: 3.5 });
+      if (f.state === 'stand') this.showHint('warn', '太靠下了！【快往上跳】', { dur: 3.5, sub: '或者跳回运输车', warn: true, again: true });
     } else {
       this.inWarnT = 0;
       this.warnBuzz = 0;
@@ -497,19 +593,64 @@ export class PlayScene implements Scene {
   }
 
   private tutorial() {
-    if (this.banner) return;
+    if (this.step === 'intro' || this.banner) return;
     const f = this.frog;
     const onTruck = f.state === 'stand' && f.on?.kind === 'truck';
-    if (this.cfg.tutorial) {
-      if (onTruck && !this.bag.length && !this.hintsDone.has('pick') && this.poolCards().length) {
-        this.showHint('pick', '点下面的包裹，把它装进背包', { dur: 99 });
-      }
-      if (this.hintsDone.has('pick') && !this.hintsDone.has('aim') && f.state === 'stand') {
-        this.showHint('aim', '按住屏幕往下拉，松手就往反方向跳', { dur: 99, hand: true });
-      }
+    const goal = this.bag[0]?.house;
+    if (this.step === 'go' && goal && f.state === 'stand') {
+      this.showHint('go', ['跳到 ', plateSeg(goal), ' 号房子，送出包裹'], { dur: 5, sub: '河水一直在流，别落到红线下面' });
     }
-    if (onTruck && this.poolCards().some((c) => c.order.urgent)) this.showHint('urgent', '红标签是加急件，按时送到有奖金', { dur: 5 });
-    if (onTruck && this.poolCards().some((c) => c.order.size === 2)) this.showHint('heavy', '大件更重，背着它跳不远', { dur: 5 });
+    if (this.step === 'refill' && f.state === 'stand') this.showHint('refill', '送到了！跳回【运输车】取下一个', { dur: 5 });
+    if (onTruck && this.poolCards().some((c) => c.order.urgent)) this.showHint('urgent', '【红标签】是加急件，倒计时内送到有奖金', { dur: 5 });
+    if (onTruck && this.poolCards().some((c) => c.order.size === 2)) this.showHint('heavy', '【大件】很重，背着它跳不远', { dur: 5 });
+    if (!onTruck && !this.bag.length && !this.lv.orders.some((o) => o.state === 'pool')) {
+      this.showHint('last', '全部送完了！跳回【运输车】就能下班', { dur: 6 });
+    }
+  }
+
+  /** Nothing left on the trucks or in the bag: landing on a truck ends the day early. */
+  private checkOffwork() {
+    const f = this.frog;
+    if (f.state !== 'stand' || f.on?.kind !== 'truck' || f.settle || this.step === 'intro') return;
+    if (this.bag.length || this.lv.orders.some((o) => o.state === 'pool')) return;
+    const t = f.on;
+    this.ended = 'off';
+    this.aim = null;
+    this.stopCharge();
+    this.hint = null;
+    this.toast = null;
+    this.setStep(null);
+    // pan so the whole truck shows, and bring it to the middle of the screen
+    const half = 112;
+    const panX = t.side === 0 ? Math.max(0, half - t.x) : -Math.max(0, t.x + half - 750);
+    this.off = { truck: t, t: 0, line: pick(OFFWORK_LINES, Math.random), baseY: t.y, drive: 0, panX, panY: this.H * 0.56 - this.sy(t.y), horn: false, card: false };
+    this.game.audio.setMusic(null);
+    this.queueShot('offwork', '收工回家！', 6, 0.9);
+  }
+
+  private updateOffwork(dt: number) {
+    const o = this.off!;
+    o.t += dt;
+    const k = easeOutCubic(Math.min(1, o.t / PAN_T));
+    this.camX = o.panX * k;
+    this.panY = o.panY * k;
+    // the camera holds still now; only the truck moves
+    this.speedK = approach(this.speedK, 0, 3, dt);
+    this.placeTrucks();
+    if (o.t >= DRIVE_AT) {
+      if (!o.horn) {
+        o.horn = true;
+        this.game.audio.play('truck_horn');
+      }
+      const d = o.t - DRIVE_AT;
+      o.drive = 60 * d + 450 * d * d;
+    }
+    o.truck.y = o.baseY - o.drive;
+    if (o.t >= CARD_AT && !o.card) {
+      o.card = true;
+      this.game.audio.play('day_complete');
+    }
+    if (o.t >= OFF_END) this.finish();
   }
 
   private endDay(kind: 'done' | 'thrown') {
@@ -535,7 +676,8 @@ export class PlayScene implements Scene {
   }
 
   private finish() {
-    if (!this.ended) return;
+    if (!this.ended || this.leaving) return;
+    this.leaving = true;
     for (const o of this.lv.orders) if (o.state === 'pool' || o.state === 'bag') o.state = 'missed';
     const orders = this.lv.orders;
     const count = (s: Order['state']) => orders.filter((o) => o.state === s).length;
@@ -563,7 +705,7 @@ export class PlayScene implements Scene {
     };
     this.ended = null;
     this.stopLoops();
-    this.game.go(new HqScene(this.game, result));
+    this.game.go(new HqScene(this.game, result), true);
   }
 
   // ---------------------------------------------------------------- parcels
@@ -592,7 +734,10 @@ export class PlayScene implements Scene {
     const c = this.cards.find((c) => c.order === o);
     if (c) this.fx.push({ kind: 'fly', x: c.rect.x + c.rect.w / 2, y: c.rect.y + c.rect.h / 2, x2: 74, y2: this.trayY(), t: 0, dur: 0.35, size: o.size });
     this.game.audio.play('parcel_pickup');
-    this.doneHint('pick');
+    if (this.step === 'pick') {
+      this.setStep('aim');
+      this.aimTarget = this.findAimTarget(o.house);
+    }
   }
 
   private deliver(o: Order, h: House) {
@@ -621,10 +766,9 @@ export class PlayScene implements Scene {
       this.game.audio.play('deliver_confused', { delay: 0.15 });
       this.queueShot('wrong', `${h.name}：这是我的吗？`, 7, 0.5);
     }
-    this.doneHint('deliver');
-    if (this.cfg.tutorial && !this.bag.length && this.lv.orders.some((x) => x.state === 'pool')) {
-      this.showHint('refill', '送完了！跳回运输车再取件', { dur: 6 });
-    }
+    const more = this.lv.orders.some((x) => x.state === 'pool');
+    if (this.step === 'deliver') this.setStep(!this.bag.length && more ? 'refill' : null);
+    else if (this.cfg.tutorial && !this.bag.length && more) this.showHint('refill', '送到了！跳回【运输车】取下一个', { dur: 6 });
   }
 
   // ---------------------------------------------------------------- input
@@ -634,11 +778,18 @@ export class PlayScene implements Scene {
       for (const b of this.menuBtns) if (hit(b.rect, x, y)) this.pressed = b.id;
       return;
     }
+    if (this.off) {
+      // a tap once the card is up skips the rest of the drive home
+      if (this.off.t > CARD_AT + 0.8) this.off.t = OFF_END;
+      return;
+    }
     if (this.ended) return;
+    if (this.step === 'intro') {
+      if (this.stepT > 0.4 && hit(this.introBtn, x, y, 24)) this.pressed = 'intro';
+      return;
+    }
     if (hit(this.pauseBtn, x, y, 14)) {
-      this.paused = true;
-      this.aim = null;
-      this.stopCharge();
+      this.setPaused(true);
       this.game.audio.play('ui_open');
       return;
     }
@@ -648,6 +799,8 @@ export class PlayScene implements Scene {
       else if (this.trayMode === 'deliver' && this.frog.on?.house) this.deliver(c.order, this.frog.on.house);
       if (this.trayMode !== 'bag') return;
     }
+    // while a card is spotlighted, only the cards respond
+    if (this.step === 'pick' || this.step === 'deliver') return;
     const f = this.frog;
     if (f.state === 'swim') {
       this.swimStroke();
@@ -670,11 +823,50 @@ export class PlayScene implements Scene {
       if (b) this.menu(b.id);
       return;
     }
+    if (this.pressed === 'intro') {
+      this.pressed = null;
+      this.startDay();
+      return;
+    }
     if (!this.aim || this.aim.id !== id) return;
     const a = this.aim;
     this.aim = null;
     if (this.frog.state === 'stand') this.startJump(x - a.sx, y - a.sy);
     this.stopCharge();
+  }
+
+  /** Closes the briefing card; day 1 goes on into the hands-on tutorial. */
+  private startDay() {
+    const au = this.game.audio;
+    au.play('ui_confirm');
+    au.play('truck_horn', { delay: 0.25 });
+    if (this.cfg.tutorial) this.setStep('pick');
+    else {
+      this.setStep(null);
+      this.banner = { title: `第${this.day}天 · 开工！`, sub: this.cfg.intro, t: 0, dur: 1.8 };
+    }
+    this.queueShot('start', '上班出发！', 1, 1.2);
+  }
+
+  /** A lily ahead that gets the frog closer to `h`, comfortably in reach: the first jump to practise. */
+  private findAimTarget(h: House): Plat | null {
+    const f = this.frog;
+    const reach = this.maxJump() * 0.8;
+    const goal = { x: h.plat.x, y: h.plat.y };
+    let best: Plat | null = null;
+    let bestD = Infinity;
+    for (const p of this.lv.plats) {
+      if (p.kind !== 'lily' && p.kind !== 'log') continue;
+      const d = Math.hypot(p.x - f.x, p.y - f.y);
+      const s = this.sy(p.y);
+      if (d > reach || d < 120 || s > this.sy(f.y) - 60 || s < this.game.safeT + 260) continue;
+      const g = Math.hypot(goal.x - p.x, goal.y - p.y) + (p.kind === 'log' ? 300 : 0);
+      if (g < bestD) {
+        bestD = g;
+        best = p;
+      }
+    }
+    return best;
   }
 
   private stopCharge() {
@@ -696,7 +888,12 @@ export class PlayScene implements Scene {
       if (!this.amb) this.amb = au.loop('amb_river', { fadeIn: 1.5 });
       if (!this.engine) this.engine = au.loop('truck_engine_loop', { volume: 0.6, fadeIn: 2 });
     }
-    this.engine?.setRate(0.8 + this.speedK * 0.2);
+    this.engine?.setRate(this.off ? 0.85 + Math.min(1, this.off.drive / 500) * 0.7 : 0.8 + this.speedK * 0.2);
+    if (this.frog.state === 'swim' && !this.bubbles && !this.ended) {
+      // back from the pause menu while still in the water
+      this.bubbles = au.loop('swim_bubbles', { volume: 0.5, fadeIn: 0.6 });
+      au.duck(true);
+    }
     if (this.aim && this.frog.state === 'stand') {
       const p = this.aimPower();
       if (!this.charge && p > 0.08 && !this.chargeMax) this.charge = au.loop('jump_charge', { once: true, volume: 0.8 });
@@ -722,14 +919,26 @@ export class PlayScene implements Scene {
   }
 
   blur() {
-    if (!this.ended) this.paused = true;
+    if (!this.ended) this.setPaused(true);
     this.aim = null;
     this.stopCharge();
   }
 
+  /** The pause menu stops everything that makes noise, music included, and picks it up again after. */
+  private setPaused(on: boolean) {
+    if (this.paused === on) return;
+    this.paused = on;
+    const au = this.game.audio;
+    if (on) {
+      this.aim = null;
+      this.stopLoops();
+      au.pauseMusic();
+    } else au.resumeMusic();
+  }
+
   private menu(id: string) {
     this.game.audio.play(id === 'resume' ? 'ui_close' : 'ui_tap');
-    if (id === 'resume') this.paused = false;
+    if (id === 'resume') this.setPaused(false);
     else if (id === 'restart') {
       this.stopLoops();
       this.game.go(new PlayScene(this.game, this.day));
@@ -741,11 +950,12 @@ export class PlayScene implements Scene {
 
   // ---------------------------------------------------------------- hints, photos
 
-  private showHint(key: HintKey, text: string, o: { dur?: number; hand?: boolean } = {}) {
+  private showHint(key: HintKey, line: string | Seg[], o: { dur?: number; sub?: string; warn?: boolean; again?: boolean } = {}) {
     if (this.hintsDone.has(key) || this.hint?.key === key) return;
-    if (this.hint && this.hint.dur > 50 && key !== 'swim' && key !== 'warn') return; // don't bump a pending tutorial step
-    this.hint = { key, text, t: 0, hand: !!o.hand, dur: o.dur ?? 5 };
-    if (key !== 'pick' && key !== 'aim') this.hintsDone.add(key);
+    // a standing tutorial hint only gives way to emergencies
+    if (this.hint && this.hint.dur > 50 && key !== 'swim' && key !== 'warn' && key !== 'wrongHouse') return;
+    this.hint = { key, line: typeof line === 'string' ? segs(line) : line, sub: o.sub, t: 0, dur: o.dur ?? 5, warn: o.warn };
+    if (!o.again) this.hintsDone.add(key);
   }
 
   private doneHint(key: HintKey) {
@@ -771,8 +981,8 @@ export class PlayScene implements Scene {
     const f = this.frog;
     for (const s of due) {
       const w = 300, h = 230;
-      const cx = clamp(f.x, w / 2, 750 - w / 2);
-      const fy = s.thrown ? this.H - 90 : this.sy(f.y) - f.z - 50;
+      const cx = clamp(f.x + this.camX, w / 2, 750 - w / 2);
+      const fy = s.thrown ? this.H - 90 : this.sy(f.y) + this.panY - f.z - 50;
       const cy = clamp(fy, h / 2, this.H - h / 2);
       const ps = Math.min(sc, 1.5);
       const c = this.game.platform.createCanvas(w * ps, h * ps);
@@ -803,16 +1013,32 @@ export class PlayScene implements Scene {
   render(ctx: Ctx) {
     const H = this.H;
     this.refreshTray();
+    if (this.camX) {
+      // the road carries on past the tile's edge while the camera is panned sideways
+      ctx.fillStyle = P.road;
+      ctx.fillRect(0, 0, 750, H);
+    }
+    ctx.save();
+    ctx.translate(this.camX, this.panY);
     // River background tiles
-    const k0 = Math.floor(this.camY / TILE);
-    for (let k = k0; k * TILE - this.camY < H; k++) {
+    const top = this.camY - this.panY;
+    for (let k = Math.floor(top / TILE); k * TILE - top < H; k++) {
       ctx.drawImage(this.game.sprites.get('river').img, 0, k * TILE - this.camY, 750, TILE + 1);
     }
     this.drawWorld(ctx);
+    ctx.restore();
     this.takeShots(ctx);
-    this.drawAim(ctx);
-    this.drawWarn(ctx);
-    this.drawHud(ctx);
+    const hudA = this.off ? 1 - clamp(this.off.t / 0.4, 0, 1) : 1;
+    if (hudA > 0) {
+      ctx.save();
+      ctx.globalAlpha = hudA;
+      this.drawAim(ctx);
+      this.drawWarn(ctx);
+      this.drawHud(ctx);
+      ctx.restore();
+    }
+    if (this.step && this.step !== 'go' && this.step !== 'refill' && !this.paused) this.drawCoach(ctx);
+    if (this.off) this.drawOffCard(ctx);
     if (this.paused) this.drawPause(ctx);
   }
 
@@ -839,7 +1065,7 @@ export class PlayScene implements Scene {
     type D = { y: number; draw: () => void };
     const items: D[] = [];
     for (const p of this.lv.plats) {
-      const s = this.sy(p.y);
+      const s = this.sy(p.y) + this.panY;
       if (s < -260 || s > H + 140) continue;
       items.push({ y: p.y, draw: () => this.drawPlat(ctx, p) });
     }
@@ -866,6 +1092,31 @@ export class PlayScene implements Scene {
         ctx.moveTo(x - 16, y - 18);
         ctx.lineTo(x + 16, y - 18);
         ctx.lineTo(x, y + 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    // Back-to-the-truck arrows while the tutorial asks for a refill
+    if (this.step === 'refill') {
+      for (const t of this.lv.trucks) {
+        const dir = t.side === 0 ? -1 : 1;
+        const x = t.x - dir * (120 + Math.abs(Math.sin(this.time * 5)) * 14), y = this.sy(t.y) + 30;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(dir, 1);
+        ctx.fillStyle = P.orange;
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(-26, -12);
+        ctx.lineTo(4, -12);
+        ctx.lineTo(4, -26);
+        ctx.lineTo(30, 0);
+        ctx.lineTo(4, 26);
+        ctx.lineTo(4, 12);
+        ctx.lineTo(-26, 12);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
@@ -945,9 +1196,11 @@ export class PlayScene implements Scene {
     text(ctx, '蛙趣', x, y + 173 * K + 0.5, 11, { bold: true });
     // cargo = the shared pool of parcels still waiting
     const pool = this.lv.orders.filter((o) => o.state === 'pool' && !o.house.passed).slice(0, 5);
-    const slots: [number, number][] = [[-47, 74], [34, 78], [-26, 94], [-56, 142], [24, 156]];
+    // stacked on the inner half of the bed, the half that's on screen
+    const slots: [number, number][] = [[20, 74], [62, 80], [30, 106], [66, 140], [24, 156]];
+    const dir = t.side === 0 ? 1 : -1;
     const drawn = pool.map((o, i) => ({ o, s: slots[i] })).sort((a, b) => a.s[1] - b.s[1]);
-    for (const { o, s } of drawn) sp.draw(ctx, `box${o.size}${o.urgent ? 'u' : ''}`, x + s[0] * K, y + s[1] * K);
+    for (const { o, s } of drawn) sp.draw(ctx, `box${o.size}${o.urgent ? 'u' : ''}`, x + dir * s[0] * K, y + s[1] * K);
   }
 
   private drawFrog(ctx: Ctx) {
@@ -974,7 +1227,7 @@ export class PlayScene implements Scene {
     ctx.restore();
 
     let sx = 1, sy = 1, rot = 0;
-    let name = 'frog_stand';
+    let name = this.off ? 'frog_happy' : 'frog_stand';
     const power = this.aimPower();
     if (f.state === 'stand') {
       sy *= 1 + Math.sin(this.time * 3) * 0.015;
@@ -1139,11 +1392,12 @@ export class PlayScene implements Scene {
     ctx.fill();
     ctx.stroke();
     // dotted prediction after aiming for a while
-    if (this.aim.t >= this.cfg.predictDelay && len >= TUNING.deadDrag) {
-      const dist = TUNING.minJump + power * (this.maxJump() - TUNING.minJump);
+    const delay = this.step === 'aim' ? 0 : this.cfg.predictDelay;
+    if (this.aim.t >= delay && len >= TUNING.deadDrag) {
+      const dist = this.jumpDist(power, ux, uy);
       const tx = fx + ux * dist, ty = fy + uy * dist;
       const hj = 36 + dist * 0.3;
-      const a = Math.min(1, (this.aim.t - this.cfg.predictDelay) * 4);
+      const a = Math.min(1, (this.aim.t - delay) * 4);
       ctx.globalAlpha = a;
       for (let i = 1; i < 16; i++) {
         const k = i / 16;
@@ -1324,15 +1578,16 @@ export class PlayScene implements Scene {
     }
 
     // hint bubble
-    if (this.hint && !this.paused) this.drawHint(ctx);
+    if (this.hint && !this.paused && (!this.step || this.step === 'go' || this.step === 'refill')) this.drawHint(ctx);
     if (this.toast) {
       const a = Math.min(1, this.toast.t * 6) * (this.toast.t > 1.8 ? (2.2 - this.toast.t) / 0.4 : 1);
       ctx.save();
       ctx.globalAlpha = a;
       ctx.font = '26px WK';
       const w = Math.max(220, ctx.measureText(this.toast.text).width + 60);
-      panel(ctx, 375 - w / 2, ty + 210, w, 56, { r: 28, fill: P.cream });
-      text(ctx, this.toast.text, 375, ty + 239, 26);
+      const y = this.trayY() - 190;
+      panel(ctx, 375 - w / 2, y, w, 56, { r: 28, fill: P.cream });
+      text(ctx, this.toast.text, 375, y + 29, 26);
       ctx.restore();
     }
     if (this.banner) this.drawBanner(ctx);
@@ -1416,7 +1671,7 @@ export class PlayScene implements Scene {
     let { x, y, w, h } = c.rect;
     if (this.shakeCard && this.shakeCard.id === o.id) x += Math.sin(this.shakeCard.t * 50) * 6 * (1 - this.shakeCard.t / 0.4);
     const small = this.trayMode === 'bag';
-    const pulse = this.hint?.key === 'pick' && this.trayMode === 'pickup' ? 1 + Math.sin(this.time * 6) * 0.03 : 1;
+    const pulse = (this.step === 'pick' || this.step === 'deliver') && this.trayMode !== 'bag' ? 1 + Math.sin(this.time * 6) * 0.03 : 1;
     ctx.save();
     if (pulse !== 1) {
       ctx.translate(x + w / 2, y + h / 2);
@@ -1445,35 +1700,215 @@ export class PlayScene implements Scene {
   private drawHint(ctx: Ctx) {
     const h = this.hint!;
     const a = Math.min(1, h.t * 5) * (h.t > h.dur - 0.3 ? Math.max(0, (h.dur - h.t) / 0.3) : 1);
-    const y = this.game.safeT + 108;
+    // below the top bar, or below the urgent card when one is showing
+    const urgent = this.bag.some((o) => o.urgent);
+    this.drawCaption(ctx, h.line, h.sub, this.game.safeT + (urgent ? 214 : 98), a, h.warn);
+  }
+
+  /** Big caption card used by the tutorial and the hints: one line of rich text and an optional smaller line. */
+  private drawCaption(ctx: Ctx, line: Seg[], sub: string | undefined, y: number, alpha: number, warn = false) {
     ctx.save();
-    ctx.globalAlpha = a;
-    ctx.font = '27px WKB';
-    const w = Math.min(690, ctx.measureText(h.text).width + 70);
-    panel(ctx, 375 - w / 2, y, w, 64, { r: 18 });
-    text(ctx, h.text, 375, y + 33, 27, { bold: true, maxWidth: w - 40 });
+    ctx.globalAlpha *= alpha;
+    let size = 38;
+    const lw = richWidth(ctx, line, size, true);
+    if (lw > 640) size = Math.floor((size * 640) / lw);
+    ctx.font = font(26);
+    const sw = sub ? ctx.measureText(sub).width : 0;
+    const w = clamp(Math.max(richWidth(ctx, line, size, true), sw) + 80, 380, 710);
+    const h = sub ? 128 : 86;
+    panel(ctx, 375 - w / 2, y, w, h, { r: 22, fill: warn ? '#FBE6DE' : P.paper, stitch: warn ? P.red : undefined });
+    rich(ctx, line, 375, y + 44, size, { bold: true, color: warn ? P.red : INK, hl: warn ? P.red : undefined });
+    if (sub) text(ctx, sub, 375, y + 96, 26, { color: P.inkSoft, maxWidth: w - 40 });
     ctx.restore();
-    if (h.hand && this.frog.state === 'stand') {
-      // animated finger showing the pull-back
-      const f = this.frog;
-      const cyc = (this.time % 1.8) / 1.8;
+  }
+
+  /** Spotlight tutorial steps: the screen dims except what to touch, with a big caption and a demo hand. */
+  private drawCoach(ctx: Ctx) {
+    if (this.step === 'intro') {
+      this.drawIntro(ctx);
+      return;
+    }
+    const H = this.H;
+    const f = this.frog;
+    const holes: { x: number; y: number; w: number; h: number; round: boolean }[] = [];
+    let line: Seg[] = [];
+    let sub = '';
+    let capY = 0;
+    let hand: { kind: 'tap' | 'drag'; x: number; y: number } | null = null;
+    if (this.step === 'pick' || this.step === 'deliver') {
+      if (!this.cards.length || this.trayMode === 'bag') return;
+      const c = (this.step === 'deliver' && this.cards.find((c) => c.order.house === f.on?.house)) || this.cards[0];
+      const first = this.cards[0].rect, last = this.cards[this.cards.length - 1].rect;
+      holes.push({ x: first.x - 16, y: first.y - 56, w: Math.max(last.x + last.w - first.x + 32, 340), h: first.h + 72, round: false });
+      line = segs(this.step === 'pick' ? '点一下【包裹】，装进背包' : '点【包裹】，交给住户');
+      sub = this.step === 'pick' ? '卡片上的数字，就是要送去的门牌号' : '门牌号和颜色要对得上';
+      capY = first.y - 56 - 150;
+      hand = { kind: 'tap', x: c.rect.x + c.rect.w * 0.55, y: c.rect.y + c.rect.h * 0.5 };
+    } else if (this.step === 'aim') {
+      const fy = this.sy(f.y);
+      holes.push({ x: f.x - 100, y: fy - 160, w: 200, h: 210, round: true });
+      const t = this.aimTarget;
+      if (t) holes.push({ x: t.x - t.rx - 30, y: this.sy(t.y) - t.ry - 44, w: (t.rx + 30) * 2, h: (t.ry + 44) * 2, round: true });
+      line = segs('【按住屏幕往下拉】，松手就跳');
+      sub = '往反方向跳出去，拉得越长跳得越远';
+      capY = this.game.safeT + 100;
+      if (!this.aim) hand = { kind: 'drag', x: f.x + 40, y: fy + 30 };
+    }
+    // Dim everything but the holes; while dragging, ease off so the aim line shows.
+    const a = Math.min(1, this.stepT * 4) * (this.aim ? 0.35 : 1);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, 750, H);
+    for (const h of holes) {
+      if (h.round) {
+        ctx.moveTo(h.x + h.w, h.y + h.h / 2);
+        ctx.ellipse(h.x + h.w / 2, h.y + h.h / 2, h.w / 2, h.h / 2, 0, 0, Math.PI * 2);
+      } else {
+        const r = 22;
+        ctx.moveTo(h.x + r, h.y);
+        ctx.arcTo(h.x + h.w, h.y, h.x + h.w, h.y + h.h, r);
+        ctx.arcTo(h.x + h.w, h.y + h.h, h.x, h.y + h.h, r);
+        ctx.arcTo(h.x, h.y + h.h, h.x, h.y, r);
+        ctx.arcTo(h.x, h.y, h.x + h.w, h.y, r);
+        ctx.closePath();
+      }
+    }
+    ctx.fillStyle = `rgba(36,28,22,${0.6 * a})`;
+    ctx.fill('evenodd');
+    // pulsing dashed outline around each hole
+    ctx.setLineDash([14, 10]);
+    ctx.lineDashOffset = -this.time * 30;
+    ctx.strokeStyle = P.gold;
+    ctx.lineWidth = 4;
+    ctx.globalAlpha = 0.6 + Math.sin(this.time * 5) * 0.3;
+    for (const h of holes) {
+      if (h.round) ellipse(ctx, h.x + h.w / 2, h.y + h.h / 2, h.w / 2, h.h / 2);
+      else roundRect(ctx, h.x, h.y, h.w, h.h, 22);
+      ctx.stroke();
+    }
+    ctx.restore();
+    if (this.step === 'aim' && this.aimTarget && !this.aim) {
+      const t = this.aimTarget;
+      const ty = this.sy(t.y) - t.ry - 74 + Math.sin(this.time * 5) * 5;
+      panel(ctx, t.x - 78, ty - 26, 156, 52, { r: 26, fill: P.gold, shadow: false });
+      text(ctx, '跳到这里', t.x, ty + 1, 28, { bold: true });
+    }
+    this.drawCaption(ctx, line, sub, capY, Math.min(1, this.stepT * 4));
+    if (hand) this.drawHand(ctx, hand.kind, hand.x, hand.y);
+  }
+
+  private drawHand(ctx: Ctx, kind: 'tap' | 'drag', x: number, y: number) {
+    const sp = this.game.sprites;
+    ctx.save();
+    if (kind === 'tap') {
+      const cyc = (this.time % 1.1) / 1.1;
+      const press = cyc < 0.25 ? cyc / 0.25 : cyc < 0.45 ? 1 : Math.max(0, 1 - (cyc - 0.45) / 0.3);
+      if (press > 0.8) {
+        ctx.globalAlpha = 0.6;
+        ellipse(ctx, x, y, 26 + (press - 0.8) * 60, 26 + (press - 0.8) * 60);
+        ctx.strokeStyle = P.white;
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      sp.draw(ctx, 'hand', x, y + 14 - press * 14, 1.1 - press * 0.08);
+    } else {
+      // press, pull down, let go
+      const cyc = (this.time % 2) / 2;
       const k = cyc < 0.15 ? 0 : cyc < 0.7 ? easeOutCubic((cyc - 0.15) / 0.55) : 1;
-      const hx = f.x + 30 - k * 40, hy = this.sy(f.y) + 20 + k * 150;
-      ctx.save();
+      const hx = x - k * 30, hy = y + k * 170;
       ctx.globalAlpha = cyc > 0.85 ? (1 - cyc) / 0.15 : 1;
       if (k > 0) {
-        ctx.strokeStyle = 'rgba(74,59,48,0.35)';
-        ctx.setLineDash([6, 8]);
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = P.white;
+        ctx.setLineDash([8, 10]);
+        ctx.lineWidth = 5;
         ctx.beginPath();
-        ctx.moveTo(f.x + 30, this.sy(f.y) + 20);
+        ctx.moveTo(x, y);
         ctx.lineTo(hx, hy);
         ctx.stroke();
         ctx.setLineDash([]);
       }
-      this.game.sprites.draw(ctx, 'hand', hx, hy, 0.9);
-      ctx.restore();
+      sp.draw(ctx, 'hand', hx, hy, 1.1);
+      if (cyc > 0.72) text(ctx, '松手！', hx + 90, hy + 40, 32, { bold: true, color: P.white });
     }
+    ctx.restore();
+  }
+
+  /** The day's briefing card: what to do today, in big type, before the river starts moving. */
+  private drawIntro(ctx: Ctx) {
+    const H = this.H;
+    const b = this.cfg.brief;
+    const sp = this.game.sprites;
+    const a = Math.min(1, this.stepT * 4);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(36,28,22,0.6)';
+    ctx.fillRect(0, 0, 750, H);
+    const rowH = 104;
+    const ch = 150 + b.rows.length * rowH + 140;
+    const y0 = (H - ch) / 2 - 20;
+    const s = 0.9 + 0.1 * easeOutBack(Math.min(1, this.stepT * 3));
+    ctx.translate(375, y0 + ch / 2);
+    ctx.scale(s, s);
+    ctx.translate(-375, -(y0 + ch / 2));
+    panel(ctx, 40, y0, 670, ch, { r: 28 });
+    text(ctx, b.title, 375, y0 + 72, 46, { bold: true });
+    ctx.strokeStyle = 'rgba(74,59,48,0.25)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(90, y0 + 124);
+    ctx.lineTo(660, y0 + 124);
+    ctx.stroke();
+    b.rows.forEach(([icon, line], i) => {
+      const ry = y0 + 150 + i * rowH + rowH / 2;
+      ellipse(ctx, 128, ry, 44, 44);
+      ctx.fillStyle = P.cream;
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      if (icon === 'plate') plate(ctx, 128, ry, 9, P.tealDeep, 1.7);
+      else {
+        const [dx, dy, sc] = ICONS[icon] ?? [0, 0, 0.6];
+        sp.draw(ctx, icon, 128 + dx, ry + dy, sc);
+      }
+      rich(ctx, segs(line), 196, ry, 34, { left: true });
+    });
+    this.introBtn = { x: 215, y: y0 + ch - 116, w: 320, h: 88 };
+    button(ctx, 215, y0 + ch - 116, 320, 88, this.cfg.tutorial ? '开始上班' : '开工！', { primary: true, pressed: this.pressed === 'intro', size: 36 });
+    ctx.restore();
+  }
+
+  /** "愉快下班了" card with a random line, while the truck drives off. */
+  private drawOffCard(ctx: Ctx) {
+    const o = this.off!;
+    if (o.t < CARD_AT) return;
+    const k = Math.min(1, (o.t - CARD_AT) / 0.45);
+    const lines = wrapText(ctx, o.line, 30, 500);
+    const h = 156 + lines.length * 46;
+    ctx.save();
+    ctx.globalAlpha = k;
+    ctx.translate(375, this.H * 0.42 + (1 - easeOutCubic(k)) * 70);
+    ctx.rotate(-0.02);
+    ctx.fillStyle = P.orange;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    for (const d of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(d * 290, -h / 2 + 30);
+      ctx.lineTo(d * 340, -h / 2 + 30);
+      ctx.lineTo(d * 320, -h / 2 + 60);
+      ctx.lineTo(d * 340, -h / 2 + 90);
+      ctx.lineTo(d * 290, -h / 2 + 90);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    panel(ctx, -295, -h / 2, 590, h, { r: 24 });
+    text(ctx, '愉快下班了！', 0, -h / 2 + 64, 54, { bold: true, color: P.orangeDeep });
+    lines.forEach((l, i) => text(ctx, l, 0, -h / 2 + 132 + i * 46, 30, { color: P.ink }));
+    if (o.t > CARD_AT + 0.8) text(ctx, '点击屏幕继续', 0, h / 2 + 40, 24, { color: P.white, alpha: 0.6 + Math.sin(this.time * 4) * 0.3 });
+    ctx.restore();
   }
 
   private drawBanner(ctx: Ctx) {

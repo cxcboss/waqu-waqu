@@ -2,6 +2,7 @@ import { INK, P } from '../art/palette';
 import { K, TILE_H } from '../art/sprites';
 import { button, ellipse, hit, panel, roundRect, text, type Rect } from '../art/ui';
 import type { Ctx } from '../platform/types';
+import { TUNING } from './config';
 import type { Game, Scene } from './game';
 import { PlayScene, drawTruckBase } from './play';
 
@@ -52,7 +53,7 @@ export class TitleScene implements Scene {
       sp.draw(ctx, `lily${p.v}`, p.x, y, p.r / (100 * K));
     }
     // trucks idling on the banks
-    for (const [x, y, name] of [[80, H * 0.72, 'truck_orange'], [670, H * 0.3, 'truck_blue']] as const) {
+    for (const [x, y, name] of [[TUNING.truckX[0], H * 0.72, 'truck_orange'], [TUNING.truckX[1], H * 0.3, 'truck_blue']] as const) {
       const yy = y + Math.sin(this.t * 13 + x) * 0.8;
       drawTruckBase(ctx, x, yy, this.t * 60);
       sp.draw(ctx, name, x, yy);

@@ -105,16 +105,18 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
   const nums = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9], r);
   const colors = shuffle([...PLATE_COLORS], r);
 
-  let pathX = 270;
+  const mid = (riverL + riverR) / 2;
+  let pathX = mid - 100;
   let side: 0 | 1 = r() < 0.5 ? 0 : 1;
-  let afterHouse = false;
+  /** Set right after a house: the next row has to dodge its roof sideways. */
+  let afterHouse: number | null = null;
   const lilyX = (rx: number, want: number) => clamp(want, riverL + rx + 6, riverR - rx - 6);
 
   const row = (y: number) => {
     // A main landing spot within reach of the last one, sometimes a log, sometimes a second lily.
     let want = pathX + (r() - 0.5) * 240;
-    if (afterHouse) want = pathX < 375 ? 470 + r() * 50 : 230 + r() * 60; // keep clear of the roof above the house
-    afterHouse = false;
+    if (afterHouse !== null) want = afterHouse + (afterHouse < mid ? 1 : -1) * (112 + r() * 22); // clear of the roof
+    afterHouse = null;
     if (r() < 0.16) {
       const lx = clamp(want, riverL + 90, riverR - 90);
       plats.push(plat('log', lx, y, 76, 18, { rot: (r() - 0.5) * 0.35, drift: (r() < 0.5 ? -1 : 1) * (8 + r() * 8) }));
@@ -127,7 +129,7 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
     }
     if (r() < 0.45) {
       const rx = 42 + r() * 18;
-      const away = pathX < 375 ? pathX + 180 + r() * 60 : pathX - 180 - r() * 60;
+      const away = pathX < mid ? pathX + 190 + r() * 60 : pathX - 190 - r() * 60;
       plats.push(plat('lily', lilyX(rx, away), y + (r() - 0.5) * 50, rx, rx * 0.6, { variant: Math.floor(r() * 4) }));
     }
   };
@@ -135,7 +137,7 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
   const house = (i: number, hy: number) => {
     const t = types[i];
     const geo = HOUSE_GEO[t];
-    const hx = side === 0 ? 292 + r() * 16 : 458 + r() * 12;
+    const hx = side === 0 ? riverL + 128 + r() * 14 : riverR - 128 - r() * 14;
     const p = plat('house', hx, hy, geo.rx, geo.ry, { variant: i });
     const res = RESIDENTS[t];
     const twin = houses.filter((h) => h.type === t).length;
@@ -152,21 +154,21 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
     houses.push(h);
     // A lily on the open side of the river so the house row stays crossable.
     const orx = 44 + r() * 10;
-    const ox = side === 0 ? 505 : 245;
+    const ox = side === 0 ? hx + 190 : hx - 190;
     plats.push(plat('lily', lilyX(orx, ox + (r() - 0.5) * 30), hy + 30 + r() * 30, orx, orx * 0.6, { variant: Math.floor(r() * 4) }));
     pathX = hx;
     side = side === 0 ? 1 : 0;
-    afterHouse = true;
+    afterHouse = hx;
   };
 
   // Rows are spaced evenly between houses so every gap stays jumpable. The row just past a
   // house sits closer, since it has to dodge the roof sideways.
   let y = H * 0.86;
-  pathX = 250;
+  pathX = mid - 120;
   row(y);
   houseYs.forEach((hy, i) => {
     if (i > 0) {
-      y -= 165;
+      y -= 160;
       row(y);
     }
     const n = Math.max(1, Math.ceil((y - hy) / 195));
@@ -176,12 +178,19 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
     y = hy;
   });
   const yEnd = -(cfg.length + H * 1.3);
-  y -= 165;
+  y -= 160;
   row(y);
   while (y > yEnd) {
     y -= 175 + r() * 30;
     row(y);
   }
+  // A lily just ahead of the left truck, where the frog starts: an easy first hop.
+  const sx = riverL + 78, sy = H * TUNING.truckAnchor[0] - 120;
+  for (let i = plats.length - 1; i >= 0; i--) {
+    const q = plats[i];
+    if (q.kind !== 'house' && Math.hypot(q.x - sx, q.y - sy) < q.rx + 52 + 30) plats.splice(i, 1);
+  }
+  plats.push(plat('lily', sx, sy, 52, 52 * 0.6, { variant: 1 }));
   bridgeGaps(plats, cfg, yEnd + H);
 
   // Orders: the first house always has one (the tutorial walks you there), the rest spread out.
@@ -220,22 +229,37 @@ function bridgeGaps(plats: Plat[], cfg: DayConfig, top: number) {
   const { riverL, riverR } = TUNING;
   const blocked = (x: number, y: number, rx: number) =>
     plats.some((q) => {
-      if (q.kind === 'house') return Math.abs(x - q.x) < q.rx + rx + 10 && y > q.y - 230 && y < q.y + q.ry + rx;
+      if (q.kind === 'house') {
+        // the raft itself, and the house standing on it (about 70 wide each way, up to 230 tall)
+        if (Math.abs(x - q.x) < q.rx + rx && Math.abs(y - q.y) < q.ry + rx * 0.7) return true;
+        return Math.abs(x - q.x) < 70 + rx && y > q.y - 230 && y < q.y;
+      }
       return Math.hypot(x - q.x, y - q.y) < q.rx + rx + 14;
     });
+  const given = new Set<Plat>();
   for (let guard = 0; guard < 80; guard++) {
     const sorted = plats.slice().sort((a, b) => b.y - a.y);
     const stuck = sorted.find((p) => {
-      if (p.y < top) return false;
+      if (p.y < top || given.has(p)) return false;
       const s = spot(p);
       return !plats.some((q) => q !== p && q.y < s.y - 60 && Math.hypot(q.x - s.x, q.y - s.y) <= reach);
     });
     if (!stuck) return;
     const s = spot(stuck);
     const rx = 48;
-    const dy = Math.min(170, reach * 0.75);
-    const xs = [s.x, s.x + 110, s.x - 110, 375, riverL + rx + 10, riverR - rx - 10].map((x) => clamp(x, riverL + rx + 6, riverR - rx - 6));
-    const x = xs.find((x) => !blocked(x, s.y - dy, rx) && Math.hypot(x - s.x, dy) <= reach) ?? xs[0];
-    plats.push(plat('lily', x, s.y - dy, rx, rx * 0.6, { variant: guard % 4 }));
+    let at: [number, number] | null = null;
+    for (const dy of [170, 140, 200]) {
+      for (const dx of [0, 80, -80, 140, -140, 190, -190]) {
+        const x = clamp(s.x + dx, riverL + rx + 6, riverR - rx - 6);
+        if (Math.hypot(x - s.x, dy) <= reach && !blocked(x, s.y - dy, rx)) {
+          at = [x, s.y - dy];
+          break;
+        }
+      }
+      if (at) break;
+    }
+    // Nowhere free (a roof in the way): leave it, the side lily next to the house is the way out.
+    if (!at) given.add(stuck);
+    else plats.push(plat('lily', at[0], at[1], rx, rx * 0.6, { variant: guard % 4 }));
   }
 }

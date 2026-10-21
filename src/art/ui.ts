@@ -113,3 +113,79 @@ export interface Rect {
 }
 export const hit = (r: Rect | null | undefined, x: number, y: number, pad = 0) =>
   !!r && x >= r.x - pad && x <= r.x + r.w + pad && y >= r.y - pad && y <= r.y + r.h + pad;
+
+/**
+ * A run of caption text: plain strings, highlighted words, and inline house plates.
+ * Written as a string, 【...】 marks a highlight.
+ */
+export type Seg = string | { hl: string } | { plate: number; color: string };
+
+export function segs(s: string): Seg[] {
+  return s.split(/(【[^】]*】)/).filter(Boolean).map((p) => (p.startsWith('【') ? { hl: p.slice(1, -1) } : p));
+}
+
+function segWidth(ctx: Ctx, s: Seg, size: number, bold: boolean) {
+  if (typeof s === 'string') {
+    ctx.font = font(size, bold);
+    return ctx.measureText(s).width;
+  }
+  if ('hl' in s) {
+    ctx.font = font(size, true);
+    return ctx.measureText(s.hl).width;
+  }
+  return 30 * (size / 22) + 10;
+}
+
+export function richWidth(ctx: Ctx, line: Seg[], size: number, bold = false) {
+  ctx.save();
+  const w = line.reduce((m, s) => m + segWidth(ctx, s, size, bold), 0);
+  ctx.restore();
+  return w;
+}
+
+/** Draws one line of segments centered on x (or starting at x with `left`). */
+export function rich(ctx: Ctx, line: Seg[], x: number, y: number, size: number, o: { color?: string; hl?: string; bold?: boolean; left?: boolean } = {}) {
+  const bold = !!o.bold;
+  ctx.save();
+  let cx = o.left ? x : x - richWidth(ctx, line, size, bold) / 2;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  for (const s of line) {
+    const w = segWidth(ctx, s, size, bold);
+    if (typeof s === 'string') {
+      ctx.font = font(size, bold);
+      ctx.fillStyle = o.color || INK;
+      ctx.fillText(s, cx, y);
+    } else if ('hl' in s) {
+      // marker-pen underline behind the highlighted words
+      ctx.fillStyle = 'rgba(232,183,74,0.45)';
+      roundRect(ctx, cx - 3, y + size * 0.12, w + 6, size * 0.36, size * 0.18);
+      ctx.fill();
+      ctx.font = font(size, true);
+      ctx.fillStyle = o.hl || P.orangeDeep;
+      ctx.fillText(s.hl, cx, y);
+    } else {
+      plate(ctx, cx + w / 2, y, s.plate, s.color, size / 22);
+    }
+    cx += w;
+  }
+  ctx.restore();
+}
+
+/** Breaks a sentence into lines no wider than maxWidth (character by character, as Chinese allows). */
+export function wrapText(ctx: Ctx, s: string, size: number, maxWidth: number, bold = false): string[] {
+  ctx.save();
+  ctx.font = font(size, bold);
+  const out: string[] = [];
+  let cur = '';
+  for (const ch of s) {
+    // keep closing punctuation on the line it belongs to
+    if (cur && ctx.measureText(cur + ch).width > maxWidth && !'，。！？、…）”'.includes(ch)) {
+      out.push(cur);
+      cur = ch;
+    } else cur += ch;
+  }
+  if (cur) out.push(cur);
+  ctx.restore();
+  return out;
+}
