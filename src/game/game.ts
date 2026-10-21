@@ -23,6 +23,8 @@ export interface SaveData {
   sound: boolean;
   /** One-time lessons already shown, e.g. how to rescue parcels from the river. */
   tips: Record<string, boolean>;
+  /** The three stamps earned so far on each day (准时下班, 干得漂亮, 今日挑战). */
+  stamps: Record<number, boolean[]>;
 }
 
 const SAVE_KEY = 'waqu.save.v1';
@@ -171,7 +173,7 @@ export class Game {
   }
 
   readSave(): SaveData {
-    const base: SaveData = { day: 1, coins: 0, best: {}, sound: true, tips: {} };
+    const base: SaveData = { day: 1, coins: 0, best: {}, sound: true, tips: {}, stamps: {} };
     try {
       const raw = this.platform.storageGet(SAVE_KEY);
       if (raw) return { ...base, ...JSON.parse(raw) };

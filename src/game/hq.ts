@@ -1,10 +1,13 @@
 import { INK, P } from '../art/palette';
 import { HQ_ROOM, K } from '../art/sprites';
-import { button, ellipse, hit, panel, roundRect, text, type Rect } from '../art/ui';
+import { button, ellipse, hit, panel, pressIn, pressOut, roundRect, text, type Rect } from '../art/ui';
 import { approach, clamp, easeInCubic, easeOutBack, easeOutCubic } from '../engine/math';
 import type { Canvas, Ctx, SaveResult } from '../platform/types';
+import { dayConfig } from './level';
 import type { Game, Scene } from './game';
+import { MapScene, drawStamp } from './map';
 import { PlayScene } from './play';
+import { earnedStamps, passed } from './progress';
 
 export interface Photo {
   img: Canvas;
@@ -32,6 +35,15 @@ export interface DayResult {
   falls: number;
   wrongNames: string[];
   photos: Photo[];
+  /** Cash-on-delivery parcels, how many got the right change, and the tips and losses from it. */
+  codTotal: number;
+  codRight: number;
+  codTips: number;
+  codLoss: number;
+  /** Most parcels handed over in one trip from the truck. */
+  bestTrip: number;
+  /** An urgent parcel made it within the day-2 challenge time. */
+  fastUrgent: boolean;
 }
 
 const GRADES: Record<string, { name: string; line: string }> = {
@@ -57,7 +69,7 @@ const SAVED: Record<SaveResult, string> = {
 };
 
 interface Row {
-  icon: 'ok' | 'wrong' | 'wet' | 'miss' | 'urgent' | 'heart';
+  icon: 'ok' | 'wrong' | 'wet' | 'miss' | 'urgent' | 'cod' | 'stamp';
   label: string;
   value: string;
   money: string;
@@ -68,7 +80,10 @@ export class HqScene implements Scene {
   private t = 0;
   private grade: string;
   private income: number;
-  private stars: number;
+  private stamps: [boolean, boolean, boolean];
+  /** Stamps earned for the first time today. */
+  private fresh: boolean[];
+  private pass: boolean;
   private note: string;
   private owlLine: string;
   private left: Row[];
@@ -78,6 +93,8 @@ export class HqScene implements Scene {
   private btns: { id: string; rect: Rect }[] = [];
   private viewBtn: Rect | null = null;
   private pressed: string | null = null;
+  /** The press on 'view0' came from the 看大图 button rather than the first polaroid. */
+  private viewBtnHeld = false;
   /** Polaroids on the sheet, in screen coordinates, for opening the big view. */
   private thumbs: Rect[] = [];
   /** The big view: which photo, how long it's been open, and the sideways drag/slide offset. */
@@ -96,9 +113,12 @@ export class HqScene implements Scene {
     let grade = score >= 0.95 && r.wrong + r.wet === 0 ? 'S' : score >= 0.75 ? 'A' : score >= 0.5 ? 'B' : score >= 0.25 ? 'C' : 'D';
     if (r.thrown && ORDER.indexOf(grade) < 2) grade = 'B';
     this.grade = grade;
-    this.income = r.pay + r.bonus - r.penalty;
-    this.stars = r.total ? clamp(Math.round((5 * (r.delivered - 0.5 * r.wrong)) / r.total + (r.urgentOnTime ? 0.4 : 0)), 1, 5) : 3;
-    this.owlLine = r.thrown ? '被甩出去了？明天坐稳点。' : GRADES[grade].line;
+    this.income = r.pay + r.bonus + r.codTips - r.penalty - r.codLoss;
+    this.pass = passed(r);
+    this.stamps = earnedStamps(dayConfig(r.day), r, grade);
+    const had = game.save.stamps[r.day] ?? [];
+    this.fresh = this.stamps.map((v, i) => v && !had[i]);
+    this.owlLine = r.thrown ? '被甩出去了？明天坐稳点。' : !this.pass ? '送对的太少，这一天得重跑。' : GRADES[grade].line;
     this.note = r.wet ? '“包裹泡了水，可不算送到哦。”'
       : r.wrong ? `“${r.wrongNames[0]}说没买过这个……”`
         : r.missed ? `“还有 ${r.missed} 个包裹没送出去。”`
@@ -109,9 +129,11 @@ export class HqScene implements Scene {
       { icon: 'wet', label: '落水损坏', value: `${r.wet} 单`, money: r.wet ? `-${r.wet * 5}` : '0' },
       { icon: 'miss', label: '漏送', value: `${r.missed} 单`, money: '—' },
     ];
+    const cod = r.codTips - r.codLoss;
     this.right = [
       { icon: 'urgent', label: '加急准时', value: r.urgentTotal ? `${r.urgentOnTime} / ${r.urgentTotal}` : '—', money: r.bonus ? `+${r.bonus}` : '' },
-      { icon: 'heart', label: '顾客满意', value: '', money: '' },
+      { icon: 'cod', label: '到付找零', value: r.codTotal ? `${r.codRight} / ${r.codTotal}` : '—', money: cod > 0 ? `+${cod}` : cod < 0 ? `${cod}` : '' },
+      { icon: 'stamp', label: '好评章', value: '', money: '' },
     ];
     this.stampAt = 0.7 + (this.left.length + this.right.length + 1) * ROW_GAP + 0.35;
     this.endAt = this.stampAt + 0.5 + r.photos.length * 0.28 + 0.2;
@@ -119,13 +141,20 @@ export class HqScene implements Scene {
     // Save progress
     const s = game.save;
     s.coins = Math.max(0, s.coins + this.income);
-    s.day = Math.max(s.day, Math.min(r.day + 1, game.lastDay));
+    // only a passed day opens the next one
+    if (this.pass) s.day = Math.max(s.day, Math.min(r.day + 1, game.lastDay));
+    s.stamps[r.day] = this.stamps.map((v, i) => v || !!had[i]);
     const prev = s.best[r.day];
     if (!prev || ORDER.indexOf(grade) < ORDER.indexOf(prev)) s.best[r.day] = grade;
     game.writeSave();
     game.audio.setMusic('bgm_hq');
     game.audio.play('paper_flip', { delay: 0.15 });
     game.audio.play('owl_hoot', { delay: 0.5, volume: 0.8 });
+  }
+
+  /** There is a next day, and it's open. */
+  private get canNext() {
+    return this.r.day < this.game.lastDay && this.game.save.day > this.r.day;
   }
 
   private playStamp() {
@@ -166,7 +195,11 @@ export class HqScene implements Scene {
       return;
     }
     for (const b of this.btns) if (hit(b.rect, x, y)) this.pressed = b.id;
-    if (this.viewBtn && hit(this.viewBtn, x, y, 8)) this.pressed = 'view0';
+    this.viewBtnHeld = false;
+    if (this.viewBtn && hit(this.viewBtn, x, y, 8)) {
+      this.pressed = 'view0';
+      this.viewBtnHeld = true;
+    }
     this.thumbs.forEach((r, i) => {
       if (!this.pressed && hit(r, x, y, 6)) this.pressed = `view${i}`;
     });
@@ -216,7 +249,11 @@ export class HqScene implements Scene {
     this.game.audio.play('ui_tap');
     this.game.platform.showImage(null);
     if (id === 'retry') this.game.go(new PlayScene(this.game, this.r.day));
-    else if (id === 'next') this.game.go(new PlayScene(this.game, this.r.day >= this.game.lastDay ? 1 : this.r.day + 1));
+    else if (id === 'map') this.game.go(new MapScene(this.game, this.canNext ? this.r.day + 1 : this.r.day));
+    else if (id === 'next') {
+      if (this.canNext) this.game.go(new PlayScene(this.game, this.r.day + 1));
+      else this.toast = { text: `第${this.r.day}天送对六成以上才能解锁下一天`, t: 0 };
+    }
   }
 
   // ---------------------------------------------------------------- big view
@@ -323,10 +360,12 @@ export class HqScene implements Scene {
       for (const [id, cx, dir] of [['prev', 245, -1], ['next', 505, 1]] as const) {
         const r = { x: cx - 36, y: ry - 36, w: 72, h: 72 };
         this.viewBtns.push({ id, rect: r });
+        const down = this.pressed === id;
+        pressIn(ctx, r, down);
         ctx.save();
         ctx.globalAlpha = a;
         ellipse(ctx, cx, ry, 32, 32);
-        ctx.fillStyle = this.pressed === id ? P.paperShade : P.paper;
+        ctx.fillStyle = P.paper;
         ctx.fill();
         ctx.strokeStyle = INK;
         ctx.lineWidth = 2;
@@ -340,6 +379,7 @@ export class HqScene implements Scene {
         ctx.lineTo(cx - dir * 5, ry + 12);
         ctx.stroke();
         ctx.restore();
+        pressOut(ctx, down, () => ellipse(ctx, cx, ry, 32, 32));
       }
     }
     text(ctx, photos.length > 1 ? '左右滑动换一张 · 长按图片也能保存' : '长按图片也能保存', 375, btnY - 34, 24, { color: P.cream, alpha: 0.7 * a });
@@ -428,12 +468,23 @@ export class HqScene implements Scene {
     const show = clamp((this.t - this.stampAt) / 0.3, 0, 1);
     ctx.save();
     ctx.globalAlpha = 0.3 + 0.7 * show;
-    this.btns = [
-      { id: 'retry', rect: { x: 40, y: btnTop, w: 310, h: 84 } },
-      { id: 'next', rect: { x: 390, y: btnTop, w: 320, h: 84 } },
-    ];
-    button(ctx, 40, btnTop, 310, 84, '再来一次', { pressed: this.pressed === 'retry', size: 32 });
-    button(ctx, 390, btnTop, 320, 84, last ? '从第1天再玩 →' : '下一天 →', { primary: true, pressed: this.pressed === 'next', size: 32 });
+    if (last) {
+      this.btns = [
+        { id: 'retry', rect: { x: 40, y: btnTop, w: 310, h: 84 } },
+        { id: 'map', rect: { x: 390, y: btnTop, w: 320, h: 84 } },
+      ];
+      button(ctx, 40, btnTop, 310, 84, '再来一次', { pressed: this.pressed === 'retry', size: 32 });
+      button(ctx, 390, btnTop, 320, 84, '回路线图 →', { primary: true, pressed: this.pressed === 'map', size: 32 });
+    } else {
+      this.btns = [
+        { id: 'retry', rect: { x: 24, y: btnTop, w: 220, h: 84 } },
+        { id: 'map', rect: { x: 258, y: btnTop, w: 200, h: 84 } },
+        { id: 'next', rect: { x: 472, y: btnTop, w: 254, h: 84 } },
+      ];
+      button(ctx, 24, btnTop, 220, 84, '再来一次', { primary: !this.canNext, pressed: this.pressed === 'retry', size: 30 });
+      button(ctx, 258, btnTop, 200, 84, '路线图', { pressed: this.pressed === 'map', size: 30 });
+      button(ctx, 472, btnTop, 254, 84, '下一天 →', { primary: this.canNext, disabled: !this.canNext, pressed: this.pressed === 'next', size: 30 });
+    }
     ctx.restore();
 
     if (this.view) this.drawViewer(ctx);
@@ -498,12 +549,21 @@ export class HqScene implements Scene {
     const shown = (i: number) => clamp((this.t - 0.7 - i * ROW_GAP) / 0.2, 0, 1);
     this.left.forEach((row, i) => this.drawRow(ctx, row, 34, 160 + i * 50, 296, shown(i)));
     this.right.forEach((row, i) => this.drawRow(ctx, row, 372, 160 + i * 50, 300, shown(this.left.length + i)));
-    // stars
-    const sa = shown(this.left.length + 1);
+    // the day's three stamps, the new ones thumped down one after another
+    const sa = shown(this.left.length + 2);
     if (sa > 0) {
       ctx.save();
       ctx.globalAlpha = sa;
-      for (let i = 0; i < 5; i++) this.star(ctx, 548 + i * 26, 210, i < this.stars ? P.gold : P.paperShade);
+      for (let i = 0; i < 3; i++) {
+        const fresh = this.fresh[i];
+        const k = clamp((this.t - this.stampAt - 0.2 - i * 0.15) / 0.15, 0, 1);
+        const sc = fresh ? 1.6 - 0.6 * k : 1;
+        ctx.save();
+        ctx.translate(560 + i * 40, 260);
+        ctx.scale(sc, sc);
+        drawStamp(ctx, 0, 0, 16, this.stamps[i] && (!fresh || k > 0), i + 1);
+        ctx.restore();
+      }
       ctx.restore();
     }
     // income box
@@ -511,42 +571,45 @@ export class HqScene implements Scene {
     if (ia > 0) {
       ctx.save();
       ctx.globalAlpha = ia;
-      roundRect(ctx, 366, 244, 306, 60, 12);
+      roundRect(ctx, 366, 292, 306, 54, 12);
       ctx.fillStyle = '#F0E2C4';
       ctx.fill();
       ctx.strokeStyle = INK;
       ctx.lineWidth = 2;
       ctx.stroke();
-      text(ctx, '今日收入', 384, 275, 28, { align: 'left', bold: true });
-      sp.draw(ctx, 'coin', 548, 274, 0.75);
+      text(ctx, '今日收入', 384, 320, 28, { align: 'left', bold: true });
+      sp.draw(ctx, 'coin', 548, 319, 0.75);
       const k = clamp((this.t - 0.7 - (this.left.length + this.right.length) * ROW_GAP) / 0.6, 0, 1);
       const v = Math.round(this.income * k);
-      text(ctx, `${v >= 0 ? '+' : ''}${v}`, 656, 276, 34, { align: 'right', bold: true, color: v >= 0 ? P.lilyDeep : P.red });
+      text(ctx, `${v >= 0 ? '+' : ''}${v}`, 656, 321, 34, { align: 'right', bold: true, color: v >= 0 ? P.lilyDeep : P.red });
       ctx.restore();
     }
     // owl's note
-    if (this.t > this.stampAt) text(ctx, `${this.note} —— 猫头鹰经理`, 351, 352, 23, { color: P.inkSoft, maxWidth: 640, alpha: clamp((this.t - this.stampAt) / 0.4, 0, 1) });
+    if (this.t > this.stampAt) text(ctx, `${this.note} —— 猫头鹰经理`, 351, 366, 23, { color: P.inkSoft, maxWidth: 640, alpha: clamp((this.t - this.stampAt) / 0.4, 0, 1) });
 
     // highlights
-    text(ctx, '今日精彩瞬间', 351, 394, 28, { bold: true });
+    text(ctx, '今日精彩瞬间', 351, 398, 28, { bold: true });
     ctx.strokeStyle = P.orange;
     ctx.lineWidth = 3.5;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(271, 414);
-    ctx.quadraticCurveTo(351, 422, 431, 414);
+    ctx.moveTo(271, 416);
+    ctx.quadraticCurveTo(351, 423, 431, 416);
     ctx.stroke();
     const photos = this.r.photos;
     const sheetTop = this.sheetScreenTop();
     if (photos.length) {
-      this.viewBtn = { x: 24 + 560, y: sheetTop + 376, w: 110, h: 38 };
-      roundRect(ctx, 560, 376, 110, 38, 19);
-      ctx.fillStyle = this.pressed === 'view0' ? P.paperShade : P.cream;
+      this.viewBtn = { x: 24 + 560, y: sheetTop + 380, w: 110, h: 38 };
+      const down = this.pressed === 'view0' && this.viewBtnHeld;
+      pressIn(ctx, { x: 560, y: 380, w: 110, h: 38 }, down);
+      roundRect(ctx, 560, 380, 110, 38, 19);
+      ctx.fillStyle = P.cream;
       ctx.fill();
       ctx.strokeStyle = INK;
       ctx.lineWidth = 1.8;
       ctx.stroke();
-      text(ctx, '看大图', 615, 396, 22, { bold: true });
+      text(ctx, '看大图', 615, 400, 22, { bold: true });
+      pressOut(ctx, down, () => roundRect(ctx, 560, 380, 110, 38, 19));
     }
     const n = photos.length;
     this.thumbs = [];
@@ -554,16 +617,22 @@ export class HqScene implements Scene {
       const k = clamp((this.t - this.stampAt - 0.5 - i * 0.28) / 0.3, 0, 1);
       if (k <= 0) return;
       const cx = n === 1 ? 351 : n === 2 ? 236 + i * 230 : 120 + i * 231;
-      this.thumbs[i] = { x: 24 + cx - 100, y: sheetTop + 512 - 96, w: 200, h: 192 };
+      this.thumbs[i] = { x: 24 + cx - 100, y: sheetTop + 522 - 96, w: 200, h: 192 };
       const rot = [-0.05, 0.035, -0.03][i];
+      const down = this.pressed === `view${i}` && !(i === 0 && this.viewBtnHeld);
       ctx.save();
       ctx.globalAlpha = k;
-      ctx.translate(cx, 512 - (1 - easeOutBack(k)) * 30);
+      ctx.translate(cx, 522 - (1 - easeOutBack(k)) * 30);
       ctx.rotate(rot);
+      if (down) ctx.scale(0.94, 0.94);
       this.polaroid(ctx, p);
+      if (down) {
+        ctx.fillStyle = 'rgba(36,28,22,0.22)';
+        ctx.fillRect(-100, -96, 200, 192);
+      }
       ctx.restore();
     });
-    if (!n) text(ctx, '今天风平浪静，没拍到照片', 351, 500, 24, { color: P.inkSoft });
+    if (!n) text(ctx, '今天风平浪静，没拍到照片', 351, 510, 24, { color: P.inkSoft });
 
     // rating stamp
     const st = this.t - this.stampAt;
@@ -644,7 +713,7 @@ export class HqScene implements Scene {
   }
 
   private icon(ctx: Ctx, kind: Row['icon'], x: number, y: number) {
-    const bg = { ok: P.lily, wrong: P.gold, wet: P.blueLight, miss: P.paperShade, urgent: P.red, heart: P.pink }[kind];
+    const bg = { ok: P.lily, wrong: P.gold, wet: P.blueLight, miss: P.paperShade, urgent: P.red, cod: P.lilyLight, stamp: P.pink }[kind];
     ellipse(ctx, x, y, 15, 15);
     ctx.fillStyle = bg;
     ctx.fill();
@@ -675,26 +744,12 @@ export class HqScene implements Scene {
       ctx.lineTo(x, y);
       ctx.lineTo(x + 6, y + 4);
       ctx.stroke();
+    } else if (kind === 'cod') {
+      text(ctx, '¥', x, y + 1, 20, { bold: true, color: P.lilyDeep });
     } else {
-      ctx.moveTo(x, y + 7);
-      ctx.bezierCurveTo(x - 14, y - 2, x - 6, y - 12, x, y - 4);
-      ctx.bezierCurveTo(x + 6, y - 12, x + 14, y - 2, x, y + 7);
-      ctx.fill();
+      ctx.lineWidth = 2;
+      ellipse(ctx, x, y, 8, 8);
+      ctx.stroke();
     }
-  }
-
-  private star(ctx: Ctx, x: number, y: number, fill: string) {
-    ctx.beginPath();
-    for (let i = 0; i < 10; i++) {
-      const r = i % 2 ? 5 : 12;
-      const a = -Math.PI / 2 + (i * Math.PI) / 5;
-      ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
-    }
-    ctx.closePath();
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.8;
-    ctx.stroke();
   }
 }

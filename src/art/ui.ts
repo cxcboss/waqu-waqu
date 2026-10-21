@@ -64,8 +64,31 @@ export function panel(ctx: Ctx, x: number, y: number, w: number, h: number, o: {
   }
 }
 
+/**
+ * Press feedback shared by every button: while held, it shrinks a little about its middle and a
+ * shade goes over it. Call `pressIn` before drawing and `pressOut` with the button's outline after.
+ */
+export const PRESS_SCALE = 0.93;
+export function pressIn(ctx: Ctx, r: Rect, pressed: boolean | undefined) {
+  ctx.save();
+  if (!pressed) return;
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  ctx.translate(cx, cy);
+  ctx.scale(PRESS_SCALE, PRESS_SCALE);
+  ctx.translate(-cx, -cy);
+}
+export function pressOut(ctx: Ctx, pressed: boolean | undefined, shape: () => void) {
+  if (pressed) {
+    shape();
+    ctx.fillStyle = 'rgba(36,28,22,0.22)';
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 /** Pill button with stitched edge. */
 export function button(ctx: Ctx, x: number, y: number, w: number, h: number, label: string, o: { primary?: boolean; pressed?: boolean; size?: number; disabled?: boolean } = {}) {
+  pressIn(ctx, { x, y, w, h }, o.pressed);
   ctx.save();
   if (o.disabled) ctx.globalAlpha = 0.45;
   const dy = o.pressed ? 3 : 0;
@@ -86,6 +109,7 @@ export function button(ctx: Ctx, x: number, y: number, w: number, h: number, lab
   ctx.setLineDash([]);
   text(ctx, label, x + w / 2, y + dy + h / 2 + 1, o.size || 30, { color: o.primary ? P.white : INK, bold: true, maxWidth: w - 30 });
   ctx.restore();
+  pressOut(ctx, o.pressed, () => roundRect(ctx, x, y + dy, w, h, h / 2));
 }
 
 export function ellipse(ctx: Ctx, x: number, y: number, rx: number, ry: number) {

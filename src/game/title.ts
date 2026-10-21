@@ -1,10 +1,11 @@
 import { INK, P } from '../art/palette';
 import { K, TILE_H } from '../art/sprites';
-import { button, ellipse, hit, panel, roundRect, text, type Rect } from '../art/ui';
+import { button, ellipse, hit, panel, pressIn, pressOut, roundRect, text, type Rect } from '../art/ui';
 import type { Ctx } from '../platform/types';
 import { TUNING } from './config';
 import type { Game, Scene } from './game';
-import { PlayScene, drawTruckBase } from './play';
+import { MapScene } from './map';
+import { drawTruckBase } from './play';
 
 const TILE = TILE_H * K;
 
@@ -36,8 +37,7 @@ export class TitleScene implements Scene {
     this.pressed = null;
     if (!b) return;
     this.game.audio.play(b.id === 'sound' ? 'ui_tap' : 'ui_confirm');
-    if (b.id === 'start') this.game.go(new PlayScene(this.game, this.game.save.day));
-    else if (b.id === 'day1') this.game.go(new PlayScene(this.game, 1));
+    if (b.id === 'start') this.game.go(new MapScene(this.game));
     else if (b.id === 'sound') this.game.setSound(!this.game.save.sound);
   }
 
@@ -52,12 +52,10 @@ export class TitleScene implements Scene {
       const y = ((((p.y - this.cam) % span) + span) % span) - 150;
       sp.draw(ctx, `lily${p.v}`, p.x, y, p.r / (100 * K));
     }
-    // trucks idling on the banks
-    for (const [x, y, name] of [[TUNING.truckX[0], H * 0.72, 'truck_orange'], [TUNING.truckX[1], H * 0.3, 'truck_blue']] as const) {
-      const yy = y + Math.sin(this.t * 13 + x) * 0.8;
-      drawTruckBase(ctx, x, yy, this.t * 60);
-      sp.draw(ctx, name, x, yy);
-    }
+    // the truck idling on the road
+    const yy = H * 0.3 + Math.sin(this.t * 13) * 0.8;
+    drawTruckBase(ctx, TUNING.truckX, yy, this.t * 60);
+    sp.draw(ctx, 'truck_blue', TUNING.truckX, yy);
 
     // title card
     const cy = H * 0.36;
@@ -101,14 +99,14 @@ export class TitleScene implements Scene {
     const by = H - this.game.safeB - 270;
     this.btns = [{ id: 'start', rect: { x: 165, y: by, w: 420, h: 96 } }];
     button(ctx, 165, by, 420, 96, day > 1 ? `继续上班 · 第${day}天` : '开始上班', { primary: true, pressed: this.pressed === 'start', size: 36 });
-    if (day > 1) {
-      this.btns.push({ id: 'day1', rect: { x: 225, y: by + 116, w: 300, h: 70 } });
-      button(ctx, 225, by + 116, 300, 70, '从第1天开始', { pressed: this.pressed === 'day1', size: 28 });
-    }
+    text(ctx, '在路线图上选择要跑的一天', 375, by + 130, 24, { color: P.ink, alpha: 0.7 });
     const st = this.game.safeT + 24;
-    this.btns.push({ id: 'sound', rect: { x: 600, y: st, w: 126, h: 56 } });
+    const sr = { x: 600, y: st, w: 126, h: 56 };
+    this.btns.push({ id: 'sound', rect: sr });
+    pressIn(ctx, sr, this.pressed === 'sound');
     panel(ctx, 600, st, 126, 56, { r: 28, shadow: false });
     text(ctx, this.game.save.sound ? '音效 开' : '音效 关', 663, st + 29, 24, { bold: true });
+    pressOut(ctx, this.pressed === 'sound', () => roundRect(ctx, 600, st, 126, 56, 28));
     if (this.game.save.coins > 0) {
       panel(ctx, 24, st, 170, 56, { r: 28, shadow: false });
       sp.draw(ctx, 'coin', 58, st + 28, 0.7);

@@ -432,22 +432,21 @@ function mailbox(x: number, y: number) {
 
 /** River edge x (concept units) at height y; periodic in the tile height so tiles stack seamlessly. */
 export function riverEdge(side: 'L' | 'R', y: number, tileH: number) {
-  const base = side === 'L' ? 180 : 900;
+  const base = side === 'L' ? 82 : 900;
   const k = (2 * Math.PI) / tileH;
   return base + Math.sin(y * k * 3 + (side === 'L' ? 0 : 2)) * 12 + Math.sin(y * k * 7) * 5;
 }
 
-/** One seamless vertical tile of banks, roads and river (concept units, 1080 wide). */
+/** One seamless vertical tile: a reedy bank on the left, the river, and the road on the right (concept units, 1080 wide). */
 export function riverTile(tileH: number) {
   const W = 1080;
   let s = '';
   s += rr(0, 0, W, tileH, 0, P.bank, 0);
-  s += rr(-40, -10, 188, tileH + 20, 0, P.road, 0) + rr(932, -10, 188, tileH + 20, 0, P.road, 0);
+  s += rr(932, -10, 188, tileH + 20, 0, P.road, 0);
   const R = rng(5);
-  for (let i = 0; i < 80; i++) {
-    const x = R() < 0.5 ? 4 + R() * 136 : 940 + R() * 136;
-    s += circ(x, 10 + R() * (tileH - 20), 2 + R() * 3, P.roadDeep, 0, { opacity: 0.8 });
-  }
+  for (let i = 0; i < 40; i++) s += circ(940 + R() * 136, 10 + R() * (tileH - 20), 2 + R() * 3, P.roadDeep, 0, { opacity: 0.8 });
+  // grass texture on the narrow left bank
+  for (let i = 0; i < 26; i++) s += circ(8 + R() * 50, 10 + R() * (tileH - 20), 3 + R() * 4, P.bankDeep, 0, { opacity: 0.7 });
   // river body
   const pts = (side: 'L' | 'R') => {
     const out: [number, number][] = [];
@@ -461,7 +460,12 @@ export function riverTile(tileH: number) {
   s += path(river, P.teal, 0);
   // deeper current down the middle (periodic)
   const q = tileH / 4;
-  s += path(`M540 -4 C600 ${q * 0.6} 480 ${q * 1.4} 540 ${q * 2} S600 ${q * 3.4} 540 ${tileH + 4}`, 'none', 0, { stroke: P.tealDeep, 'stroke-width': 90, opacity: 0.14 });
+  s += path(`M500 -4 C580 ${q * 0.6} 420 ${q * 1.4} 500 ${q * 2} S580 ${q * 3.4} 500 ${tileH + 4}`, 'none', 0, { stroke: P.tealDeep, 'stroke-width': 110, opacity: 0.14 });
+  // a few lighter shallows with sand showing through, near the reeds
+  for (let i = 0; i < 5; i++) {
+    const y = ((i + 0.4) * tileH) / 5;
+    s += ell(150 + (i % 2) * 40, y, 54, 120, P.tealLight, 0, { opacity: 0.35 });
+  }
   const edgePath = (p: [number, number][]) => `M${p[0][0]} ${p[0][1]} ` + p.slice(1).map(([x, y]) => `L${r1(x)} ${y}`).join(' ');
   s += path(edgePath(Le.map(([x, y]) => [x + 10, y])), 'none', 0, { stroke: P.tealLight, 'stroke-width': 12, opacity: 0.8, 'stroke-linejoin': 'round' });
   s += path(edgePath(Re.map(([x, y]) => [x - 10, y])), 'none', 0, { stroke: P.tealLight, 'stroke-width': 12, opacity: 0.8, 'stroke-linejoin': 'round' });
@@ -469,8 +473,8 @@ export function riverTile(tileH: number) {
   s += path(edgePath(Re), 'none', 0, { stroke: INK, 'stroke-width': 3, opacity: 0.55, 'stroke-linejoin': 'round' });
   // flow curls (kept away from the seams)
   const R2 = rng(12);
-  for (let i = 0; i < 40; i++) {
-    const x = 240 + R2() * 600, y = 30 + R2() * (tileH - 60);
+  for (let i = 0; i < 52; i++) {
+    const x = 150 + R2() * 690, y = 30 + R2() * (tileH - 60);
     s += R2() < 0.7 ? curl(x, y, 0.6 + R2() * 0.5, P.tealDeep, 0.4) : spiral(x, y, 0.8, P.white, 0.5);
   }
   // bank plants and stones
@@ -478,17 +482,18 @@ export function riverTile(tileH: number) {
   const step = tileH / 12;
   for (let i = 0; i < 12; i++) {
     const y = i * step + 40;
-    plants += reeds(168, y + 60, 3, 100 + i, 0.7) + reeds(912, y + 110, 3, 200 + i, 0.7);
-    plants += stone(172 + (i % 3) * 4, y + 100, 11) + stone(908, y + 40, 10);
-    plants += tuft(160, y + 130) + tuft(922, y + 80);
+    // the left bank is mostly reeds, standing out into the shallows
+    plants += reeds(64, y + 60, 4, 100 + i, 0.8) + reeds(96, y + 120, 2, 300 + i, 0.6) + reeds(912, y + 110, 3, 200 + i, 0.7);
+    plants += stone(84 + (i % 3) * 6, y + 100, 10) + stone(908, y + 40, 10);
+    plants += tuft(36, y + 130) + tuft(922, y + 80);
   }
-  const fl: [number, number, string][] = [[160, 0.26, '#F2C9C0'], [162, 0.62, '#F4E2B0'], [918, 0.45, '#F2C9C0'], [914, 0.86, '#EDE6D6'], [166, 0.9, '#F4E2B0'], [916, 0.12, '#EDE6D6']];
+  const fl: [number, number, string][] = [[40, 0.26, '#F2C9C0'], [44, 0.62, '#F4E2B0'], [918, 0.45, '#F2C9C0'], [914, 0.86, '#EDE6D6'], [36, 0.9, '#F4E2B0'], [916, 0.12, '#EDE6D6']];
   for (const [x, t, c] of fl) plants += wildflower(x, t * tileH, c, 1.1) + wildflower(x + 10, t * tileH + 16, c, 0.8);
-  plants += fern(158, tileH * 0.4, 84, 20) + fern(922, tileH * 0.55, 80, -20) + fern(160, tileH * 0.75, 76, 26) + fern(920, tileH * 0.95 - 20, 84, -24);
-  plants += mailbox(156, tileH * 0.34) + mailbox(924, tileH * 0.7);
+  plants += fern(40, tileH * 0.4, 70, 20) + fern(922, tileH * 0.55, 80, -20) + fern(44, tileH * 0.75, 64, 26) + fern(920, tileH * 0.95 - 20, 84, -24);
+  plants += mailbox(924, tileH * 0.34) + mailbox(924, tileH * 0.7);
   s += g(plants, { filter: 'url(#wobbleSoft)', opacity: 0.95 });
   // road center dashes: period 48 divides the tile height
-  for (const x of [54, 1026]) s += line(x, -14, x, tileH + 14, P.roadDeep, 4, { 'stroke-dasharray': '28 20', opacity: 0.9 });
+  s += line(1026, -14, 1026, tileH + 14, P.roadDeep, 4, { 'stroke-dasharray': '28 20', opacity: 0.9 });
   s += overlays(0, 0, W, tileH);
   return s;
 }

@@ -23,8 +23,6 @@ export interface Plat {
   tilt: number;
   drift: number;
   house?: House;
-  /** Truck or bank side: 0 = left, 1 = right. */
-  side: 0 | 1;
 }
 
 export interface House {
@@ -56,8 +54,16 @@ export interface Order {
   house: House;
   size: Size;
   urgent: boolean;
+  /** Cash on delivery: what the resident owes, and the bill they pay with. */
+  cod: { price: number; paid: number } | null;
+  /** Whether the change handed back was right, once it's been counted out. */
+  codOk: boolean | null;
+  /** Times it has gone into the river; the third time it's ruined and washed away. */
+  dunks: number;
   state: OrderState;
+  /** Set on the first pickup and kept, so putting an urgent parcel back doesn't restart its clock. */
   deadline: number;
+  pickedAt: number;
   late: boolean;
   deliveredTo: House | null;
 }
@@ -67,8 +73,9 @@ export interface Level {
   plats: Plat[];
   houses: House[];
   orders: Order[];
-  trucks: [Plat, Plat];
-  banks: [Plat, Plat];
+  truck: Plat;
+  /** The road the truck drives on, along the right bank. */
+  road: Plat;
 }
 
 // House geometry in design units (concept coordinates × K).
@@ -81,7 +88,7 @@ const HOUSE_GEO: Record<HouseType, { rx: number; ry: number; resident: [number, 
 let nextId = 1;
 
 function plat(kind: PlatKind, x: number, y: number, rx: number, ry: number, extra: Partial<Plat> = {}): Plat {
-  return { id: nextId++, kind, x, y, rx, ry, rot: 0, variant: 0, bobT: 9, press: 0, tilt: 0, drift: 0, side: 0, ...extra };
+  return { id: nextId++, kind, x, y, rx, ry, rot: 0, variant: 0, bobT: 9, press: 0, tilt: 0, drift: 0, ...extra };
 }
 
 export function dayConfig(day: number): DayConfig {
@@ -113,7 +120,7 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
   const colors = shuffle([...PLATE_COLORS], r);
 
   const mid = (riverL + riverR) / 2;
-  let pathX = mid - 100;
+  let pathX = mid + 60;
   let side: 0 | 1 = r() < 0.5 ? 0 : 1;
   /** Set right after a house: the next row has to dodge its roof sideways. */
   let afterHouse: number | null = null;
@@ -121,7 +128,7 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
 
   const row = (y: number) => {
     // A main landing spot within reach of the last one, sometimes a log, sometimes a second lily.
-    let want = pathX + (r() - 0.5) * 240;
+    let want = pathX + (r() - 0.5) * 260;
     if (afterHouse !== null) want = afterHouse + (afterHouse < mid ? 1 : -1) * (112 + r() * 22); // clear of the roof
     afterHouse = null;
     if (r() < 0.16) {
@@ -134,10 +141,16 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
       plats.push(plat('lily', lx, y + (r() - 0.5) * 20, rx, rx * 0.6, { variant: Math.floor(r() * 4) }));
       pathX = lx;
     }
-    if (r() < 0.45) {
+    // The wider river has room for a second pad off to the side, and now and then a third.
+    if (r() < 0.5) {
       const rx = 42 + r() * 18;
-      const away = pathX < mid ? pathX + 190 + r() * 60 : pathX - 190 - r() * 60;
+      const away = pathX < mid ? pathX + 190 + r() * 70 : pathX - 190 - r() * 70;
       plats.push(plat('lily', lilyX(rx, away), y + (r() - 0.5) * 50, rx, rx * 0.6, { variant: Math.floor(r() * 4) }));
+      if (r() < 0.22) {
+        const sx = pathX < mid ? riverR - 70 : riverL + 70;
+        const srx = 36 + r() * 10;
+        if (Math.abs(sx - away) > 150) plats.push(plat('lily', lilyX(srx, sx), y + (r() - 0.5) * 60, srx, srx * 0.6, { variant: Math.floor(r() * 4) }));
+      }
     }
   };
 
@@ -191,8 +204,8 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
     y -= 175 + r() * 30;
     row(y);
   }
-  // A lily just ahead of the left truck, where the frog starts: an easy first hop.
-  const sx = riverL + 78, sy = H * TUNING.truckAnchor[0] - 120;
+  // A lily just ahead of the truck, where the frog starts: an easy first hop.
+  const sx = riverR - 96, sy = H * TUNING.truckAnchor - 150;
   for (let i = plats.length - 1; i >= 0; i--) {
     const q = plats[i];
     if (q.kind !== 'house' && Math.hypot(q.x - sx, q.y - sy) < q.rx + 52 + 30) plats.splice(i, 1);
@@ -201,26 +214,35 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
   bridgeGaps(plats, cfg, yEnd + H);
 
   // Orders: the first house always has one (the tutorial walks you there), the rest spread out.
-  const orders: Order[] = [];
   const houseOrder = [0, ...shuffle(houses.slice(1).map((h) => h.id), r)];
-  const codes = shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], r);
+  const orders: Order[] = [];
   for (let i = 0; i < cfg.orders; i++) {
     const h = houses[houseOrder[i % houseOrder.length]];
     orders.push({
-      id: i, code: codes[i % codes.length], house: h, size: cfg.sizes[Math.floor(r() * cfg.sizes.length)], urgent: false,
-      state: 'pool', deadline: 0, late: false, deliveredTo: null,
+      id: i, code: 0, house: h, size: cfg.sizes[Math.floor(r() * cfg.sizes.length)], urgent: false, cod: null, codOk: null, dunks: 0,
+      state: 'pool', deadline: 0, pickedAt: 0, late: false, deliveredTo: null,
     });
+  }
+  // Early days count up the river: the first house waits for 1, the next for 2, and so on.
+  // From day 4 on the codes are shuffled, so every card has to be read.
+  if (cfg.ordered) orders.slice().sort((a, b) => a.house.id - b.house.id || a.id - b.id).forEach((o, i) => (o.code = i + 1));
+  else {
+    const codes = shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], r);
+    orders.forEach((o, i) => (o.code = codes[i % codes.length]));
   }
   // Urgent parcels go to houses that are not the very first ones, so there's time to plan.
   const urgentCandidates = shuffle(orders.filter((o) => o.house.id >= 2), r);
   urgentCandidates.slice(0, cfg.urgent).forEach((o) => (o.urgent = true));
+  // Cash on delivery goes to plain parcels past the first two houses; on day 1 that's after the basics.
+  const codCandidates = shuffle(orders.filter((o) => o.house.id >= 2 && !o.urgent), r);
+  for (const o of codCandidates.slice(0, cfg.cod)) {
+    const price = cfg.codNote === 10 ? 3 + Math.floor(r() * 6) : 11 + Math.floor(r() * 7);
+    o.cod = { price, paid: cfg.codNote };
+  }
 
-  const trucks: [Plat, Plat] = [
-    plat('truck', TUNING.truckX[0], 0, TUNING.truckHalfW, TUNING.truckHalfH, { side: 0, variant: 0 }),
-    plat('truck', TUNING.truckX[1], 0, TUNING.truckHalfW, TUNING.truckHalfH, { side: 1, variant: 1 }),
-  ];
-  const banks: [Plat, Plat] = [plat('bank', 0, 0, 0, 0, { side: 0 }), plat('bank', 0, 0, 0, 0, { side: 1 })];
-  return { cfg, plats, houses, orders, trucks, banks };
+  const truck = plat('truck', TUNING.truckX, 0, TUNING.truckHalfW, TUNING.truckHalfH, { variant: 1 });
+  const road = plat('bank', 0, 0, 0, 0);
+  return { cfg, plats, houses, orders, truck, road };
 }
 
 /** Where the frog ends up standing on a platform. */
