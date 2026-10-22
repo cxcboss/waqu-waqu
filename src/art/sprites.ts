@@ -1,5 +1,8 @@
 import type { Ctx, ImageSource, Platform } from '../platform/types';
 import { P } from './palette';
+import { HOUSE_DEFS, POSES, RESIDENT_DEFS, RES_FRAME } from '../game/cast';
+import { critter, critterAvatar } from './critters';
+import { placeholderHouse } from './houses';
 import * as A from './shapes';
 import { defs } from './svg';
 
@@ -25,10 +28,15 @@ interface SpriteDef {
   svg: (() => string) | null;
   /** Painted-only art without its PNG borrows this sprite instead (same anchor). */
   alias?: string;
+  /** Loaded when a scene asks for it (see `ensure`), not at startup. */
+  lazy?: boolean;
+  /** Until this one is painted, use `prefer` if that one is (a resident's painted idle pose beats a placeholder pose). */
+  prefer?: string;
 }
 
 const D: Record<string, SpriteDef> = {};
 const def = (name: string, b: SpriteDef['b'], svg: () => string, s = K) => (D[name] = { b, s, svg });
+const defLazy = (name: string, b: SpriteDef['b'], svg: (() => string) | null, prefer?: string) => (D[name] = { b, s: K, svg, lazy: true, prefer });
 /** Art with no placeholder: missing its PNG, it's the `alias` sprite, or not there at all (see `has`). */
 const paintedOnly = (name: string, b: SpriteDef['b'], alias?: string) => (D[name] = { b, s: K, svg: null, alias });
 
@@ -41,9 +49,6 @@ const lilyOpts = [
 ];
 lilyOpts.forEach((o, i) => def(`lily${i}`, [-140, -80, 140, 100], () => A.lilyPad(0, 0, 100, o)));
 def('log', [-130, -62, 130, 48], A.log);
-def('house_teapot', [-170, -222, 182, 106], A.teapotHouse);
-def('house_boot', [-150, -306, 150, 96], A.bootHouse);
-def('house_can', [-160, -236, 160, 96], A.canHouse);
 def('truck_orange', [-136, -202, 136, 200], () => A.truckBody(P.orange, P.orangeDeep, '#F2A57A'));
 def('truck_blue', [-136, -202, 136, 200], () => A.truckBody(P.blue, '#2E4659', P.blueLight));
 def('splash', [-100, -80, 100, 40], A.splash);
@@ -61,17 +66,32 @@ def('frog_shock', FB, () => A.frog({ pose: 'stand', mood: 'shock', look: [0, -2]
 paintedOnly('frog_lick', FB, 'frog_shock');
 paintedOnly('frog_cling', [-104, -116, 104, 44], 'frog_swim');
 paintedOnly('frog_dunk', [-104, -116, 104, 44], 'frog_swim');
+// More frog moments: painted-only, standing in for an existing pose until they're painted.
+// The water and truck ones are drawn by the swimming and rope-pull code.
+for (const [name, alias] of [
+  ['frog_land', 'frog_crouch'], ['frog_wobble', 'frog_nervous'], ['frog_give', 'frog_stand'], ['frog_salute', 'frog_happy'],
+  ['frog_cheer', 'frog_happy'], ['frog_sad', 'frog_nervous'], ['frog_tired', 'frog_nervous'], ['frog_heavy', 'frog_stand'],
+  ['frog_yawn', 'frog_happy'], ['frog_look', 'frog_stand'], ['frog_flip', 'frog_crouch'], ['frog_dragged', 'frog_shock'],
+  ['frog_flung', 'frog_shock'], ['frog_dizzy', 'frog_nervous'],
+]) paintedOnly(name, FB, alias);
+paintedOnly('frog_kick', [-104, -116, 104, 44], 'frog_swim');
 def('satchel0', [-30, -12, 36, 40], () => A.satchel(0));
 def('satchel1', [-36, -12, 42, 48], () => A.satchel(1));
 def('satchel2', [-42, -12, 48, 58], () => A.satchel(2));
 
-// Residents (origin at feet)
-def('duck', [-50, -86, 56, 14], () => A.duck({ cup: true }));
-def('rabbit', [-36, -128, 36, 14], A.rabbit);
-def('hedgehog', [-46, -72, 42, 14], A.hedgehog);
-def('avatar_duck', [-38, -38, 38, 38], () => A.avatar('duck'));
-def('avatar_rabbit', [-38, -38, 38, 38], () => A.avatar('rabbit'));
-def('avatar_hedgehog', [-38, -38, 38, 38], () => A.avatar('hedgehog'));
+// Residents: r_<who>_<pose>, all in one frame with the origin at the feet, plus a portrait each.
+for (const r of RESIDENT_DEFS) {
+  for (const pose of POSES) defLazy(`r_${r.id}_${pose}`, RES_FRAME, () => critter(r.id, pose), pose === 'idle' ? undefined : `r_${r.id}_idle`);
+  defLazy(`avatar_${r.id}`, [-38, -38, 38, 38], () => critterAvatar(r.id));
+}
+
+// Houses (origin at the raft center). door_<house> is the painted door standing open, over the door.
+const OLD_HOUSES: Record<string, () => string> = { teapot: A.teapotHouse, boot: A.bootHouse, can: A.canHouse };
+for (const h of HOUSE_DEFS) {
+  defLazy(`house_${h.id}`, h.b, OLD_HOUSES[h.id] ?? (() => placeholderHouse(h.id)));
+  const d = h.door;
+  defLazy(`door_${h.id}`, [d.x - d.w / 2 - 8, d.y - d.h - 8, d.x + d.w / 2 + 8, d.y + 4], null);
+}
 
 // Parcels (origin at bottom center of the front face)
 for (const size of [0, 1, 2] as const) {
@@ -119,9 +139,18 @@ export class SpriteBank {
 
   constructor(private platform: Platform) {}
 
+  private px = 1;
+  private base = 'art/';
+  private files = new Map<string, string>();
+  private loading = new Map<string, Promise<void>>();
+  private isPainted = new Set<string>();
+
   async load(pxPerUnit: number, onProgress?: (done: number, total: number) => void, artBase = 'art/') {
-    const names = SPRITE_NAMES;
+    const names = SPRITE_NAMES.filter((n) => !D[n].lazy);
     const painted = await this.paintedList(artBase);
+    this.px = pxPerUnit;
+    this.base = artBase;
+    this.files = painted;
     let done = 0;
     // Rasterize in small batches so phones don't choke on SVG filters.
     const batch = 6;
@@ -131,7 +160,10 @@ export class SpriteBank {
           const d = D[name];
           const file = painted.get(name);
           const png = file ? await this.png(d, artBase + file) : null;
-          if (png) this.painted++;
+          if (png) {
+            this.painted++;
+            this.isPainted.add(name);
+          }
           const s = png ?? (d.svg ? await this.raster(d, pxPerUnit) : null);
           if (s) this.map.set(name, s);
           onProgress?.(++done, names.length);
@@ -142,6 +174,53 @@ export class SpriteBank {
       const alias = D[name].alias;
       if (!this.map.has(name) && alias) this.map.set(name, this.get(alias));
     }
+  }
+
+  /**
+   * Loads sprites left out at startup (residents, houses). Safe to call again; drawing one that
+   * isn't ready yet just skips it for that frame.
+   */
+  ensure(names: string[]): Promise<void> {
+    return Promise.all(names.filter((n) => n in D).map((n) => this.loadOne(n))).then(() => undefined);
+  }
+
+  /** Everything not loaded yet, a few at a time in the background. */
+  async preloadRest() {
+    const rest = SPRITE_NAMES.filter((n) => D[n].lazy && !this.map.has(n));
+    for (let i = 0; i < rest.length; i += 4) {
+      await this.ensure(rest.slice(i, i + 4));
+      await new Promise((r) => setTimeout(r, 16));
+    }
+  }
+
+  private loadOne(name: string): Promise<void> {
+    if (this.map.has(name)) return Promise.resolve();
+    let p = this.loading.get(name);
+    if (!p) {
+      p = (async () => {
+        const d = D[name];
+        if (d.prefer) await this.loadOne(d.prefer);
+        const file = this.files.get(name);
+        const png = file ? await this.png(d, this.base + file) : null;
+        if (png) {
+          this.painted++;
+          this.isPainted.add(name);
+          this.map.set(name, png);
+        } else if (d.prefer && this.isPainted.has(d.prefer)) this.map.set(name, this.get(d.prefer));
+        else if (d.svg) this.map.set(name, await this.raster(d, this.px));
+        else if (d.alias) {
+          await this.loadOne(d.alias);
+          if (this.map.has(d.alias)) this.map.set(name, this.get(d.alias));
+        }
+      })();
+      this.loading.set(name, p);
+    }
+    return p;
+  }
+
+  /** Whether this sprite is painted art (its own, not borrowed). */
+  isArt(name: string) {
+    return this.isPainted.has(name);
   }
 
   /** Painted art listed in the manifest: sprite name -> file name. */
@@ -202,7 +281,12 @@ export class SpriteBank {
 
   /** Draws a sprite with its anchor at (x, y), optionally scaled, rotated and faded. */
   draw(ctx: Ctx, name: string, x: number, y: number, sx = 1, sy = sx, rot = 0, alpha = 1) {
-    const s = this.get(name);
+    const s = this.map.get(name);
+    if (!s) {
+      if (D[name]?.lazy) void this.loadOne(name);
+      else throw new Error('missing sprite ' + name);
+      return;
+    }
     if (alpha <= 0) return;
     if (rot === 0 && alpha === 1) {
       ctx.drawImage(s.img, x - s.ax * sx, y - s.ay * sy, s.w * sx, s.h * sy);

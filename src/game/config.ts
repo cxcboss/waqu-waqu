@@ -1,7 +1,5 @@
 // Data tables: everything that tunes a day lives here, so difficulty changes don't touch code.
 
-export type Species = 'duck' | 'rabbit' | 'hedgehog';
-export type HouseType = 'teapot' | 'boot' | 'can';
 export type Size = 0 | 1 | 2; // small / medium / large
 
 export interface DayConfig {
@@ -126,13 +124,6 @@ export const DAYS: DayConfig[] = [
 
 /** Share of parcels that have to reach the right house for the day to count as passed. */
 export const PASS_RATE = 0.6;
-
-/** Who lives in each kind of house. Houses of the same kind take the names in turn. */
-export const RESIDENTS: Record<HouseType, { species: Species; names: string[] }> = {
-  teapot: { species: 'duck', names: ['鸭太太', '鸭奶奶', '鸭小弟'] },
-  can: { species: 'rabbit', names: ['兔小妹', '兔阿姨', '兔爷爷'] },
-  boot: { species: 'hedgehog', names: ['刺猬大叔', '刺猬婆婆', '刺猬小胖'] },
-};
 
 export const SIZE_INFO: { slots: number; weight: number; pay: number; label: string }[] = [
   { slots: 1, weight: 1, pay: 10, label: '小件' },
