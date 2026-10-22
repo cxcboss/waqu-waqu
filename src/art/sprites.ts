@@ -71,7 +71,7 @@ paintedOnly('frog_dunk', [-104, -116, 104, 44], 'frog_swim');
 for (const [name, alias] of [
   ['frog_land', 'frog_crouch'], ['frog_wobble', 'frog_nervous'], ['frog_give', 'frog_stand'], ['frog_salute', 'frog_happy'],
   ['frog_cheer', 'frog_happy'], ['frog_sad', 'frog_nervous'], ['frog_tired', 'frog_nervous'], ['frog_heavy', 'frog_stand'],
-  ['frog_yawn', 'frog_happy'], ['frog_look', 'frog_stand'], ['frog_flip', 'frog_crouch'], ['frog_dragged', 'frog_shock'],
+  ['frog_yawn', 'frog_happy'], ['frog_look', 'frog_stand'], ['frog_flip', 'frog_crouch'], ['frog_dragged', 'frog_nervous'],
   ['frog_flung', 'frog_shock'], ['frog_dizzy', 'frog_nervous'],
 ]) paintedOnly(name, FB, alias);
 paintedOnly('frog_kick', [-104, -116, 104, 44], 'frog_swim');
