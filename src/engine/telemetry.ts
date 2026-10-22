@@ -20,13 +20,15 @@ const BUILD = typeof __BUILD__ === 'string' ? __BUILD__ : 'dev';
 const STATE_KEY = 'waqu.tm.v1';
 const QUEUE_KEY = 'waqu.tmq.v1';
 /** Rows kept on the device while they can't be sent; past this, new ones are dropped (the first plays matter most). */
-const QUEUE_MAX = 3000;
+const QUEUE_MAX = 1500;
 const BATCH = 200;
 /** keepalive requests (sent as the page goes away) are capped at 64 KB by browsers. */
 const KEEPALIVE_BYTES = 60000;
 const FLUSH_SEC = 5;
 /** With nowhere to send to, the backlog is only saved now and then. */
-const HOLD_SEC = 15;
+const HOLD_SEC = 30;
+/** Writing the backlog to storage stalls a phone for a moment, so it's done rarely; leaving the page always saves. */
+const SAVE_SEC = 30;
 
 export type Data = Record<string, unknown>;
 
@@ -80,6 +82,7 @@ export class Telemetry {
   private out = 0;
   private dirty = false;
   private next = 0;
+  private nextSave = 0;
   private backoff = FLUSH_SEC;
   /** Rows per request; halved while the server refuses a batch, to find the one row it won't take. */
   private batch = BATCH;
@@ -150,7 +153,10 @@ export class Telemetry {
     const backlog = SENDING && !this.out && this.backoff === FLUSH_SEC && this.q.length >= 50;
     if (now < this.next && !backlog) return;
     this.next = now + (SENDING ? this.backoff : HOLD_SEC) * 1000;
-    this.save();
+    if (now >= this.nextSave) {
+      this.nextSave = now + SAVE_SEC * 1000;
+      this.save();
+    }
     void this.send(false);
   }
 
@@ -190,7 +196,6 @@ export class Telemetry {
       const sent = new Set(rows.map((r) => r.id));
       this.q = this.q.filter((r) => !sent.has(r.id));
       this.dirty = true;
-      this.save();
       this.backoff = FLUSH_SEC;
       this.batch = BATCH;
     } else if (status === 400 || status === 409 || status === 413 || status === 422) {

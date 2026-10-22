@@ -55,8 +55,8 @@ export const DAYS: DayConfig[] = [
         ['box0', '从运输车上【取包裹】'],
         ['code', '送到挂着【相同取件码】的房子'],
         ['hand', '【任意空白处】按住往下拉，松手就跳'],
-        ['frog_swim', '别掉进河里，也别被冲出屏幕'],
-        ['frog_nervous', '按住别太久，【3 秒】不松手脚会累'],
+        ['frog_swim', '别掉进河里；每天有【一次救命绳】'],
+        ['frog_nervous', '按住别太久，【5 秒】不松手脚会累'],
       ],
     },
   },
@@ -124,6 +124,8 @@ export const DAYS: DayConfig[] = [
 
 /** Share of parcels that have to reach the right house for the day to count as passed. */
 export const PASS_RATE = 0.6;
+/** The first day is a lesson: half the parcels is a pass. */
+export const passRate = (day: number) => (day <= 1 ? 0.5 : PASS_RATE);
 
 export const SIZE_INFO: { slots: number; weight: number; pay: number; label: string }[] = [
   { slots: 1, weight: 1, pay: 10, label: '小件' },
@@ -169,21 +171,21 @@ export const TUNING = {
   kickT: 0.4,
   kickWind: 0.08,
   /** Seconds spluttering after a fall, before the frog can swim. */
-  dunkSec: 0.5,
+  dunkSec: 0.35,
   /** Parcels adrift are carried downstream this fast, heavier ones slower (by size). */
   floatDrift: 24,
   floatDriftK: [1, 0.7, 0.45] as const,
   /** How far the tongue reaches for a parcel in the water, from a pad or swimming. */
   tongueR: 165,
   /** From the water, the frog can leap onto anything within this distance of its edge. */
-  leapR: 230,
+  leapR: 250,
   /** Leap gauge: one sweep there and back (slower until gaugeLateDay), and the green zone's width. */
   gaugeSweep: 2,
   gaugeSweepLate: 1.2,
   gaugeLateDay: 10,
-  gaugeZone: 0.46,
+  gaugeZone: 0.52,
   gaugeZoneTutorial: 0.56,
-  gaugeZoneMin: 0.34,
+  gaugeZoneMin: 0.4,
   gaugeZonePerWeight: 0.02,
 
   // Rushing ahead: above rushLine (fraction of the screen) the convoy speeds up hard, to at least
@@ -202,6 +204,12 @@ export const TUNING = {
   // Money
   wrongPenalty: 5,
   wetPenalty: 5,
+  /** The lifeline costs a little: the truck's tow isn't free. */
+  ropePenalty: 5,
+  /** A landing this close to a pad's edge (design units) counts as on it; less on later days and with a heavy bag. */
+  snapEarly: 50,
+  snapLate: 30,
+  snapFromDay: 3,
   urgentBonus: 10,
   urgentSeconds: 32,
   /** Right change on a cash-on-delivery parcel earns a tip; wrong change costs the difference. */

@@ -74,6 +74,12 @@ export class HubScene implements Scene {
       }
       return;
     }
+    if (this.newbie && (id === 'hq' || id === 'shop' || id === 'home' || id === 'map')) {
+      au.play('ui_error', { volume: 0.6 });
+      this.toast.show('先去上班，通过第 1 天就开放这里啦');
+      this.game.tm.log('hub_locked', { id });
+      return;
+    }
     if (id === 'hq' || id === 'shop' || id === 'home' || id === 'work') this.go(id);
     else if (id === 'map') {
       au.play('ui_confirm');
@@ -90,6 +96,11 @@ export class HubScene implements Scene {
       this.joy = 0.6;
       au.play('frog_croak', { jitter: true });
     }
+  }
+
+  /** Until day 1 is passed, only work is open, so a new player has one obvious place to go. */
+  private get newbie() {
+    return this.game.save.day <= 1;
   }
 
   /** The frog hops over to the place first, then the screen changes. */
@@ -184,9 +195,23 @@ export class HubScene implements Scene {
     const by = bot - 150;
     const first = !s.log.length;
     const workDown = this.taps.add('work', { x: 32, y: by, w: 456, h: 104 });
-    button(ctx, 32, by, 456, 104, first ? '开始上班' : `继续上班 · 第${day}天`, { primary: true, pressed: workDown, size: 38 });
+    if (this.newbie) {
+      // the one thing to do: the button breathes and a hand taps it
+      const k = 1 + Math.sin(this.t * 5) * 0.025;
+      ctx.save();
+      ctx.translate(260, by + 52);
+      ctx.scale(k, k);
+      ctx.translate(-260, -(by + 52));
+      button(ctx, 32, by, 456, 104, '开始上班', { primary: true, pressed: workDown, size: 42 });
+      ctx.restore();
+      const cyc = (this.t % 1.2) / 1.2;
+      sp.draw(ctx, 'hand', 420, by + 60 - Math.sin(cyc * Math.PI) * 12, 1.1);
+    } else button(ctx, 32, by, 456, 104, first ? '开始上班' : `继续上班 · 第${day}天`, { primary: true, pressed: workDown, size: 38 });
     const mapDown = this.taps.add('map', { x: 504, y: by, w: 214, h: 104 });
+    ctx.save();
+    if (this.newbie) ctx.globalAlpha = 0.45;
     button(ctx, 504, by, 214, 104, '路线图', { pressed: mapDown, size: 34 });
+    ctx.restore();
     text(ctx, `第${day}天 · ${DAYS[day - 1].intro}`, 375, by + 132, 22, { color: INK, alpha: 0.75, maxWidth: 680 });
 
     if (this.profile) this.drawProfile(ctx);
@@ -377,7 +402,9 @@ export class HubScene implements Scene {
     const r = { x: x - s.ax, y: y - s.ay, w: s.w, h: s.h + 90 };
     const down = this.taps.add(id, r);
     const bounce = this.hop?.to === id ? Math.sin((this.hop.t / HOP_T) * Math.PI) * 0.03 : 0;
+    const locked = this.newbie;
     ctx.save();
+    if (locked) ctx.globalAlpha = 0.5;
     if (down) {
       ctx.translate(x, y);
       ctx.scale(0.97, 0.97);
@@ -385,7 +412,10 @@ export class HubScene implements Scene {
     }
     sp.draw(ctx, sprite, x, y, 1 + bounce, 1 - bounce);
     ctx.restore();
-    this.sign(ctx, id, x - 110, y + 10, name, sub, isNew, 220, down);
+    ctx.save();
+    if (locked) ctx.globalAlpha = 0.6;
+    this.sign(ctx, id, x - 110, y + 10, locked ? '未开放' : name, locked ? '通过第 1 天后开放' : sub, locked ? false : isNew, 220, down);
+    ctx.restore();
   }
 
   private sign(ctx: Ctx, id: string, x: number, y: number, name: string, sub: string, isNew: boolean, w: number, down = this.taps.pressed === id) {

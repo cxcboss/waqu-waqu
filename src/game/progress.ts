@@ -1,5 +1,5 @@
 // How a finished day counts toward progress: whether it's passed, and which of its three stamps it earned.
-import { PASS_RATE, type DayConfig } from './config';
+import { passRate, type DayConfig } from './config';
 import type { DayResult } from './hq';
 
 /** The three stamps of every day: done on time, done well, and the day's own challenge. */
@@ -7,12 +7,12 @@ export const STAMP_NAMES = ['准时下班', '干得漂亮', '今日挑战'] as c
 export const STAMP_GLYPHS = ['准', '优', '挑'] as const;
 
 export function stampRules(cfg: DayConfig): string[] {
-  return [`送对${Math.round(PASS_RATE * 10)}成以上，没被甩出去`, '猫头鹰评级 A 或 S', cfg.challenge.label];
+  return [`送对${Math.round(passRate(cfg.day) * 10)}成以上，没被甩出去`, '猫头鹰评级 A 或 S', cfg.challenge.label];
 }
 
 /** Passing unlocks the next day: not thrown off, and enough parcels to the right house. */
 export function passed(r: DayResult) {
-  return !r.thrown && r.delivered >= Math.ceil(r.total * PASS_RATE);
+  return !r.thrown && r.delivered >= Math.ceil(r.total * passRate(r.day));
 }
 
 export function earnedStamps(cfg: DayConfig, r: DayResult, grade: string): [boolean, boolean, boolean] {

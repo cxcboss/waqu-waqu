@@ -14,3 +14,5 @@ const game = new Game(new WebPlatform(), { toggle: tm === 'on' || tm === 'off' ?
 const day = Number(q.get('day'));
 void game.start(() => (day >= 1 ? new PlayScene(game, day) : new HubScene(game)), day >= 1 ? { jump: day } : {});
 (window as unknown as { __game: Game }).__game = game;
+// the page's own splash gives way to the game's loading screen once that has drawn
+requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('boot')?.remove()));

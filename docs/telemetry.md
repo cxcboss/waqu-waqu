@@ -90,6 +90,9 @@
 - `haul_land`（10-22 起）：被套索拽回、转圈飞上车撞晕落地的那一刻，`sec`（从 `yank` 到落车几秒）、`wet`（是不是从水里拽上来的）
 - `driver_say`（10-22 起）：司机喊话，`kind`（hurry 快到站催上车 / call5 送完倒数剩 5 秒 / arrive 到站要拽了 / idle_warn 在车上发呆 7 秒催下车 / kick 10 秒踢下车）、`text`（喊的那句，台词表在 `src/game/lines.ts` 的 HURRY_LINES、KICK_LINES）
 - `kicked`：在车上还有活却待着不动，被司机一脚踢到最近的荷叶，`d`（踢出去多远）；run_end 里的 `kicked` 是本局次数
+- `dpr_cap`（10-22 起）：帧时间长期超 34ms，自动把画布清晰度上限降到 `cap`（game.ts）
+- `hub_locked`（10-22 起）：新手点了还没开放的地方 `id`
+- `jump` 多一个可选 `snap`（落点吸附了多少）；`yank` 的 `why` 多一种 `rope`（用了救命绳）
 - `hint`：出现了哪条提示 `key`（每种每局最多记 3 条，总数在 run_end 的 `hints` 里）
 - `pause`、`menu`：`id`（resume/restart/map/sound）
 - `run_end`：一局结束的汇总。`how`：off（送完提前下班）/ done（车开到终点）/ thrown / restart / quit（暂停菜单回路线图）；
@@ -104,8 +107,8 @@
 
 | 文件 | 调用方式 | 事件 |
 |---|---|---|
-| `src/game/game.ts` | `this.tm.log(...)` | open、loaded、hide/show、error、sound、ach |
-| `src/game/hub.ts`（主页小镇） | `game.tm.log(...)` | hub、hub_go、profile、rename |
+| `src/game/game.ts` | `this.tm.log(...)` | open、loaded、dpr_cap、hide/show、error、sound、ach |
+| `src/game/hub.ts`（主页小镇） | `game.tm.log(...)` | hub、hub_go、hub_locked、profile、rename |
 | `src/game/map.ts`（路线图） | 同上 | map、map_go、map_back、map_locked |
 | `src/game/play.ts`（一局） | `this.log(...)`，自动带 `day`、`t`、`d.p`（路线进度） | run_start、step、jump、tap、tired、miss、idle、fall、climb、swim_out、rescue、sunk、pickup、bag_full、put_back、deliver、cod、missed、urgent_late、warn、thrown、rush、road、exhaust、all_out、hurry、route_end、yank、haul_land、driver_say、kicked、egg、hint、pause、menu、run_end、run_snap |
 | `src/game/hq.ts`（下班结算） | `game.tm.log(...)` | hq、hq_btn、photo、photo_save、photo_keep |

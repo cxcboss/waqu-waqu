@@ -59,3 +59,8 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 | `gh-pages` | 部署产物，别手改 |
 
 旧分支保留没删，以后的新工作从 `main` 开新分支。
+
+## 部署（两处）
+- GitHub Pages：`npm run deploy`（scripts/deploy.sh，强推 gh-pages）。
+- Cloudflare Pages：`scripts/deploy-cf.sh`，项目名 `waqu-waqu`，凭据从环境变量 `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` 读，不要写进仓库。缓存规则在 `public/_headers`。
+- 加载页：`src/game/loading.ts`（贪吃蛙小游戏，素材加载完前显示，明确标注「加载中」）。

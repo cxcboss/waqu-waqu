@@ -8,6 +8,7 @@ import { Album } from './album';
 import { upgradeSave, type Achievement, type AlbumPhoto, type Career, type DayLog, type Entry, type Note, type Room, type Wear } from './career';
 import { item, type GearId } from './catalog';
 import { DAYS } from './config';
+import { Loader } from './loading';
 
 export interface Scene {
   /** Short name for the play statistics. */
@@ -87,10 +88,17 @@ export class Game {
   private last = 0;
   private loadDone = 0;
   private loadTotal = 1;
+  private firstScene: (() => Scene) | null = null;
+  private loader: Loader;
+  /** Cap on canvas pixels per CSS pixel; comes down by itself on a device that can't keep up. */
+  private dprCap = 2;
+  private frameMs = 0.016;
+  private capAt = 0;
   /** Fade through black between scenes: out over the old one, then in over the new one. */
   private fade: { next: Scene | null; t: number } | null = null;
 
   constructor(readonly platform: Platform, tm: TelemetryOptions = {}) {
+    const self = this;
     this.ctx = platform.canvas.getContext('2d')!;
     this.sprites = new SpriteBank(platform);
     this.audio = new Audio(platform);
@@ -98,6 +106,27 @@ export class Game {
     this.album = new Album(this);
     this.audio.enabled = this.save.sound;
     this.tm = new Telemetry(platform, tm);
+    this.loader = new Loader({
+      get H() {
+        return self.H;
+      },
+      get safeT() {
+        return self.safeT;
+      },
+      get safeB() {
+        return self.safeB;
+      },
+      progress: () => Math.min(0.97, this.loadDone / Math.max(1, this.loadTotal)),
+      vibrate: (ms) => this.platform.vibrate(ms),
+      enter: () => this.enter(),
+    });
+  }
+
+  /** Leaves the loading screen for the first scene. */
+  private enter() {
+    if (this.ready || !this.firstScene) return;
+    this.ready = true;
+    this.go(this.firstScene());
   }
 
   async start(first: () => Scene, entry: Record<string, unknown> = {}) {
@@ -117,6 +146,15 @@ export class Game {
       const x = t.x * (this.W / this.cssW);
       const y = t.y * (this.W / this.cssW);
       if (this.fade) return;
+      if (!this.ready) {
+        // still on the loading screen: the snake game gets the touches
+        if (kind === 'start') {
+          this.audio.unlock();
+          this.loader.down(x, y, t.id);
+        } else if (kind === 'move') this.loader.move(x, y, t.id);
+        else this.loader.up(x, y, t.id);
+        return;
+      }
       if (kind === 'start') {
         this.audio.unlock();
         this.audio.kick();
@@ -148,8 +186,8 @@ export class Game {
     await fonts;
     void this.audio.load('audio/');
     this.tm.log('loaded', { ms: Math.round(this.platform.now() - t0) });
-    this.ready = true;
-    this.go(first());
+    this.firstScene = first;
+    this.loader.finish();
   }
 
   private cssW = 375;
@@ -162,8 +200,9 @@ export class Game {
   resize() {
     const s = this.platform.screen();
     const c = this.platform.canvas;
-    c.width = Math.round(s.width * s.dpr);
-    c.height = Math.round(s.height * s.dpr);
+    const dpr = Math.min(s.dpr, this.dprCap);
+    c.width = Math.round(s.width * dpr);
+    c.height = Math.round(s.height * dpr);
     this.cssW = s.width;
     this.scale = c.width / this.W;
     this.H = c.height / this.scale;
@@ -198,12 +237,24 @@ export class Game {
       if (dt > 0.05) this.perf.slow++;
     }
     this.tm.tick();
+    // a device that stays under about 30 fps gets a smaller canvas, which is the cheapest way to win time back
+    if (this.ready && dt > 0 && dt < 0.25) {
+      this.frameMs += (dt - this.frameMs) * 0.04;
+      if (this.frameMs > 0.034 && this.dprCap > 1 && t - this.capAt > 4000) {
+        this.capAt = t;
+        this.dprCap = Math.max(1, this.dprCap - 0.25);
+        this.frameMs = 0.017;
+        this.tm.log('dpr_cap', { cap: this.dprCap });
+        this.resize();
+      }
+    }
     if (!(dt >= 0) || dt > 0.25) dt = STEP; // tab switches, hiccups
     this.acc += dt;
     let steps = 0;
     while (this.acc >= STEP && steps < 5) {
       this.stepFade(STEP);
-      this.scene?.update(STEP);
+      if (this.ready) this.scene?.update(STEP);
+      else this.loader.update(STEP);
       this.stepMedals(STEP);
       this.acc -= STEP;
       steps++;
@@ -212,7 +263,7 @@ export class Game {
     const ctx = this.ctx;
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     if (this.ready && this.scene) this.scene.render(ctx);
-    else this.renderLoading(ctx);
+    else this.loader.render(ctx);
     this.renderMedals(ctx);
     if (this.fade) {
       const k = Math.min(1, this.fade.t / FADE);
@@ -221,20 +272,6 @@ export class Game {
     }
     this.platform.requestFrame(this.frame);
   };
-
-  private renderLoading(ctx: Ctx) {
-    ctx.fillStyle = P.paper;
-    ctx.fillRect(0, 0, this.W, this.H);
-    const y = this.H * 0.48;
-    text(ctx, '蛙趣快递 · 正在备货', this.W / 2, y - 40, 30, { color: P.ink });
-    ctx.fillStyle = P.paperShade;
-    ctx.fillRect(175, y, 400, 14);
-    ctx.fillStyle = P.orange;
-    ctx.fillRect(175, y, (400 * this.loadDone) / this.loadTotal, 14);
-    ctx.strokeStyle = P.ink;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(175, y, 400, 14);
-  }
 
   readSave(): SaveData {
     const base = { day: 1, coins: 0, best: {}, sound: true, tips: {}, stamps: {} } as unknown as SaveData;

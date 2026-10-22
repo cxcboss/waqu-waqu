@@ -183,7 +183,7 @@ export class SpriteBank {
     this.files = painted;
     let done = 0;
     // Rasterize in small batches so phones don't choke on SVG filters.
-    const batch = 6;
+    const batch = 10;
     for (let i = 0; i < names.length; i += batch) {
       await Promise.all(
         names.slice(i, i + batch).map(async (name) => {
