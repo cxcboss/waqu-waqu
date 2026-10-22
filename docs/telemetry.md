@@ -52,16 +52,16 @@
 **一局**
 
 - `run_start`：`attempt`（这台设备第几次玩这一天）、`unlocked`、`best`、`stamps`
-- `step`：新手步骤切换 `from` → `to`、`sec`（上一步停留秒数）。`from: intro` 的 `sec` 就是开工说明卡看了多久；第 1 天依次 pick（点包裹）→ aim（拉）→ go（跳去房子）→ deliver（点卡片交件）→ refill（回车）；`rescue` 是第一次落水的捞包裹教学
+- `step`：新手步骤切换 `from` → `to`、`sec`（上一步停留秒数）。`from: intro` 的 `sec` 就是开工说明卡看了多久；第 1 天依次 pick（点包裹）→ aim（拉）→ go（跳去房子）→ deliver（点卡片交件）→ refill（回车）；`rescue` 是第一次落水的教学（第四轮起教方向轮盘，碰一下轮盘才继续）
 - `jump`（落地时记一条）：`pow` 力度 0～1、`dx`/`dy` 手指拉的方向（青蛙往反方向跳；`dy<0` 是手指往上拉、青蛙往下跳）、`held` 按了几秒、`from` 起跳处、`w` 背包重量、`fy` 起跳时在屏幕的高度（0 顶 1 底）、`smog` 在尾气里、`step`、`dist`、`on` 落点（lily/log/house/truck/bank/water）；落水时还有 `near`（离最近落脚点的距离）、`to`（那是什么）、`short`（true 跳近了 / false 跳远了）；第 1 天引导那一跳有 `target`（是否跳中了引导的荷叶）
 - `tap`：按了一下没拉开（想跳却只是点），`len`、`held`、`under`（手指下面是什么）、`on`、`step`（每局最多记 20 条）
 - `tired`：按住超过 3 秒脚累了，`step`、`on`
-- `miss`：在等别的操作时点了没用的地方，`where`：intro（说明卡上没点按钮）/ pick / deliver（引导要点卡片时）/ rescue（教学要点包裹时）/ cod（找零时没点到选项）（每种每局最多 5 条）
+- `miss`：在等别的操作时点了没用的地方，`where`：intro（说明卡上没点按钮）/ pick / deliver（引导要点卡片时）/ rescue（落水教学时没碰轮盘）/ cod（找零时没点到选项）（每种每局最多 5 条）
 - `idle`：隔了 ≥8 秒才再点屏幕，`sec`、`step`、`state`、`on`（站在车上等房子是正常的）
 - `fall`：落水 `n` 掉出几个包裹、`gone` 被冲走几个、`fy`
-- `climb`：扒住后点了一下，`ok`、`off`（指针离中间多远）、`zone`（绿区宽度）、`w`、`on`、`wait`（扒住后等了几秒才点）。扒住后 0.3 秒内的点击不算爬（是游泳连点还没停手），不记 `climb`，只计入 run_end 的 `climbEarly`（10-21 晚起的版本）
-- `swim_out`：出水，`sec`、`strokes`、`fails`（爬岸失败次数）、`to`（爬上了什么；yank 表示被车拽走）
-- `rescue`：捞回包裹 `code`、`how`（tongue 舌头 / swim 游过去）、`after`（漂了几秒）、`late`（房子已经过去了）· `sunk`：包裹沉了 `code`
+- `climb`：在水里点出指针后第二下点击（跳出水）。`ok`、`off`（指针离中间多远）、`zone`（绿区宽度）、`w`、`on`（会跳上的东西，null 是够不着）、`d`（离它边缘多远）、`wait`（指针出来几秒后才点）。第四轮之前是「扒住边后点一下」，还有 `climbEarly`，现在没了
+- `swim_out`：出水，`sec`、`strokes`（蹬腿次数）、`fails`（没点中绿区、原地蹦的次数）、`to`（跳上了什么；yank 表示被车拽走）
+- `rescue`：捞回包裹 `code`、`how`（tongue，第四轮起包裹进了舌头范围就自动卷回）、`after`（漂了几秒）、`late`（房子已经过去了）· `sunk`：包裹被冲出屏幕底部 `code`
 - `pickup`：`code`、`size`、`urgent`、`cod`、`used`（背包占了几格）· `bag_full`：装不下还点 · `put_back`：放回车上
 - `deliver`：`code`、`ok`、`size`、`urgent`、`late`、`cod`、`sec`（取件到送达）；送错时还有 `want`（这家等的取件码）、`hadRight`（这家的包裹其实就在包里 → 是点错卡片，不是认错房子）
 - `cod`：找零 `ok`、`pick`（选的）、`right`（正确的）、`price`、`paid`、`sec`（想了几秒）
@@ -73,6 +73,6 @@
 - `pause`、`menu`：`id`（resume/restart/map/sound）
 - `run_end`：一局结束的汇总。`how`：off（送完提前下班）/ done（车开到终点）/ thrown / restart / quit（暂停菜单回路线图）；
   `total`、`delivered`、`wrong`、`wet`、`missed`、`left`、`urgent`、`urgentOnTime`、`cod`、`codRight`、`falls`、`jumps`、`longest`、`closeCalls`、`bestTrip`，
-  计数 `taps`、`tired`、`miss`、`far`（舌头够不着）、`climbOk`、`climbFail`、`climbEarly`（扒住后 0.3 秒内被忽略的点击）、`strokes`、`swimSec`、`warn`、`warnSec`、`rush`、`pauses`、`putBack`、`bagFull`、`exhaust`、`rescued`、`sunk`、`idle`、`hints`、`misses`，
+  计数 `taps`、`tired`、`miss`、`far`（舌头够不着，或在水里点出指针时离哪儿都太远）、`climbOk`、`climbFail`、`strokes`、`swimSec`、`warn`、`warnSec`、`rush`、`pauses`、`putBack`、`bagFull`、`exhaust`、`rescued`、`sunk`、`idle`、`hints`、`misses`，
   `real`（实际秒数，含暂停）、`fps`、`slow`（卡顿帧数）、`state`/`on`/`step`（结束时青蛙在干什么）
 - `run_snap`：切到后台时的同样汇总（`how: hidden`）。一局没有 `run_end`，就看最后一条 `run_snap`，那多半是中途关掉了
