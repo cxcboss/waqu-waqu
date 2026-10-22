@@ -5,11 +5,13 @@ import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, spring
 import type { LoopHandle } from '../engine/audio';
 import type { Data } from '../engine/telemetry';
 import type { Canvas, Ctx } from '../platform/types';
+import { RESIDENT } from './cast';
 import { SIZE_INFO, TUNING } from './config';
 import type { Game, Scene } from './game';
 import { HqScene, type DayResult, type Photo } from './hq';
 import { buildLevel, dayConfig, type House, type Level, type Order, type Plat } from './level';
 import { HURRY_LINES, KICK_LINES, OFFWORK_LINES, dealLine } from './lines';
+import { drawHouse, houseSprites, updateResident, type ResidentView } from './resident';
 import { MapScene, drawStamp } from './map';
 
 const FROG_S = 0.92; // frog sprite scale on top of K, matching the concept art
@@ -301,10 +303,13 @@ export class PlayScene implements Scene {
   private swim: { t: number; strokes: number; fails: number } | null = null;
   private lastInput = 0;
   private wall: number;
+  /** A pose the standing frog holds for a moment after something happens (a salute after a delivery). */
+  private frogCue: { pose: string; from: number; until: number } | null = null;
 
   constructor(private game: Game, readonly day: number) {
     const cfg = dayConfig(day);
     this.lv = buildLevel(cfg, game.H);
+    void game.sprites.ensure(houseSprites(this.lv.houses));
     const truck = this.lv.truck;
     this.placeTruck();
     const lx = -TUNING.truckSpotX[1];
@@ -423,6 +428,7 @@ export class PlayScene implements Scene {
     for (const h of this.lv.houses) {
       if (h.react) h.react.t += dt;
       if (h.hold && (h.hold.t += dt) > 1.6) h.hold = null;
+      updateResident(h, this.residentView(h), dt);
     }
 
     for (const fl of this.flights) fl.t += dt;
@@ -1874,6 +1880,7 @@ export class PlayScene implements Scene {
     const au = this.game.audio;
     au.play('jump_whoosh', { volume: 0.35, rate: 1.5 });
     au.play('parcel_place', { delay: T });
+    this.frogCue = { pose: o.house === h ? 'frog_salute' : 'frog_sad', from: this.time + T, until: this.time + T + 1.1 };
     if (o.house === h) {
       o.state = 'delivered';
       h.react = { kind: 'happy', t: -T };
@@ -1896,7 +1903,7 @@ export class PlayScene implements Scene {
       o.state = 'wrong';
       h.react = { kind: 'confused', t: -T };
       au.play('deliver_confused', { delay: T + 0.15 });
-      this.queueShot('wrong', `${h.name}：这是我的吗？`, 7, T + 0.5);
+      this.queueShot('wrong', `${h.name}：${RESIDENT[h.species]?.huh ?? '这是我的吗？'}`, 7, T + 0.5);
     }
     const more = this.lv.orders.some((x) => x.state === 'pool');
     if (this.step === 'deliver') this.setStep(!this.bag.length && more ? 'refill' : null);
@@ -1949,9 +1956,11 @@ export class PlayScene implements Scene {
       this.popups.push({ text: `小费 +${TUNING.codTip}`, x: rx, y: ry - 130, t: 0, color: P.lilyDeep });
       this.fx.push({ kind: 'coins', x: rx, y: ry - 90, t: 0, dur: 0.9, seed: Math.random() * 100 });
       h.react = { kind: 'happy', t: 0 };
+      this.frogCue = { pose: 'frog_cheer', from: this.time, until: this.time + 1 };
     } else {
       this.popups.push({ text: `找错了 -${TUNING.codPenalty}`, x: rx, y: ry - 130, t: 0, color: P.red });
       h.react = { kind: 'confused', t: 0 };
+      this.frogCue = { pose: 'frog_sad', from: this.time, until: this.time + 1 };
     }
   }
 
@@ -2748,8 +2757,7 @@ export class PlayScene implements Scene {
       sp.draw(ctx, 'log', x, y + dy, 1, 1 - a * 0.04, p.rot + p.tilt * w * p.press * 0.08);
     } else if (p.kind === 'house') {
       const h = p.house!;
-      sp.draw(ctx, `house_${h.type}`, x, y + dy);
-      this.drawResident(ctx, h, x, y + dy);
+      drawHouse(ctx, sp, h, x, y + dy, this.time);
       this.drawCodeSign(ctx, h, x + h.plateAt.x, y + dy + h.plateAt.y);
     }
   }
@@ -2791,44 +2799,39 @@ export class PlayScene implements Scene {
     });
   }
 
-  private drawResident(ctx: Ctx, h: House, x: number, y: number) {
-    const sp = this.game.sprites;
-    const t = this.time + h.phase;
-    let rx = x + h.resident.x, ry = y + h.resident.y;
-    let rot = 0, sy = 1, sx = h.species === 'hedgehog' ? -1 : 1;
-    if (h.species === 'duck') {
-      rot = Math.sin(t * 1.6) * 0.04;
-      ry -= Math.abs(Math.sin(t * 1.6)) * 1.5;
-    } else if (h.species === 'rabbit') sy = 1 + Math.sin(t * 2.4) * 0.035;
-    else rot = Math.sin(t * 1.2) * 0.05;
-    const r = h.react && h.react.t >= 0 ? h.react : null;
-    if (r && r.t < 1.8) {
-      if (r.kind === 'happy') ry -= Math.abs(Math.sin(r.t * 9)) * 16 * Math.max(0, 1 - r.t / 1.2);
-      else rot += 0.2 * Math.sin(Math.min(r.t * 6, Math.PI / 2));
+  /** What a resident sees of the game: the frog, and the parcels on their way (see resident.ts). */
+  private residentView(h: House): ResidentView {
+    const f = this.frog;
+    let pending = 0, theirs = false;
+    for (const o of this.lv.orders) {
+      if (o.house !== h) continue;
+      if (o.state === 'pool' || o.state === 'bag' || o.state === 'float') pending++;
+      if (o.state === 'bag') theirs = true;
     }
-    sp.draw(ctx, h.species, rx, ry, sx * 1.05, sy * 1.05, rot);
-    // the parcel just handed over, held up overhead (and turned about, if it isn't theirs)
-    const hd = h.hold;
-    if (hd && hd.t >= 0) {
-      const up = easeOutBack(Math.min(1, hd.t / 0.25));
-      const a = hd.t > 1.25 ? Math.max(0, (1.6 - hd.t) / 0.35) : 1;
-      const shake = hd.wrong ? Math.sin(hd.t * 26) * 0.12 * Math.max(0, 1 - hd.t / 1.2) : 0;
-      sp.draw(ctx, boxSprite(hd.size, hd.urgent, hd.cod), rx + (hd.wrong ? Math.sin(hd.t * 26) * 3 : 0), ry - 58 - up * 16, 0.85, 0.85, shake + rot, a);
+    return {
+      screenY: this.sy(h.plat.y), H: this.H, pending, theirs,
+      frogOn: f.state === 'stand' && f.on === h.plat, frogX: f.x, frogY: f.y,
+      paying: this.cod?.h === h, riverMid: (TUNING.riverL + TUNING.riverR) / 2,
+    };
+  }
+
+  /** The standing frog's pose when it isn't winding up or handing something over. */
+  private standPose(): string {
+    const f = this.frog;
+    const c = this.frogCue;
+    if (c && this.time >= c.from && this.time < c.until) return c.pose;
+    const p = f.on;
+    // came down near the rim of a lily pad: arms going round to keep its balance
+    if (p?.kind === 'lily' && f.landT < 0.8 && Math.hypot((f.x - p.x) / p.rx, (f.y - p.y) / p.ry) > 0.72) return 'frog_wobble';
+    if (this.bag.length && this.slotsUsed() >= this.cfg.bagSlots) return 'frog_heavy';
+    // left standing a while: looks up the river now and then, and yawns
+    const idle = Math.min(f.landT, this.time - this.lastInput) - 5;
+    if (idle > 0) {
+      const k = idle % 10;
+      if (k < 1.8) return 'frog_yawn';
+      if (k > 5 && k < 7) return 'frog_look';
     }
-    if (r && r.kind === 'confused' && r.t < 2) {
-      const a = Math.min(1, r.t * 5) * (r.t > 1.6 ? (2 - r.t) / 0.4 : 1);
-      ctx.save();
-      ctx.globalAlpha = a;
-      const bx = rx + (hd ? 52 : 18), by = ry - (hd ? 118 : 92);
-      ellipse(ctx, bx, by, 20, 20);
-      ctx.fillStyle = P.white;
-      ctx.fill();
-      ctx.strokeStyle = INK;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      text(ctx, '?', bx, by + 1, 28, { bold: true });
-      ctx.restore();
-    }
+    return 'frog_stand';
   }
 
   private drawTruck(ctx: Ctx, t: Plat) {
@@ -2977,6 +2980,8 @@ export class PlayScene implements Scene {
     const power = this.aimPower();
     if (f.state === 'stand') {
       sy *= 1 + Math.sin(this.time * 3) * 0.015;
+      if (!this.off && this.smogT <= 0) name = this.standPose();
+      if (name === 'frog_wobble') rot += Math.sin(this.time * 12) * 0.09 * (1 - f.landT / 0.8);
       if (this.aim && power > 0.05) {
         name = 'frog_crouch';
         sy *= 1 - 0.13 * power;
@@ -2988,7 +2993,7 @@ export class PlayScene implements Scene {
         const ache = this.aim.t > FOOT_WARN ? (this.aim.t - FOOT_WARN) / (FOOT_T - FOOT_WARN) : 0;
         if (ache > 0) {
           ox += Math.sin(this.time * 90) * (1.5 + ache * 3);
-          name = 'frog_nervous';
+          name = 'frog_tired';
         }
       }
       if (f.landT < 0.36) {
@@ -2996,6 +3001,7 @@ export class PlayScene implements Scene {
         const k = springOut(f.landT / 0.36, 2);
         sy *= 1 - (0.08 + 0.16 * f.impact) * k;
         sx *= 1 + (0.05 + 0.1 * f.impact) * k;
+        if (f.impact > 0.6 && f.landT < 0.22 && !this.aim) name = 'frog_land';
       }
       if (f.give > 0 || this.tongue) {
         // leaning in to hand a parcel over, or to lick one out of the water
@@ -3005,6 +3011,10 @@ export class PlayScene implements Scene {
         if (this.tongue) {
           // the licking pose looks up and to the right: turn it toward the parcel
           name = 'frog_lick';
+          flip = f.giveDir < 0;
+        } else if (f.give > 0.15) {
+          // handing over: the painted pose holds its arms out to the right
+          name = 'frog_give';
           flip = f.giveDir < 0;
         }
       }

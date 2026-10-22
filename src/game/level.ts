@@ -1,7 +1,9 @@
 import { PLATE_COLORS } from '../art/palette';
 import { K } from '../art/sprites';
 import { clamp, rng, shuffle } from '../engine/math';
-import { DAYS, RESIDENTS, TUNING, type DayConfig, type HouseType, type Size, type Species } from './config';
+import { HOUSE, HOUSE_DEFS, RESIDENT_DEFS } from './cast';
+import { DAYS, TUNING, type DayConfig, type Size } from './config';
+import { newResident, type ResidentState } from './resident';
 
 export type PlatKind = 'lily' | 'log' | 'house' | 'truck' | 'bank';
 
@@ -27,16 +29,24 @@ export interface Plat {
 
 export interface House {
   id: number;
-  type: HouseType;
+  /** Which kind of house (HOUSE_DEFS) and who lives in it (RESIDENT_DEFS); they're picked separately. */
+  type: string;
   /** Color of the pickup-code tags hanging at this house (and on its parcels' cards). */
   color: string;
   name: string;
-  species: Species;
+  species: string;
   plat: Plat;
-  /** Resident and frog porch spots, relative to the raft center. */
+  /** Where the resident is right now (they come out of the door and go back in), relative to the raft center. */
   resident: { x: number; y: number };
+  /** Where the resident waits, and the frog's porch spot, relative to the raft center. */
+  spot: { x: number; y: number };
   porch: { x: number; y: number };
   plateAt: { x: number; y: number };
+  /** The front door: center x, bottom y, width and height, relative to the raft center. */
+  door: { x: number; y: number; w: number; h: number };
+  /** Roof height above the raft center. */
+  top: number;
+  res: ResidentState;
   react: { kind: 'happy' | 'confused'; t: number } | null;
   /** The parcel the resident is holding up after a hand-over; t < 0 while it's still flying over. */
   hold: { size: Size; urgent: boolean; cod: boolean; wrong: boolean; t: number } | null;
@@ -78,13 +88,6 @@ export interface Level {
   road: Plat;
 }
 
-// House geometry in design units (concept coordinates × K).
-const HOUSE_GEO: Record<HouseType, { rx: number; ry: number; resident: [number, number]; porch: [number, number]; plate: [number, number] }> = {
-  teapot: { rx: 150 * K, ry: 64 * K, resident: [-96 * K, -6 * K], porch: [44 * K, 30 * K], plate: [107 * K, -48 * K] },
-  boot: { rx: 128 * K, ry: 56 * K, resident: [96 * K, 12 * K], porch: [-40 * K, 28 * K], plate: [-119 * K, -46 * K] },
-  can: { rx: 120 * K, ry: 52 * K, resident: [-88 * K, 8 * K], porch: [36 * K, 28 * K], plate: [95 * K, -44 * K] },
-};
-
 let nextId = 1;
 
 function plat(kind: PlatKind, x: number, y: number, rx: number, ry: number, extra: Partial<Plat> = {}): Plat {
@@ -108,15 +111,14 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
   const gap = (firstY - lastY) / Math.max(1, cfg.houses - 1);
   const houseYs = Array.from({ length: cfg.houses }, (_, i) => firstY - i * gap);
 
-  const types: HouseType[] = [];
-  const pool: HouseType[] = ['teapot', 'boot', 'can'];
-  let last: HouseType | null = null;
-  for (let i = 0; i < cfg.houses; i++) {
-    const options = pool.filter((t) => t !== last);
-    const t = options[Math.floor(r() * options.length)];
-    types.push(t);
-    last = t;
-  }
+  // A different house and a different neighbor at every stop; any of them can live in any house.
+  const deal = <T>(all: T[]) => {
+    const out: T[] = [];
+    while (out.length < cfg.houses) out.push(...shuffle([...all], r));
+    return out.slice(0, cfg.houses);
+  };
+  const types = deal(HOUSE_DEFS.map((h) => h.id));
+  const who = deal(RESIDENT_DEFS);
   const colors = shuffle([...PLATE_COLORS], r);
 
   const mid = (riverL + riverR) / 2;
@@ -155,18 +157,17 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
   };
 
   const house = (i: number, hy: number) => {
-    const t = types[i];
-    const geo = HOUSE_GEO[t];
+    const geo = HOUSE[types[i]];
     const hx = side === 0 ? riverL + 128 + r() * 14 : riverR - 128 - r() * 14;
-    const p = plat('house', hx, hy, geo.rx, geo.ry, { variant: i });
-    const res = RESIDENTS[t];
-    const twin = houses.filter((h) => h.type === t).length;
+    const p = plat('house', hx, hy, geo.rx * K, geo.ry * K, { variant: i });
+    const pt = ([x, y]: [number, number]) => ({ x: x * K, y: y * K });
+    const d = geo.door;
     const h: House = {
-      id: i, type: t, color: colors[i % colors.length],
-      name: res.names[twin % res.names.length], species: res.species, plat: p,
-      resident: { x: geo.resident[0], y: geo.resident[1] },
-      porch: { x: geo.porch[0], y: geo.porch[1] },
-      plateAt: { x: geo.plate[0], y: geo.plate[1] },
+      id: i, type: geo.id, color: colors[i % colors.length],
+      name: who[i].name, species: who[i].id, plat: p,
+      resident: pt(geo.spot), spot: pt(geo.spot), porch: pt(geo.porch), plateAt: pt(geo.plate),
+      door: { x: d.x * K, y: d.y * K, w: d.w * K, h: d.h * K }, top: geo.top * K,
+      res: newResident(r()),
       react: null, hold: null, passed: false, phase: r() * 6,
     };
     p.house = h;
@@ -260,9 +261,9 @@ function bridgeGaps(plats: Plat[], cfg: DayConfig, top: number) {
   const blocked = (x: number, y: number, rx: number) =>
     plats.some((q) => {
       if (q.kind === 'house') {
-        // the raft itself, and the house standing on it (about 70 wide each way, up to 230 tall)
+        // the raft itself, and the house standing on it (about 70 wide each way, as tall as its roof)
         if (Math.abs(x - q.x) < q.rx + rx && Math.abs(y - q.y) < q.ry + rx * 0.7) return true;
-        return Math.abs(x - q.x) < 70 + rx && y > q.y - 230 && y < q.y;
+        return Math.abs(x - q.x) < 70 + rx && y > q.y - q.house!.top - 40 && y < q.y;
       }
       return Math.hypot(x - q.x, y - q.y) < q.rx + rx + 14;
     });
