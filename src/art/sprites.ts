@@ -133,6 +133,8 @@ paintedOnly('shop_room', [0, 0, 1080, 1620]);
 def('river', [0, 0, 1080, TILE_H], () => A.riverTile(TILE_H));
 
 export const SPRITE_NAMES = Object.keys(D);
+/** The definitions, for tools that render the placeholders (art reference sheets). */
+export const SPRITE_DEFS: Readonly<Record<string, SpriteDef>> = D;
 
 /**
  * Holds the game's art. Painted images listed in `art/manifest.json` are used where they exist
