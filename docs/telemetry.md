@@ -38,16 +38,30 @@
 
 - `open`：`os`、`browser`（wechat/qq/safari/chrome…）、`w`/`h`（CSS 像素）、`dpr`、`touch`、`standalone`、`visit`（这台设备第几次打开）、`unlocked`（已解锁到第几天）、`coins`、`sound`、`stamps`（好评章总数）、`jump`（用 `?day=` 直接进的）
 - `loaded`：`ms` 加载耗时
-- `hide` / `show`：切到后台 / 回来，`scene`（loading/title/map/play/hq）。`hide` 之后没有 `show` 通常就是关掉了
+- `hide` / `show`：切到后台 / 回来，`scene`（loading/hub/map/play/hq/hall/home/shop；10-22 前的版本还有 title）。`hide` 之后没有 `show` 通常就是关掉了
 - `error`：`msg`、`where`（文件:行:列 + 调用栈前几行，压缩后的代码，对照同版本 `vite build --sourcemap` 查）、`scene`
 - `sound`：`on`、`scene`
 
-**路线图、总部**
+**主页（10-22 起，代替原来的标题页）**
+
+- `hub`：进主页 `unlocked`、`coins`、`notes`（没读的河湾动态条数）· `hub_go`：`to`（hq 总部 / shop 福利社 / home 我的家 / work 上班 / map 路线图）
+- `profile`：打开工牌 · `rename`：改名 `len`（几个字）
+- `ach`：达成成就 `id`、`scene`（在哪个画面达成的）
+
+**路线图、结算**
 
 - `map`：`sel`、`unlocked` · `map_go` / `map_back`：`sel`、`sec`（在路线图待了几秒）· `map_locked`：点了没解锁的 `day`
-- `hq`：`grade`、`pass`、`stamps`（三枚章）、`fresh`（本局新拿的）、`income`、`coins`、`photos`
-- `hq_btn`：`id`（retry/map/next）、`open`（下一天是否已解锁）、`sec`（结算页看了几秒）
+- `hq`：`grade`、`pass`、`stamps`（三枚章）、`fresh`（本局新拿的）、`income`（含升职加薪和新章奖励）、`coins`、`photos`、`rankUp`（升到的职级，没升是 null）、`ach`（这一局达成的成就 id）、`news`（新增的河湾动态条数）
+- `hq_btn`：`id`（retry/home/next）、`open`（下一天是否已解锁）、`sec`（结算页看了几秒）
 - `photo`：看大图 `i`、`kind` · `photo_save`：`res`（shared/downloaded/longpress/cancelled/failed）
+- `photo_keep`：点照片上的 ♥ `i`、`kind`、`on`（true 收进相册 / false 取消）、`n`（相册现在几张）
+
+**总部大厅、我的家、福利社**
+
+- `hall`：进总部 `tab`、`notes` · `hall_tab`：`tab`（送单/日志/相册/荣誉/动态）· `album_view`：看相册大图 `i`、`n` · `album_del`：移出相册后剩 `n` 张
+- `home`：进家 `frames`（墙上挂了几张）、`decos`（有几件家具）· `home_open`：`what`（hang 挂照片 / wardrobe 衣柜 / records 个人记录 / letters 信箱 / decor 布置）
+- `photo_hang`：挂上照片 `slot`、`frame`（相框）、`hung`（一共挂了几张）· `wear`：换装 `slot`（hat/neck）、`id`（null 是不戴）
+- `shop`：进福利社 `tab`、`coins` · `shop_tab`：`tab` · `shop_buy`：`what`（装备是 `bag3` 这样的「装备+升到的级」，其余是物品 id）、`price`、`coins`（买完剩多少）
 
 **一局**
 

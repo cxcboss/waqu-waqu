@@ -1,9 +1,12 @@
 import { P } from '../art/palette';
 import { SpriteBank } from '../art/sprites';
-import { text } from '../art/ui';
+import { ellipse, panel, text } from '../art/ui';
 import { Audio } from '../engine/audio';
 import { Telemetry, type TelemetryOptions } from '../engine/telemetry';
 import type { Ctx, Platform } from '../platform/types';
+import { Album } from './album';
+import { upgradeSave, type Achievement, type AlbumPhoto, type Career, type DayLog, type Entry, type Note, type Room, type Wear } from './career';
+import { item, type GearId } from './catalog';
 import { DAYS } from './config';
 
 export interface Scene {
@@ -28,11 +31,37 @@ export interface SaveData {
   tips: Record<string, boolean>;
   /** The three stamps earned so far on each day (准时下班, 干得漂亮, 今日挑战). */
   stamps: Record<number, boolean[]>;
+  // ---- the frog's life outside work (save v2; older saves are filled in by upgradeSave)
+  name: string;
+  /** When this save was started, for the staff card. */
+  since: number;
+  gear: Record<GearId, number>;
+  /** Shop items owned (hats, furniture, frames). */
+  owned: string[];
+  wear: Wear;
+  room: Room;
+  career: Career;
+  /** Work log, newest first. */
+  log: DayLog[];
+  /** River news, newest first. */
+  notes: Note[];
+  /** Money book, newest first. */
+  ledger: Entry[];
+  /** Achievements reached, with when. */
+  ach: Record<string, number>;
+  album: AlbumPhoto[];
+  /** Lost letters found, by their text. */
+  letters: string[];
+  /** What's been looked at already, for the red dots. */
+  seen: { notes: number; letters: number; ach: number };
+  /** Counter for note and photo ids. */
+  seq: number;
 }
 
 const SAVE_KEY = 'waqu.save.v1';
 const STEP = 1 / 60;
 const FADE = 0.5;
+const MEDAL_T = 3;
 
 export class Game {
   readonly W = 750;
@@ -49,7 +78,10 @@ export class Game {
   /** Frames drawn, slow ones (over 50 ms) and seconds on screen since the last reset, to spot devices that stutter. */
   perf = { frames: 0, slow: 0, time: 0 };
   save: SaveData;
+  album: Album;
   scene: Scene | null = null;
+  /** Achievements just reached, shown one after another over whatever screen is up. */
+  private medals: { a: Achievement; t: number; d: number }[] = [];
   ready = false;
   private acc = 0;
   private last = 0;
@@ -63,6 +95,7 @@ export class Game {
     this.sprites = new SpriteBank(platform);
     this.audio = new Audio(platform);
     this.save = this.readSave();
+    this.album = new Album(this);
     this.audio.enabled = this.save.sound;
     this.tm = new Telemetry(platform, tm);
   }
@@ -139,6 +172,8 @@ export class Game {
   }
 
   go(scene: Scene, fade = false) {
+    // a photo laid over the game for long-press saving belongs to the screen being left
+    this.platform.showImage(null);
     if (fade && this.scene) this.fade = { next: scene, t: 0 };
     else this.scene = scene;
   }
@@ -169,6 +204,7 @@ export class Game {
     while (this.acc >= STEP && steps < 5) {
       this.stepFade(STEP);
       this.scene?.update(STEP);
+      this.stepMedals(STEP);
       this.acc -= STEP;
       steps++;
     }
@@ -177,6 +213,7 @@ export class Game {
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     if (this.ready && this.scene) this.scene.render(ctx);
     else this.renderLoading(ctx);
+    this.renderMedals(ctx);
     if (this.fade) {
       const k = Math.min(1, this.fade.t / FADE);
       ctx.fillStyle = `rgba(28,22,18,${this.fade.next ? k : 1 - k})`;
@@ -200,18 +237,60 @@ export class Game {
   }
 
   readSave(): SaveData {
-    const base: SaveData = { day: 1, coins: 0, best: {}, sound: true, tips: {}, stamps: {} };
+    const base = { day: 1, coins: 0, best: {}, sound: true, tips: {}, stamps: {} } as unknown as SaveData;
     try {
       const raw = this.platform.storageGet(SAVE_KEY);
-      if (raw) return { ...base, ...JSON.parse(raw) };
+      if (raw) return upgradeSave({ ...base, ...JSON.parse(raw) });
     } catch {
       /* corrupted save: start fresh */
     }
-    return base;
+    return upgradeSave(base);
   }
 
   writeSave() {
     this.platform.storageSet(SAVE_KEY, JSON.stringify(this.save));
+  }
+
+  /** Shows a ribbon for each newly reached achievement. */
+  celebrate(list: Achievement[]) {
+    for (const a of list) {
+      this.medals.push({ a, t: this.medals.length ? -0.2 : 0, d: MEDAL_T });
+      this.tm.log('ach', { id: a.id, scene: this.scene?.id ?? null });
+    }
+    if (list.length) this.audio.play('upgrade', { delay: 0.1 });
+  }
+
+  private stepMedals(dt: number) {
+    const m = this.medals[0];
+    // a queue of several goes by quicker
+    if (m && this.medals.length > 2) m.d = Math.min(m.d, 1.8);
+    if (m && (m.t += dt) > m.d) {
+      this.medals.shift();
+      if (this.medals.length) this.audio.play('rating_good', { volume: 0.7 });
+    }
+  }
+
+  private renderMedals(ctx: Ctx) {
+    const m = this.medals[0];
+    if (!m || m.t < 0) return;
+    const a = m.a;
+    const k = Math.min(1, m.t / 0.3) * Math.min(1, (m.d - m.t) / 0.3);
+    const w = 470, h = 104;
+    const x = 750 - (w + 16) * (1 - Math.pow(1 - k, 3)) + (1 - k) * 40, y = this.safeT + 196;
+    ctx.save();
+    panel(ctx, x, y, w, h, { r: 20, fill: '#FDF3D2', stitch: P.gold });
+    ellipse(ctx, x + 56, y + h / 2, 34, 34);
+    ctx.fillStyle = P.gold;
+    ctx.fill();
+    ctx.strokeStyle = P.ink;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    text(ctx, '★', x + 56, y + h / 2 + 2, 36, { color: P.white, bold: true });
+    text(ctx, '成就达成', x + 104, y + 28, 20, { align: 'left', color: P.orangeDeep, bold: true });
+    text(ctx, a.name, x + 104, y + 58, 32, { align: 'left', bold: true, maxWidth: w - 120 });
+    const reward = [`+${a.coins} 金币`, a.reward ? item(a.reward)?.name : ''].filter(Boolean).join(' · ');
+    text(ctx, reward, x + 104, y + 86, 20, { align: 'left', color: P.inkSoft, maxWidth: w - 120 });
+    ctx.restore();
   }
 
   setSound(on: boolean) {

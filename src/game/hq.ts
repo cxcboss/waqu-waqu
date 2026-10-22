@@ -1,13 +1,16 @@
 import { INK, P } from '../art/palette';
 import { HQ_ROOM, K } from '../art/sprites';
 import { button, ellipse, hit, panel, pressIn, pressOut, roundRect, text, type Rect } from '../art/ui';
-import { approach, clamp, easeInCubic, easeOutBack, easeOutCubic } from '../engine/math';
-import type { Canvas, Ctx, SaveResult } from '../platform/types';
+import { clamp, easeInCubic, easeOutBack, easeOutCubic } from '../engine/math';
+import type { Canvas, Ctx } from '../platform/types';
+import { rankOf, recordDay, type DayRecord } from './career';
 import { dayConfig } from './level';
 import type { Game, Scene } from './game';
-import { MapScene, drawStamp } from './map';
+import { HubScene } from './hub';
+import { drawStamp } from './map';
 import { PlayScene } from './play';
 import { earnedStamps, passed } from './progress';
+import { PhotoViewer, type ViewerPhoto } from './viewer';
 
 export interface Photo {
   img: Canvas;
@@ -44,6 +47,20 @@ export interface DayResult {
   bestTrip: number;
   /** An urgent parcel made it within the day-2 challenge time. */
   fastUrgent: boolean;
+  extra?: DayExtra;
+}
+
+/** More about the day, for the career totals and the river news (see career.ts). */
+export interface DayExtra {
+  jumps: number;
+  /** Farthest jump, design units. */
+  longest: number;
+  /** Parcels fished back out of the river. */
+  rescued: number;
+  /** The lost letter picked up on the road, if any. */
+  letter: string | null;
+  /** Every parcel: who got it (`to`), who it was for (`owner`), and how it ended. */
+  parcels: { to: string; owner: string; species: string; state: 'delivered' | 'wrong' | 'wet' | 'missed'; urgent: boolean }[];
 }
 
 const GRADES: Record<string, { name: string; line: string }> = {
@@ -60,13 +77,6 @@ const SHEET_H = 622;
 /** Share of the wide shot the polaroid shows. */
 const THUMB_CROP = 0.6;
 
-const SAVED: Record<SaveResult, string> = {
-  shared: '搞定！',
-  downloaded: '图片已保存',
-  longpress: '长按图片，选「保存图片」',
-  cancelled: '',
-  failed: '没存上，试试长按图片保存',
-};
 
 interface Row {
   icon: 'ok' | 'wrong' | 'wet' | 'miss' | 'urgent' | 'cod' | 'stamp';
@@ -96,15 +106,15 @@ export class HqScene implements Scene {
   private pressed: string | null = null;
   /** The press on 'view0' came from the 看大图 button rather than the first polaroid. */
   private viewBtnHeld = false;
-  /** Polaroids on the sheet, in screen coordinates, for opening the big view. */
+  /** Polaroids on the sheet, in screen coordinates, for opening the big view; and their 收藏 hearts. */
   private thumbs: Rect[] = [];
-  /** The big view: which photo, how long it's been open, and the sideways drag/slide offset. */
-  private view: { i: number; t: number; dx: number } | null = null;
-  private swipe: { x: number; y: number; moved: boolean } | null = null;
-  private viewBtns: { id: string; rect: Rect }[] = [];
-  private cardRect: Rect = { x: 0, y: 0, w: 0, h: 0 };
-  private cards = new Map<Photo, Canvas>();
+  private hearts: Rect[] = [];
+  private viewer: PhotoViewer | null = null;
   private toast: { text: string; t: number } | null = null;
+  /** What the day added to the career: bonus coins, rank, achievements, news. */
+  private rec: DayRecord;
+  private rankCoins: number;
+  private cheered = false;
   private stamped = false;
   private ticks = 0;
   private snaps = 0;
@@ -119,13 +129,16 @@ export class HqScene implements Scene {
     this.stamps = earnedStamps(dayConfig(r.day), r, grade);
     const had = game.save.stamps[r.day] ?? [];
     this.fresh = this.stamps.map((v, i) => v && !had[i]);
+    // higher ranks get a share more of the base pay
+    this.rankCoins = Math.round(r.pay * rankOf(game.save).pay);
     this.owlLine = r.thrown ? '被甩出去了？明天坐稳点。' : !this.pass ? '送对的太少，这一天得重跑。' : GRADES[grade].line;
     this.note = r.wet ? '“包裹泡了水，可不算送到哦。”'
       : r.wrong ? `“${r.wrongNames[0]}说没买过这个……”`
         : r.missed ? `“还有 ${r.missed} 个包裹没送出去。”`
           : '“干净利落，我喜欢。”';
+    const pay = r.pay + this.rankCoins;
     this.left = [
-      { icon: 'ok', label: '正确配送', value: `${r.delivered} 单`, money: r.pay ? `+${r.pay}` : '0' },
+      { icon: 'ok', label: '正确配送', value: `${r.delivered} 单`, money: pay ? `+${pay}` : '0' },
       { icon: 'wrong', label: '错误配送', value: `${r.wrong} 单`, money: r.wrong ? `-${r.wrong * 5}` : '0' },
       { icon: 'wet', label: '落水损坏', value: `${r.wet} 单`, money: r.wet ? `-${r.wet * 5}` : '0' },
       { icon: 'miss', label: '漏送', value: `${r.missed} 单`, money: '—' },
@@ -141,14 +154,20 @@ export class HqScene implements Scene {
 
     // Save progress
     const s = game.save;
-    s.coins = Math.max(0, s.coins + this.income);
     // only a passed day opens the next one
     if (this.pass) s.day = Math.max(s.day, Math.min(r.day + 1, game.lastDay));
     s.stamps[r.day] = this.stamps.map((v, i) => v || !!had[i]);
     const prev = s.best[r.day];
     if (!prev || ORDER.indexOf(grade) < ORDER.indexOf(prev)) s.best[r.day] = grade;
+    // pay, the work log, river news, rank and achievements (coins go in there too)
+    this.rec = recordDay(s, r, { grade, stamps: this.stamps, fresh: this.fresh, income: this.income, rankCoins: this.rankCoins, owl: this.owlLine, pass: this.pass });
+    if (this.rec.stampCoins) this.right[2].money = `+${this.rec.stampCoins}`;
+    this.income += this.rec.stampCoins + this.rankCoins;
     game.writeSave();
-    game.tm.log('hq', { grade, pass: this.pass, stamps: this.stamps, fresh: this.fresh, income: this.income, coins: s.coins, photos: r.photos.length });
+    game.tm.log('hq', {
+      grade, pass: this.pass, stamps: this.stamps, fresh: this.fresh, income: this.income, coins: s.coins, photos: r.photos.length,
+      rankUp: this.rec.rankUp?.name ?? null, ach: this.rec.unlocked.map((a) => a.id), news: this.rec.notes.length,
+    });
     game.audio.setMusic('bgm_hq');
     game.audio.play('paper_flip', { delay: 0.15 });
     game.audio.play('owl_hoot', { delay: 0.5, volume: 0.8 });
@@ -167,11 +186,17 @@ export class HqScene implements Scene {
 
   update(dt: number) {
     this.t += dt;
-    if (this.view) {
-      this.view.t += dt;
-      if (!this.swipe) this.view.dx = approach(this.view.dx, 0, 16, dt);
-    }
+    this.viewer?.update(dt);
     if (this.toast && (this.toast.t += dt) > 2.4) this.toast = null;
+    if (!this.cheered && this.t >= this.endAt + 0.3) {
+      // the paperwork is done: now the rank and achievements
+      this.cheered = true;
+      this.game.celebrate(this.rec.unlocked);
+      if (this.rec.rankUp) {
+        this.toast = { text: `升职啦！现在是「${this.rec.rankUp.name}」`, t: -0.2 };
+        this.game.audio.play('upgrade');
+      }
+    }
     const rowsShown = Math.floor((this.t - 0.7) / ROW_GAP) + 1;
     const nRows = this.left.length + this.right.length + 1;
     if (rowsShown > this.ticks && this.ticks < nRows && this.t >= 0.7) {
@@ -191,12 +216,11 @@ export class HqScene implements Scene {
   }
 
   down(x: number, y: number) {
-    if (this.view) {
-      for (const b of this.viewBtns) if (hit(b.rect, x, y, 8)) this.pressed = b.id;
-      if (!this.pressed) this.swipe = { x, y, moved: false };
-      return;
-    }
+    if (this.viewer) return this.viewer.down(x, y);
     for (const b of this.btns) if (hit(b.rect, x, y)) this.pressed = b.id;
+    this.hearts.forEach((r, i) => {
+      if (!this.pressed && hit(r, x, y, 4)) this.pressed = `keep${i}`;
+    });
     this.viewBtnHeld = false;
     if (this.viewBtn && hit(this.viewBtn, x, y, 8)) {
       this.pressed = 'view0';
@@ -218,28 +242,19 @@ export class HqScene implements Scene {
   }
 
   move(x: number) {
-    const sw = this.swipe;
-    if (!this.view || !sw) return;
-    const dx = x - sw.x;
-    if (Math.abs(dx) > 12) sw.moved = true;
-    // one photo only: it gives a little and springs back
-    this.view.dx = this.r.photos.length > 1 ? dx : dx * 0.25;
+    this.viewer?.move(x);
   }
 
   up(x: number, y: number) {
+    if (this.viewer) return this.viewer.up(x, y);
     const id = this.pressed;
     this.pressed = null;
-    if (this.view) {
-      const sw = this.swipe;
-      this.swipe = null;
-      if (id) {
-        const b = this.viewBtns.find((b) => b.id === id);
-        if (b && hit(b.rect, x, y, 8)) this.viewAction(id);
-      } else if (sw && sw.moved && Math.abs(this.view.dx) > 80) this.flip(this.view.dx < 0 ? 1 : -1);
-      else if (sw && !sw.moved && !hit(this.cardRect, x, y)) this.closeView();
+    if (!id) return;
+    if (id.startsWith('keep')) {
+      const i = Number(id.slice(4));
+      if (this.hearts[i] && hit(this.hearts[i], x, y, 8)) this.keep(i);
       return;
     }
-    if (!id) return;
     if (id.startsWith('view')) {
       const i = Number(id.slice(4));
       const r = id === 'view0' && this.viewBtn && hit(this.viewBtn, x, y, 8) ? this.viewBtn : this.thumbs[i];
@@ -252,148 +267,69 @@ export class HqScene implements Scene {
     this.game.platform.showImage(null);
     this.game.tm.log('hq_btn', { id, open: id !== 'next' || this.canNext, sec: Math.round(this.t) });
     if (id === 'retry') this.game.go(new PlayScene(this.game, this.r.day));
-    else if (id === 'map') this.game.go(new MapScene(this.game, this.canNext ? this.r.day + 1 : this.r.day));
+    else if (id === 'home') this.game.go(new HubScene(this.game), true);
     else if (id === 'next') {
       if (this.canNext) this.game.go(new PlayScene(this.game, this.r.day + 1));
       else this.toast = { text: `第${this.r.day}天送对六成以上才能解锁下一天`, t: 0 };
     }
   }
 
-  // ---------------------------------------------------------------- big view
+  // ---------------------------------------------------------------- big view, keeping photos
+
+  /** Puts a photo of the day in the album (to hang at home later), or takes it back out. */
+  private keep(i: number) {
+    const p = this.r.photos[i];
+    const al = this.game.album;
+    if (!p) return;
+    const had = al.keptId(p);
+    if (had) {
+      al.remove(had);
+      this.toast = { text: '已从相册拿出来了', t: 0 };
+      this.game.audio.play('paper_flip', { volume: 0.7 });
+      this.game.tm.log('photo_keep', { i, kind: p.kind, on: false });
+      return;
+    }
+    const res = al.add(p, this.r.day);
+    if (res === 'full') this.toast = { text: '相册满了，先去总部删掉几张', t: 0 };
+    else if (res === 'failed') this.toast = { text: '没存上，手机空间可能不够了', t: 0 };
+    else {
+      this.toast = { text: '收藏好了，回家可以挂到墙上', t: 0 };
+      this.game.audio.play('photo_shutter', { volume: 0.6 });
+    }
+    this.game.tm.log('photo_keep', { i, kind: p.kind, on: res !== 'full' && res !== 'failed', n: al.list.length });
+  }
+
+  private viewerPhotos(): ViewerPhoto[] {
+    return this.r.photos.map((p, i) => ({ key: `d${i}`, img: () => p.img, caption: p.caption, footer: `蛙趣快递 · 第 ${this.r.day} 天 · 今日精彩瞬间` }));
+  }
 
   private openView(i: number) {
     if (!this.r.photos[i]) return;
     this.game.tm.log('photo', { i, kind: this.r.photos[i].kind });
-    this.view = { i, t: 0, dx: 0 };
-    this.game.audio.play('ui_open');
-    // get every picture ready to save, so the save can happen right inside the tap
-    for (const p of this.r.photos) this.game.platform.prepareImage(this.card(p));
+    this.viewer = new PhotoViewer(this.game, this.viewerPhotos(), i,
+      (_p, k) => [
+        { id: 'close', label: '关闭' },
+        { id: 'keep', label: this.game.album.keptId(this.r.photos[k]) ? '已收藏 ♥' : '收藏' },
+        { id: 'save', label: '存到手机', primary: true },
+      ],
+      (id, k) => this.viewAction(id, k), '今日精彩瞬间');
   }
 
-  private closeView() {
-    this.view = null;
-    this.swipe = null;
-    this.game.platform.showImage(null);
-    this.game.audio.play('ui_close');
-  }
-
-  /** Next (1) or previous (-1) photo; the new one slides in from that side. */
-  private flip(d: number) {
-    const v = this.view!;
-    const n = this.r.photos.length;
-    if (n < 2) return;
-    v.i = (v.i + d + n) % n;
-    v.dx = d * 750 + v.dx;
-    this.game.audio.play('paper_flip', { volume: 0.7 });
-  }
-
-  private viewAction(id: string) {
-    const v = this.view!;
-    if (id === 'close') this.closeView();
-    else if (id === 'prev') this.flip(-1);
-    else if (id === 'next') this.flip(1);
+  private viewAction(id: string, i: number) {
+    const v = this.viewer!;
+    if (id === 'close') {
+      v.close();
+      this.viewer = null;
+      this.game.audio.play('ui_close');
+    } else if (id === 'keep') this.keep(i);
     else if (id === 'save') {
       this.game.audio.play('ui_tap');
-      const p = this.r.photos[v.i];
-      void this.game.platform.saveImage(this.card(p), `waqu-day${this.r.day}-${v.i + 1}.jpg`).then((res) => {
-        this.game.tm.log('photo_save', { i: v.i, kind: p.kind, res });
-        if (SAVED[res]) this.toast = { text: SAVED[res], t: 0 };
-        if (res === 'shared' || res === 'downloaded') this.game.audio.play('photo_shutter', { volume: 0.6 });
+      const p = this.r.photos[i];
+      void v.save(`waqu-day${this.r.day}-${i + 1}.jpg`).then((m) => {
+        this.game.tm.log('photo_save', { i, kind: p.kind, res: m });
+        if (m) this.toast = { text: m, t: 0 };
       });
     }
-  }
-
-  /** The photo as a keepsake: polaroid border, the caption, and a footer. Shown big and saved as is. */
-  private card(p: Photo): Canvas {
-    const have = this.cards.get(p);
-    if (have) return have;
-    const iw = p.img.width, ih = p.img.height;
-    const u = iw / 600;
-    const pad = Math.round(26 * u), capH = Math.round(124 * u);
-    const c = this.game.platform.createCanvas(iw + pad * 2, ih + pad + capH);
-    const g = c.getContext('2d')!;
-    g.fillStyle = '#FFFDF7';
-    g.fillRect(0, 0, c.width, c.height);
-    g.drawImage(p.img, pad, pad);
-    g.strokeStyle = INK;
-    g.lineWidth = 2 * u;
-    g.strokeRect(pad, pad, iw, ih);
-    text(g, p.caption, c.width / 2, pad + ih + 54 * u, 40 * u, { bold: true, maxWidth: iw - 20 * u });
-    text(g, `蛙趣快递 · 第 ${this.r.day} 天 · 今日精彩瞬间`, c.width / 2, pad + ih + 100 * u, 22 * u, { color: P.inkSoft });
-    g.lineWidth = 3 * u;
-    g.strokeRect(1.5 * u, 1.5 * u, c.width - 3 * u, c.height - 3 * u);
-    this.cards.set(p, c);
-    return c;
-  }
-
-  private drawViewer(ctx: Ctx) {
-    const v = this.view!;
-    const H = this.game.H;
-    const photos = this.r.photos;
-    const p = photos[v.i];
-    const card = this.card(p);
-    const a = easeOutCubic(clamp(v.t / 0.25, 0, 1));
-    ctx.save();
-    ctx.globalAlpha = a;
-    ctx.fillStyle = 'rgba(28,22,18,0.9)';
-    ctx.fillRect(0, 0, 750, H);
-    ctx.restore();
-
-    const top = this.game.safeT + 96;
-    const btnY = H - this.game.safeB - 30 - 84;
-    const maxW = 690, maxH = btnY - 150 - top;
-    const s = Math.min(maxW / card.width, maxH / card.height);
-    const pop = 0.88 + 0.12 * easeOutBack(clamp(v.t / 0.3, 0, 1));
-    const w = card.width * s * pop, h = card.height * s * pop;
-    const x = 375 - w / 2 + v.dx, y = top + (maxH - h) / 2;
-    this.cardRect = { x, y, w, h };
-    ctx.save();
-    ctx.globalAlpha = 0.35 * a;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(x + 8, y + 12, w, h);
-    ctx.restore();
-    ctx.drawImage(card, x, y, w, h);
-    // a real picture over it, for long-press saving
-    const k = this.game.cssScale;
-    this.game.platform.showImage(card, { x: x * k, y: y * k, w: w * k, h: h * k });
-
-    text(ctx, '今日精彩瞬间', 375, this.game.safeT + 48, 34, { bold: true, color: P.cream, alpha: a });
-    this.viewBtns = [];
-    const ry = y + h + 50;
-    if (photos.length > 1) {
-      text(ctx, `${v.i + 1} / ${photos.length}`, 375, ry, 30, { bold: true, color: P.cream, alpha: a });
-      for (const [id, cx, dir] of [['prev', 245, -1], ['next', 505, 1]] as const) {
-        const r = { x: cx - 36, y: ry - 36, w: 72, h: 72 };
-        this.viewBtns.push({ id, rect: r });
-        const down = this.pressed === id;
-        pressIn(ctx, r, down);
-        ctx.save();
-        ctx.globalAlpha = a;
-        ellipse(ctx, cx, ry, 32, 32);
-        ctx.fillStyle = P.paper;
-        ctx.fill();
-        ctx.strokeStyle = INK;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.lineWidth = 5;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.beginPath();
-        ctx.moveTo(cx - dir * 5, ry - 12);
-        ctx.lineTo(cx + dir * 7, ry);
-        ctx.lineTo(cx - dir * 5, ry + 12);
-        ctx.stroke();
-        ctx.restore();
-        pressOut(ctx, down, () => ellipse(ctx, cx, ry, 32, 32));
-      }
-    }
-    text(ctx, photos.length > 1 ? '左右滑动换一张 · 长按图片也能保存' : '长按图片也能保存', 375, btnY - 34, 24, { color: P.cream, alpha: 0.7 * a });
-    ctx.save();
-    ctx.globalAlpha = a;
-    this.viewBtns.push({ id: 'close', rect: { x: 40, y: btnY, w: 250, h: 84 } }, { id: 'save', rect: { x: 310, y: btnY, w: 400, h: 84 } });
-    button(ctx, 40, btnY, 250, 84, '关闭', { pressed: this.pressed === 'close', size: 32 });
-    button(ctx, 310, btnY, 400, 84, '保存这张', { primary: true, pressed: this.pressed === 'save', size: 32 });
-    ctx.restore();
   }
 
   render(ctx: Ctx) {
@@ -476,24 +412,24 @@ export class HqScene implements Scene {
     if (last) {
       this.btns = [
         { id: 'retry', rect: { x: 40, y: btnTop, w: 310, h: 84 } },
-        { id: 'map', rect: { x: 390, y: btnTop, w: 320, h: 84 } },
+        { id: 'home', rect: { x: 390, y: btnTop, w: 320, h: 84 } },
       ];
       button(ctx, 40, btnTop, 310, 84, '再来一次', { pressed: this.pressed === 'retry', size: 32 });
-      button(ctx, 390, btnTop, 320, 84, '回路线图 →', { primary: true, pressed: this.pressed === 'map', size: 32 });
+      button(ctx, 390, btnTop, 320, 84, '回主页 →', { primary: true, pressed: this.pressed === 'home', size: 32 });
     } else {
       this.btns = [
         { id: 'retry', rect: { x: 24, y: btnTop, w: 220, h: 84 } },
-        { id: 'map', rect: { x: 258, y: btnTop, w: 200, h: 84 } },
+        { id: 'home', rect: { x: 258, y: btnTop, w: 200, h: 84 } },
         { id: 'next', rect: { x: 472, y: btnTop, w: 254, h: 84 } },
       ];
       button(ctx, 24, btnTop, 220, 84, '再来一次', { primary: !this.canNext, pressed: this.pressed === 'retry', size: 30 });
-      button(ctx, 258, btnTop, 200, 84, '路线图', { pressed: this.pressed === 'map', size: 30 });
+      button(ctx, 258, btnTop, 200, 84, '回主页', { pressed: this.pressed === 'home', size: 30 });
       button(ctx, 472, btnTop, 254, 84, '下一天 →', { primary: this.canNext, disabled: !this.canNext, pressed: this.pressed === 'next', size: 30 });
     }
     ctx.restore();
 
-    if (this.view) this.drawViewer(ctx);
-    if (this.toast) {
+    if (this.viewer) this.viewer.render(ctx);
+    if (this.toast && this.toast.t >= 0) {
       const tt = this.toast.t;
       const a = Math.min(1, tt * 6) * (tt > 2 ? (2.4 - tt) / 0.4 : 1);
       ctx.save();
@@ -564,9 +500,9 @@ export class HqScene implements Scene {
         const k = clamp((this.t - this.stampAt - 0.2 - i * 0.15) / 0.15, 0, 1);
         const sc = fresh ? 1.6 - 0.6 * k : 1;
         ctx.save();
-        ctx.translate(560 + i * 40, 260);
+        ctx.translate(518 + i * 35, 260);
         ctx.scale(sc, sc);
-        drawStamp(ctx, 0, 0, 16, this.stamps[i] && (!fresh || k > 0), i + 1);
+        drawStamp(ctx, 0, 0, 15, this.stamps[i] && (!fresh || k > 0), i + 1);
         ctx.restore();
       }
       ctx.restore();
@@ -618,6 +554,7 @@ export class HqScene implements Scene {
     }
     const n = photos.length;
     this.thumbs = [];
+    this.hearts = [];
     photos.forEach((p, i) => {
       const k = clamp((this.t - this.stampAt - 0.5 - i * 0.28) / 0.3, 0, 1);
       if (k <= 0) return;
@@ -635,9 +572,28 @@ export class HqScene implements Scene {
         ctx.fillStyle = 'rgba(36,28,22,0.22)';
         ctx.fillRect(-100, -96, 200, 192);
       }
+      // 收藏: keep it in the album, to hang at home
+      const kept = !!this.game.album.keptId(p);
+      const hd = this.pressed === `keep${i}`;
+      ctx.translate(76, -70);
+      if (hd) ctx.scale(0.88, 0.88);
+      ellipse(ctx, 0, 0, 25, 25);
+      ctx.fillStyle = kept ? P.red : P.white;
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      heartPath(ctx, 0, 1, 12);
+      ctx.fillStyle = kept ? P.white : 'rgba(217,83,79,0.25)';
+      ctx.fill();
+      ctx.strokeStyle = kept ? P.white : P.red;
+      ctx.lineWidth = 2;
+      ctx.stroke();
       ctx.restore();
+      this.hearts[i] = { x: 24 + cx + 76 - 32, y: sheetTop + 522 - 70 - 32, w: 64, h: 64 };
     });
     if (!n) text(ctx, '今天风平浪静，没拍到照片', 351, 510, 24, { color: P.inkSoft });
+    else if (this.t > this.endAt && !photos.some((p) => this.game.album.keptId(p))) text(ctx, '点 ♥ 收藏进相册', 40, 400, 19, { align: 'left', color: P.inkSoft });
 
     // rating stamp
     const st = this.t - this.stampAt;
@@ -757,4 +713,13 @@ export class HqScene implements Scene {
       ctx.stroke();
     }
   }
+}
+
+/** A small heart centred on (x, y). */
+function heartPath(ctx: Ctx, x: number, y: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x, y + r * 0.9);
+  ctx.bezierCurveTo(x - r * 1.4, y - r * 0.1, x - r * 0.7, y - r * 1.2, x, y - r * 0.45);
+  ctx.bezierCurveTo(x + r * 0.7, y - r * 1.2, x + r * 1.4, y - r * 0.1, x, y + r * 0.9);
+  ctx.closePath();
 }

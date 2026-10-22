@@ -1,7 +1,7 @@
 // Web entry: browser platform adapter + the shared game.
 import { Game } from './game/game';
 import { PlayScene } from './game/play';
-import { TitleScene } from './game/title';
+import { HubScene } from './game/hub';
 import { WebPlatform } from './platform/web';
 
 const q = new URLSearchParams(location.search);
@@ -12,5 +12,5 @@ const dev = /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) || loca
 const game = new Game(new WebPlatform(), { toggle: tm === 'on' || tm === 'off' ? tm : null, dev });
 // ?day=N jumps straight into a day (handy for testing).
 const day = Number(q.get('day'));
-void game.start(() => (day >= 1 ? new PlayScene(game, day) : new TitleScene(game)), day >= 1 ? { jump: day } : {});
+void game.start(() => (day >= 1 ? new PlayScene(game, day) : new HubScene(game)), day >= 1 ? { jump: day } : {});
 (window as unknown as { __game: Game }).__game = game;
