@@ -125,11 +125,20 @@ export class WebPlatform implements Platform {
     }
   }
 
-  storageSet(key: string, value: string): void {
+  storageSet(key: string, value: string): boolean {
     try {
       localStorage.setItem(key, value);
+      return true;
     } catch {
-      /* private mode: progress just isn't kept */
+      return false; // private mode or full: it just isn't kept
+    }
+  }
+
+  storageRemove(key: string): void {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* nothing to do */
     }
   }
 
@@ -246,6 +255,21 @@ export class WebPlatform implements Platform {
     // Reserved for the WeChat build (share card). On the web, fall back to the share sheet if any.
     const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
     nav.share?.({ title: opts.title, url: location.href }).catch(() => undefined);
+  }
+
+  encodeImage(canvas: Canvas, quality: number): string | null {
+    try {
+      const url = canvas.toDataURL('image/jpeg', quality);
+      return url.startsWith('data:image/jpeg') ? url : null;
+    } catch {
+      return null;
+    }
+  }
+
+  promptText(title: string, value: string, maxLength: number): Promise<string | null> {
+    // the browser's own box; the WeChat build will use wx.showModal({ editable: true })
+    const s = window.prompt(title, value);
+    return Promise.resolve(s === null ? null : [...s.trim()].slice(0, maxLength).join(''));
   }
 
   deviceInfo(): Record<string, string | number | boolean> {

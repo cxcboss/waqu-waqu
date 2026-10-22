@@ -1,6 +1,7 @@
 import type { Ctx, ImageSource, Platform } from '../platform/types';
 import { P } from './palette';
 import * as A from './shapes';
+import * as H from './shapes-home';
 import { defs } from './svg';
 
 /** Design units (750-wide canvas) per concept unit (1080-wide concept art). */
@@ -100,6 +101,33 @@ def('hq_room', [0, 0, 1080, HQ_ROOM_H], () => A.hqRoom(HQ_ROOM_H));
 def('hq_counter', [-20, -68, 1100, 236], A.hqCounter);
 def('owl', [-150, -320, 150, 6], A.owl);
 def('owl_wing', [-10, -190, 210, 20], A.owlWing);
+
+// Outside work: home page buildings, the frog's room, the shop, hats and gear (shapes-home.ts)
+def('hub_hq', [-226, -380, 226, 30], H.hubHq);
+def('hub_shop', [-182, -340, 182, 26], H.hubShop);
+def('hub_home', [-182, -314, 190, 28], H.hubHome);
+def('shop_hamster', [-74, -176, 74, 14], H.hamster);
+def('home_bed', [-176, -226, 170, 20], H.bed);
+def('home_wardrobe', [-118, -418, 118, 18], H.wardrobe);
+def('home_desk', [-160, -228, 160, 18], H.desk);
+def('deco_rug', [-200, -72, 200, 72], H.rug);
+def('deco_plant', [-64, -142, 64, 6], H.plant);
+def('deco_clock', [-62, -146, 62, 54], H.cuckoo);
+def('deco_lights', [-256, -6, 256, 54], H.lights);
+def('deco_lamp', [-72, -154, 72, 8], H.lamp);
+def('deco_fish', [-56, -108, 56, 8], H.fishbowl);
+def('deco_shelf', [-132, -120, 132, 28], H.shelf);
+def('deco_record', [-86, -194, 86, 16], H.recordPlayer);
+for (const [k, b] of [
+  ['straw', [-84, -60, 84, 22]], ['flower', [-6, -50, 46, 20]], ['beanie', [-54, -88, 54, 14]], ['beret', [-58, -56, 66, 12]],
+  ['top', [-58, -106, 58, 18]], ['pilot', [-60, -64, 60, 38]], ['swim', [-50, -62, 50, 14]], ['gold', [-44, -52, 50, 14]],
+] as const) def(`hat_${k}`, [...b], () => H.hat(k));
+for (const [k, b] of [['scarf', [-68, -14, 68, 70]], ['bow', [-40, -24, 40, 24]], ['camera', [-44, -12, 44, 68]]] as const) def(`neck_${k}`, [...b], () => H.neck(k));
+for (const k of ['bag', 'shoe', 'fin']) def(`gear_${k}`, [-62, -64, 62, 64], () => H.gearIcon(k));
+/** Optional painted backgrounds; without them the screens draw their own. */
+paintedOnly('hub_bg', [0, 0, 1080, 1620]);
+paintedOnly('home_room', [0, 0, 1080, 1620]);
+paintedOnly('shop_room', [0, 0, 1080, 1620]);
 
 // Background tile
 def('river', [0, 0, 1080, TILE_H], () => A.riverTile(TILE_H));

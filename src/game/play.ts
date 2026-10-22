@@ -5,6 +5,7 @@ import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, spring
 import type { LoopHandle } from '../engine/audio';
 import type { Data } from '../engine/telemetry';
 import type { Canvas, Ctx } from '../platform/types';
+import { MAX_SLOTS, gearEffects, type GearEffects } from './catalog';
 import { SIZE_INFO, TUNING } from './config';
 import type { Game, Scene } from './game';
 import { HqScene, type DayResult, type Photo } from './hq';
@@ -258,10 +259,17 @@ export class PlayScene implements Scene {
   private swim: { t: number; strokes: number; fails: number } | null = null;
   private lastInput = 0;
   private wall: number;
+  /** What the shop gear adds (bag slots, jump, swim). */
+  private gear: GearEffects;
+  /** For the career totals at HQ: farthest landed jump, the lost letter if picked up. */
+  private extra = { far: 0, letter: null as string | null };
 
   constructor(private game: Game, readonly day: number) {
     const cfg = dayConfig(day);
     this.lv = buildLevel(cfg, game.H);
+    // a bigger bag holds more; the river is still built for the day's own bag
+    this.gear = gearEffects(game.save.gear);
+    this.lv.cfg = { ...cfg, bagSlots: Math.min(MAX_SLOTS, cfg.bagSlots + this.gear.slots) };
     const truck = this.lv.truck;
     this.placeTruck();
     const lx = -TUNING.truckSpotX[1];
@@ -610,7 +618,9 @@ export class PlayScene implements Scene {
     return this.bag.reduce((w, o) => w + SIZE_INFO[o.size].slots, 0);
   }
   private maxJump() {
-    return TUNING.maxJump * (1 - TUNING.weightPenalty * this.weight()) * (this.smogT > 0 ? SMOG_REACH : 1);
+    // the extra slots of a bigger bag don't weigh the frog down more than the day's own bag would
+    const w = Math.min(this.weight(), dayConfig(this.day).bagSlots) * this.gear.weight;
+    return TUNING.maxJump * this.gear.jump * (1 - TUNING.weightPenalty * w) * (this.smogT > 0 ? SMOG_REACH : 1);
   }
 
   /** Finds what's under a world point: the truck, a river object, the road, or null for water (and the reeds). */
@@ -841,6 +851,7 @@ export class PlayScene implements Scene {
     this.log('jump', { ...j.info, dist: Math.round(j.dist), on: p?.kind ?? 'water', ...aimed, ...(p ? {} : this.missBy(x, y, j)) });
     if (p) {
       this.standOn(p, x, y, 'jump');
+      if (p.kind !== 'bank') this.extra.far = Math.max(this.extra.far, j.dist);
       if (j.dist > 285 && p.kind !== 'bank' && j.dist > this.stats.longest) {
         this.stats.longest = j.dist;
         this.shots = this.shots.filter((s) => s.kind !== 'long');
@@ -1181,8 +1192,8 @@ export class PlayScene implements Scene {
     if (this.swim) this.swim.strokes++;
     const dx = tgt.x - f.x, dy = tgt.y - f.y;
     const d = Math.hypot(dx, dy) || 1;
-    f.vx += (dx / d) * TUNING.swimImpulse;
-    f.vy += (dy / d) * TUNING.swimImpulse;
+    f.vx += (dx / d) * TUNING.swimImpulse * this.gear.swim;
+    f.vy += (dy / d) * TUNING.swimImpulse * this.gear.swim;
     const v = Math.hypot(f.vx, f.vy);
     if (v > TUNING.swimMax) {
       f.vx *= TUNING.swimMax / v;
@@ -1409,7 +1420,8 @@ export class PlayScene implements Scene {
     e.got = true;
     this.log('egg');
     this.hint = null;
-    this.showHint('egg', '捡到一封【遗失的信】！', { dur: 5, sub: pick(LETTERS, Math.random) });
+    this.extra.letter = pick(LETTERS, Math.random);
+    this.showHint('egg', '捡到一封【遗失的信】！', { dur: 5, sub: this.extra.letter });
     this.queueShot('egg', '捡到一封遗失的信！', 8, 0.1);
     this.popups.push({ text: '发现彩蛋！', x: e.x - 60, y: e.y - 60, t: 0, color: P.orangeDeep });
     this.game.audio.play('paper_flip');
@@ -1521,6 +1533,13 @@ export class PlayScene implements Scene {
       codLoss: this.stats.codLoss,
       bestTrip: this.stats.bestTrip,
       fastUrgent: this.stats.fastUrgent,
+      extra: {
+        jumps: this.stats.jumps, longest: this.extra.far, rescued: this.tally.rescued, letter: this.extra.letter,
+        parcels: orders.map((o) => {
+          const h = o.deliveredTo ?? o.house;
+          return { to: h.name, owner: o.house.name, species: h.species, state: o.state as 'delivered' | 'wrong' | 'wet' | 'missed', urgent: o.urgent };
+        }),
+      },
     };
     this.ended = null;
     this.stopLoops();

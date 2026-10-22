@@ -24,7 +24,7 @@ TypeScript + Canvas 2D，没有用游戏引擎。所有浏览器相关的调用�
 
 - `src/game/config.ts`：每天的关卡参数和手感数值
 - `src/game/level.ts`：河道生成（同一天每次都一样）
-- `src/game/play.ts`：玩法；`src/game/hq.ts`：总部结算；`src/game/title.ts`：标题页
+- `src/game/play.ts`：玩法；`src/game/hq.ts`：下班结算；`src/game/hub.ts`：主页（小镇）；`hall.ts` 总部大厅、`home.ts` 我的家、`shop.ts` 福利社；`career.ts` 生涯记录、职级和成就；`catalog.ts` 商店目录和装备数值
 - `src/art/`：占位美术（代码绘制的 SVG）。正式美术放进 `public/art/<名字>.png` 并把名字写进
   `public/art/manifest.json`，就会替换同名占位图（名字和尺寸见 `src/art/sprites.ts`）
 - `public/audio/`：音效和音乐，来源和授权见 `public/audio/CREDITS.md`

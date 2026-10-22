@@ -43,7 +43,9 @@ export interface Platform {
   loadFont(family: string, url: string): Promise<boolean>;
 
   storageGet(key: string): string | null;
-  storageSet(key: string, value: string): void;
+  /** False when it couldn't be kept (storage full, private mode). */
+  storageSet(key: string, value: string): boolean;
+  storageRemove(key: string): void;
 
   /** Web Audio compatible context, or null when audio is unavailable. */
   createAudioContext(): AudioContext | null;
@@ -63,6 +65,10 @@ export interface Platform {
    */
   showImage(canvas: Canvas | null, rect?: { x: number; y: number; w: number; h: number }): void;
   share(opts: { title: string; canvas?: Canvas }): void;
+  /** A small JPEG of `canvas` as a data URL, for keeping photos in storage; null if it can't be made. */
+  encodeImage(canvas: Canvas, quality: number): string | null;
+  /** Asks the player to type a short text (the frog's name); null when cancelled. */
+  promptText(title: string, value: string, maxLength: number): Promise<string | null>;
 
   /** Coarse, non-identifying facts for the play statistics: system, browser or host app, screen size. */
   deviceInfo(): Record<string, string | number | boolean>;

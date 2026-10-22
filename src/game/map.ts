@@ -6,7 +6,7 @@ import { DAYS } from './config';
 import type { Game, Scene } from './game';
 import { PlayScene } from './play';
 import { STAMP_GLYPHS, STAMP_NAMES, stampRules } from './progress';
-import { TitleScene } from './title';
+import { HubScene } from './hub';
 
 /** A stop on the route map: a big lily pad in the river, with a signpost underneath. */
 interface Stop { day: number; x: number; y: number }
@@ -72,7 +72,7 @@ export class MapScene implements Scene {
     this.game.tm.log(b.id === 'go' ? 'map_go' : 'map_back', { sel: this.sel, sec: Math.round(this.t) });
     if (b.id === 'back') {
       au.play('ui_back');
-      this.game.go(new TitleScene(this.game));
+      this.game.go(new HubScene(this.game));
     } else if (b.id === 'go') {
       au.play('ui_confirm');
       this.game.go(new PlayScene(this.game, this.sel), true);
@@ -185,7 +185,7 @@ export class MapScene implements Scene {
     ctx.strokeStyle = INK;
     ctx.lineWidth = 2;
     ctx.stroke();
-    text(ctx, '‹ 标题', 86, top + 49, 26, { bold: true });
+    text(ctx, '‹ 主页', 86, top + 49, 26, { bold: true });
     pressOut(ctx, this.pressed === 'back', () => roundRect(ctx, 26, top + 20, 120, 56, 28));
     text(ctx, '河湾线 · 路线图', 375, top + 49, 34, { bold: true });
     sp.draw(ctx, 'coin', 618, top + 48, 0.6);
