@@ -301,8 +301,10 @@ export class PlayScene implements Scene {
     hints: {} as Record<string, number>, misses: {} as Record<string, number>,
   };
   /** The swim in progress, summed up when the frog gets out. */
-  private swim: { t: number; strokes: number; fails: number } | null = null;
+  private swim: { t: number; strokes: number; fails: number; gauges: number; wheel: number | null } | null = null;
   private lastInput = 0;
+  /** When the truck last started hauling the frog in, for how long the haul took. */
+  private yankAt = 0;
   private wall: number;
   /** A pose the standing frog holds for a moment after something happens (a salute after a delivery). */
   private frogCue: { pose: string; from: number; until: number } | null = null;
@@ -334,7 +336,7 @@ export class PlayScene implements Scene {
     game.perf = { frames: 0, slow: 0, time: 0 };
     this.wall = game.platform.now();
     const s = game.save;
-    this.log('run_start', { attempt: tm.count(`day${day}`), unlocked: s.day, best: s.best[day] ?? null, stamps: s.stamps[day] ?? [] });
+    this.log('run_start', { attempt: tm.count(`day${day}`), unlocked: s.day, best: s.best[day] ?? null, stamps: s.stamps[day] ?? [], gear: { ...s.gear }, bag: this.lv.cfg.bagSlots });
   }
 
   /** An event for the play statistics, stamped with the run's clock and how far along the route it happened. */
@@ -580,6 +582,7 @@ export class PlayScene implements Scene {
         this.gaugeGrace = GAUGE_GRACE;
         if (!this.gauge) {
           this.gauge = { t: 0 };
+          if (this.swim) this.swim.gauges++;
           this.game.audio.play('ui_tap', { volume: 0.5 });
           if (!this.floaters.length) this.climbHint();
         } else this.gauge.t += dt;
@@ -615,7 +618,10 @@ export class PlayScene implements Scene {
   private kick(ux: number, uy: number, k: number) {
     const f = this.frog;
     this.tally.strokes++;
-    if (this.swim) this.swim.strokes++;
+    if (this.swim) {
+      this.swim.strokes++;
+      this.swim.wheel ??= r1(this.time - this.swim.t);
+    }
     const speed = TUNING.kickSpeed * (0.45 + 0.55 * k) * (1 - 0.03 * this.weight()) * this.gear.swim;
     // mostly a fresh push in the new direction, so turning feels immediate
     f.vx = lerp(f.vx, ux * speed, 0.8);
@@ -975,6 +981,7 @@ export class PlayScene implements Scene {
       au.play('frog_croak', { volume: 0.8, rate: 1.35, jitter: true });
     }
     if (k >= 1) {
+      if (b.yank) this.log('haul_land', { sec: r1(this.time - this.yankAt), wet: b.wet });
       this.standOn(t, tx, t.y + 40, 'auto');
       // a hard landing on the bed, seeing stars
       f.impact = 1.15;
@@ -1109,7 +1116,7 @@ export class PlayScene implements Scene {
     const floating = spilled.filter((o) => o.dunks < DUNK_MAX);
     const n = floating.length;
     this.log('fall', { n: spilled.length, gone: gone.length, fy: r2(this.sy(y) / this.H) });
-    this.swim = { t: this.time, strokes: 0, fails: 0 };
+    this.swim = { t: this.time, strokes: 0, fails: 0, gauges: 0, wheel: null };
     floating.forEach((o, i) => {
       o.state = 'float';
       const side = i - (n - 1) / 2;
@@ -1371,7 +1378,7 @@ export class PlayScene implements Scene {
     this.swim = null;
     const sec = this.time - sw.t;
     this.tally.swimSec += sec;
-    this.log('swim_out', { sec: r1(sec), strokes: sw.strokes, fails: sw.fails, to });
+    this.log('swim_out', { sec: r1(sec), strokes: sw.strokes, fails: sw.fails, to, gauges: sw.gauges, wheel: sw.wheel, gear: this.gear.swim });
   }
 
   private startJump(dx: number, dy: number, held: number, x: number, y: number) {
@@ -1535,7 +1542,7 @@ export class PlayScene implements Scene {
         this.honkT = 0.5;
         this.game.platform.vibrate(30);
       } else if (left >= 1 && left <= 6) au.play('ui_tick', { volume: 0.5 });
-      if (left === 5) this.driverSay(dealLine(HURRY_LINES, this.linesUsed));
+      if (left === 5) this.driverSay(dealLine(HURRY_LINES, this.linesUsed), 2.8, 'call5');
     }
     // a frog in mid-air gets to land first
     if (this.callT <= 0 && (f.state === 'stand' || f.state === 'swim')) this.yank();
@@ -1546,6 +1553,7 @@ export class PlayScene implements Scene {
     const f = this.frog;
     if (f.state === 'board') return;
     this.log('yank', { state: f.state, on: f.on?.kind ?? null, why });
+    this.yankAt = this.time;
     this.endSwim('yank');
     const t = this.lv.truck;
     if (f.state === 'swim') this.leaveWater();
@@ -1579,8 +1587,9 @@ export class PlayScene implements Scene {
   }
 
   /** The driver shouts something from the cab, with a honk. */
-  private driverSay(text: string, dur = 2.8) {
+  private driverSay(text: string, dur: number, kind: 'hurry' | 'call5' | 'arrive' | 'idle_warn' | 'kick') {
     this.driver = { text, t: 0, dur };
+    this.log('driver_say', { kind, text });
     this.honkT = 0.5;
     this.game.audio.play('truck_horn', { volume: 0.7, rate: 1.1 });
   }
@@ -1597,7 +1606,7 @@ export class PlayScene implements Scene {
     if (!this.hurried) {
       this.hurried = true;
       this.log('hurry', { state: f.state, on: f.on?.kind ?? null });
-      this.driverSay(dealLine(HURRY_LINES, this.linesUsed));
+      this.driverSay(dealLine(HURRY_LINES, this.linesUsed), 2.8, 'hurry');
       this.showHint('call', '快到站了！【跳回运输车】', { dur: 4, sub: '到站还没上车，会被绳子拽回去', warn: true, again: true });
     } else if (tick && n >= 1 && n <= 3) {
       this.game.audio.play('truck_horn', { rate: 1 + (3 - n) * 0.06 });
@@ -1615,7 +1624,7 @@ export class PlayScene implements Scene {
     this.stopCharge();
     this.hint = null;
     this.log('route_end', { state: f.state, on: f.on?.kind ?? null });
-    if (!(f.state === 'stand' && f.on?.kind === 'truck') && f.state !== 'board') this.driverSay('到站啦！拽你回来！', 2);
+    if (!(f.state === 'stand' && f.on?.kind === 'truck') && f.state !== 'board') this.driverSay('到站啦！拽你回来！', 2, 'arrive');
   }
 
   /** At the end of the route, a frog off the truck is lassoed as soon as it's on something or in the water. */
@@ -1640,7 +1649,7 @@ export class PlayScene implements Scene {
     this.idleT += dt;
     if (!this.idleWarned && this.idleT >= IDLE_WARN) {
       this.idleWarned = true;
-      this.driverSay('喂，该下车干活了！', 2.2);
+      this.driverSay('喂，该下车干活了！', 2.2, 'idle_warn');
       this.game.platform.vibrate(30);
     }
     if (this.idleT >= IDLE_KICK) this.kickOff();
@@ -1660,7 +1669,7 @@ export class PlayScene implements Scene {
     this.log('kicked', { d: Math.round(Math.hypot(p.x - f.x, p.y - f.y)) });
     this.aim = null;
     this.stopCharge();
-    this.driverSay(dealLine(KICK_LINES, this.linesUsed), 3);
+    this.driverSay(dealLine(KICK_LINES, this.linesUsed), 3, 'kick');
     const t = f.on!;
     t.press = 0.6;
     const x1 = p.x + (Math.random() - 0.5) * p.rx * 0.4, y1 = p.y + (Math.random() - 0.5) * p.ry * 0.3;
@@ -1880,7 +1889,7 @@ export class PlayScene implements Scene {
   private deliver(o: Order, h: House) {
     this.bag = this.bag.filter((b) => b !== o);
     o.deliveredTo = h;
-    const d: Data = { code: o.code, ok: o.house === h, size: o.size, urgent: o.urgent, late: o.late, cod: !!o.cod, sec: r1(this.time - o.pickedAt) };
+    const d: Data = { code: o.code, house: h.type, res: h.species, ok: o.house === h, size: o.size, urgent: o.urgent, late: o.late, cod: !!o.cod, sec: r1(this.time - o.pickedAt) };
     if (o.house !== h) {
       // what this house was waiting for, and whether it was in the bag all along (a mis-tap rather than a mix-up)
       d.want = this.lv.orders.filter((x) => x.house === h && (x.state === 'pool' || x.state === 'bag')).map((x) => x.code);

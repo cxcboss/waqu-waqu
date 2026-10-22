@@ -1,5 +1,8 @@
 # 试玩数据（匿名游玩统计）
 
+> 给以后接手的人或 AI：这份文档是埋点的唯一说明。改了埋点（加、删、改字段）就同步改这里和 `scripts/stats.py`。
+> 快速入口：[每一行](#每一行) · [事件](#事件) · [埋点在代码哪里](#埋点在代码哪里) · [怎么加一个新埋点](#怎么加一个新埋点) · [读数据](#读数据statspy) · [Supabase 设置](#supabase-设置不含密钥)
+
 测试版会把玩家的游玩过程匿名记下来，方便不问玩家也能看出卡在哪。不收集任何个人信息：
 只有一个随机生成、存在玩家设备上的玩家 ID，加上粗略的设备情况（系统、浏览器或 App、屏幕尺寸）
 和游戏里发生的事。不弹任何提示。
@@ -65,7 +68,7 @@
 
 **一局**
 
-- `run_start`：`attempt`（这台设备第几次玩这一天）、`unlocked`、`best`、`stamps`
+- `run_start`：`attempt`（这台设备第几次玩这一天）、`unlocked`、`best`、`stamps`；10-22 起还有 `gear`（开局时商店装备等级，如 `{bag:1, shoes:0, fins:2}`）、`bag`（加上邮差包后今天背包几格）
 - `step`：新手步骤切换 `from` → `to`、`sec`（上一步停留秒数）。`from: intro` 的 `sec` 就是开工说明卡看了多久；第 1 天依次 pick（点包裹）→ aim（拉）→ go（跳去房子）→ deliver（点卡片交件）→ refill（回车）；`rescue` 是第一次落水的教学（第四轮起教方向轮盘，碰一下轮盘才继续）
 - `jump`（落地时记一条）：`pow` 力度 0～1、`dx`/`dy` 手指拉的方向（青蛙往反方向跳；`dy<0` 是手指往上拉、青蛙往下跳）、`held` 按了几秒、`from` 起跳处、`w` 背包重量、`fy` 起跳时在屏幕的高度（0 顶 1 底）、`smog` 在尾气里、`step`、`dist`、`on` 落点（lily/log/house/truck/bank/water）；落水时还有 `near`（离最近落脚点的距离）、`to`（那是什么）、`short`（true 跳近了 / false 跳远了）；第 1 天引导那一跳有 `target`（是否跳中了引导的荷叶）
 - `tap`：按了一下没拉开（想跳却只是点），`len`、`held`、`under`（手指下面是什么）、`on`、`step`（每局最多记 20 条）
@@ -74,19 +77,79 @@
 - `idle`：隔了 ≥8 秒才再点屏幕，`sec`、`step`、`state`、`on`（站在车上等房子是正常的）
 - `fall`：落水 `n` 掉出几个包裹、`gone` 被冲走几个、`fy`
 - `climb`：在水里点出指针后第二下点击（跳出水）。`ok`、`off`（指针离中间多远）、`zone`（绿区宽度）、`w`、`on`（会跳上的东西，null 是够不着）、`d`（离它边缘多远）、`wait`（指针出来几秒后才点）。第四轮之前是「扒住边后点一下」，还有 `climbEarly`，现在没了
-- `swim_out`：出水，`sec`、`strokes`（蹬腿次数）、`fails`（没点中绿区、原地蹦的次数）、`to`（跳上了什么；yank 表示被车拽走）
+- `swim_out`：出水，`sec`、`strokes`（蹬腿次数）、`fails`（没点中绿区、原地蹦的次数）、`to`（跳上了什么；yank 表示被车拽走）；10-22 起还有 `gauges`（这次落水跳出指针自动出现了几次）、`wheel`（落水后几秒第一次蹬腿，null 是一下没蹬）、`gear`（脚蹼的推力倍数，1 是没买）
 - `rescue`：捞回包裹 `code`、`how`（tongue，第四轮起包裹进了舌头范围就自动卷回）、`after`（漂了几秒）、`late`（房子已经过去了）· `sunk`：包裹被冲出屏幕底部 `code`
 - `pickup`：`code`、`size`、`urgent`、`cod`、`used`（背包占了几格）· `bag_full`：装不下还点 · `put_back`：放回车上
-- `deliver`：`code`、`ok`、`size`、`urgent`、`late`、`cod`、`sec`（取件到送达）；送错时还有 `want`（这家等的取件码）、`hadRight`（这家的包裹其实就在包里 → 是点错卡片，不是认错房子）
+- `deliver`：`code`、`house`（房型 id，见 `src/game/cast.ts` HOUSE_DEFS，10-22 起）、`res`（这户居民的动物 id，RESIDENT_DEFS，10-22 起）、`ok`、`size`、`urgent`、`late`、`cod`、`sec`（取件到送达）；送错时还有 `want`（这家等的取件码）、`hadRight`（这家的包裹其实就在包里 → 是点错卡片，不是认错房子）
 - `cod`：找零 `ok`、`pick`（选的）、`right`（正确的）、`price`、`paid`、`sec`（想了几秒）
 - `missed`：房子过去了包裹没送 `code`、`inBag` · `urgent_late`：加急件超时 `code`
 - `warn`：进了底部红线区 `state`、`on` · `thrown`：被甩出屏幕 `state`、`on`、`warnSec`
 - `rush`：跑太靠前，车队加速 · `road`：落到路上 `spot`（ahead 在车前等车 / behind 在车尾）· `exhaust`：车尾起跳喷尾气
-- `all_out`：全部送完开始 15 秒倒计时 · `yank`：时间到被拽回车 · `egg`：捡到遗失的信
+- `all_out`：全部送完开始 15 秒倒计时 · `yank`：被车拽回 `state`、`on`、`why`（call 送完 15 秒到点 / route 到站时不在车上）· `egg`：捡到遗失的信
+- `hurry`：到站前 6 秒青蛙不在车上，司机开始催（`state`、`on`）· `route_end`：车开到终点（`state`、`on`，不在车上就会被拽回）
+- `haul_land`（10-22 起）：被套索拽回、转圈飞上车撞晕落地的那一刻，`sec`（从 `yank` 到落车几秒）、`wet`（是不是从水里拽上来的）
+- `driver_say`（10-22 起）：司机喊话，`kind`（hurry 快到站催上车 / call5 送完倒数剩 5 秒 / arrive 到站要拽了 / idle_warn 在车上发呆 7 秒催下车 / kick 10 秒踢下车）、`text`（喊的那句，台词表在 `src/game/lines.ts` 的 HURRY_LINES、KICK_LINES）
+- `kicked`：在车上还有活却待着不动，被司机一脚踢到最近的荷叶，`d`（踢出去多远）；run_end 里的 `kicked` 是本局次数
 - `hint`：出现了哪条提示 `key`（每种每局最多记 3 条，总数在 run_end 的 `hints` 里）
 - `pause`、`menu`：`id`（resume/restart/map/sound）
 - `run_end`：一局结束的汇总。`how`：off（送完提前下班）/ done（车开到终点）/ thrown / restart / quit（暂停菜单回路线图）；
   `total`、`delivered`、`wrong`、`wet`、`missed`、`left`、`urgent`、`urgentOnTime`、`cod`、`codRight`、`falls`、`jumps`、`longest`、`closeCalls`、`bestTrip`，
-  计数 `taps`、`tired`、`miss`、`far`（舌头够不着，或在水里点出指针时离哪儿都太远）、`climbOk`、`climbFail`、`strokes`、`swimSec`、`warn`、`warnSec`、`rush`、`pauses`、`putBack`、`bagFull`、`exhaust`、`rescued`、`sunk`、`idle`、`hints`、`misses`，
+  计数 `taps`、`tired`、`miss`、`far`（舌头够不着，或在水里点出指针时离哪儿都太远）、`climbOk`、`climbFail`、`strokes`、`swimSec`、`warn`、`warnSec`、`rush`、`pauses`、`putBack`、`bagFull`、`exhaust`、`rescued`、`sunk`、`idle`、`kicked`、`hints`、`misses`，
   `real`（实际秒数，含暂停）、`fps`、`slow`（卡顿帧数）、`state`/`on`/`step`（结束时青蛙在干什么）
 - `run_snap`：切到后台时的同样汇总（`how: hidden`）。一局没有 `run_end`，就看最后一条 `run_snap`，那多半是中途关掉了
+
+## 埋点在代码哪里
+
+所有事件都走同一个入口 `Telemetry.log(ev, d)`（`src/engine/telemetry.ts`）。各画面里的写法：
+
+| 文件 | 调用方式 | 事件 |
+|---|---|---|
+| `src/game/game.ts` | `this.tm.log(...)` | open、loaded、hide/show、error、sound、ach |
+| `src/game/hub.ts`（主页小镇） | `game.tm.log(...)` | hub、hub_go、profile、rename |
+| `src/game/map.ts`（路线图） | 同上 | map、map_go、map_back、map_locked |
+| `src/game/play.ts`（一局） | `this.log(...)`，自动带 `day`、`t`、`d.p`（路线进度） | run_start、step、jump、tap、tired、miss、idle、fall、climb、swim_out、rescue、sunk、pickup、bag_full、put_back、deliver、cod、missed、urgent_late、warn、thrown、rush、road、exhaust、all_out、hurry、route_end、yank、haul_land、driver_say、kicked、egg、hint、pause、menu、run_end、run_snap |
+| `src/game/hq.ts`（下班结算） | `game.tm.log(...)` | hq、hq_btn、photo、photo_save、photo_keep |
+| `src/game/hall.ts`（总部大厅） | 同上 | hall、hall_tab、album_view、album_del |
+| `src/game/home.ts`（我的家） | 同上 | home、home_open、photo_hang、wear |
+| `src/game/shop.ts`（福利社） | 同上 | shop、shop_tab、shop_buy |
+
+在代码里找某个事件：`grep -n "log('事件名'" src/game/*.ts`。play.ts 里的计数器（`this.tally`）不单独发，汇总在 `run_end` / `run_snap`。
+
+## 怎么加一个新埋点
+
+1. 在触发的地方调用 `log`：一局里用 `this.log('名字', { 字段 })`，其他画面用 `this.game.tm.log('名字', { 字段 })`。
+2. 规矩：
+   - 事件名小写加下划线，≤32 字符；`d` 里只放数字、短字符串、布尔、小数组，整行 `d` 不超过 4000 字节（表上有约束，超了整批会被拒）。
+   - **不收个人信息**：不记玩家输入的文字（改名只记 `len`），不记照片内容，不记精确位置、联系方式。
+   - 高频的事（每帧、每次划水）不要单独发，放进 `this.tally` 计数，在 `summary()` 里加字段，随 `run_end` 一起发；或者像 `tap`、`hint` 那样每局限几条。
+   - 数值四舍五入（`r1`、`r2`、`Math.round`），省空间也更好读。
+3. 在本文档的「事件」里写上名字、字段和什么时候触发，标上加入日期。
+4. 想在报告里看到它，就在 `scripts/stats.py` 的 `report()` 里加一行（`by_ev['名字']` 就是这个事件的所有行）。
+5. 不用改数据库：所有事件都进同一张 `events` 表，详情放在 `d`（jsonb）里。
+
+## 读数据（stats.py）
+
+```bash
+python3 scripts/stats.py                          # 全部数据的中文报告
+python3 scripts/stats.py --since 2026-10-22       # 只看某天以后
+python3 scripts/stats.py --build 1a2b3c4          # 只看某个版本（v 列的 commit 部分）
+python3 scripts/stats.py --exclude <pid> <pid>    # 去掉某些玩家
+python3 scripts/stats.py --dump rows.json         # 另外把原始行存下来，自己再分析
+```
+
+只用 Python 标准库，不用装东西。项目地址和 key 从 `src/engine/telemetry.ts` 顶部读，也可以用环境变量 `WAQU_TM_URL` / `WAQU_TM_KEY` 覆盖。
+原始行也能直接用 REST 拉：`curl "$URL/rest/v1/events?select=*&order=at.asc&limit=1000&offset=0" -H "apikey: $KEY"`（每页最多 1000 行）。
+
+## 不要把测试混进数据（?tm=off 规则）
+
+- 自己或机器人在**线上站点**测试，网址一定加 `?tm=off`（例 `https://cxcboss.github.io/waqu-waqu/?tm=off&day=3`）。这台设备从此都不记，`?tm=on` 恢复。
+- 本地开发服务器（localhost / 局域网 IP / file:）和 `/preview…/` 子路径默认不记；要在本地测埋点加 `?tm=on`，并且最好用 Playwright 拦截 `**/rest/v1/events**` 不让它真发出去（`/mnt/project-files/wa-qu/playtest/human4.cjs` 就是这样做的）。
+- 万一测试行进了库：玩家 ID 以 `claude-` 开头的会被 stats.py 自动去掉；其他的用 `--exclude <pid>`。anon key 删不了行，要删只能在 Supabase 后台用 SQL。
+
+## Supabase 设置（不含密钥）
+
+- 项目：用户自己的 Supabase 免费项目（组织 waqu，东京区），地址 `https://oitbtkfwybkuqddqggsg.supabase.co`。
+- 建表：在 Supabase 后台 SQL Editor 里整段运行 `scripts/telemetry.sql`（可重复运行）。表 `public.events`，开了 RLS，anon 角色只有 insert 和 select 两条策略，所以网页里的钥匙不能改、不能删数据。
+- 网页用的是 **publishable key**（`sb_publishable_…`），它本来就要放在前端代码里，写在 `src/engine/telemetry.ts` 的 `KEY`。**secret key（`sb_secret_…`）和数据库密码绝不能写进代码、文档或提交记录。**
+- 换一个项目：改 `telemetry.ts` 顶部的 `ENDPOINT` 和 `KEY`，在新项目跑一遍 `telemetry.sql`，重新部署。玩家设备上没发出去的事件（最多 3000 条）会在下次打开时补发到新地址。
+- 小游戏版：只需在 `wx.ts` 里用 `wx.request` 实现 `postJson`（并把域名加进小程序后台的 request 合法域名），埋点代码不用动。

@@ -189,6 +189,10 @@ def report(rows):
         say(f"  扒住后 0.3 秒内被忽略的点击（新版才有）：{early}")
     say(f"捞包裹：{len(by_ev['rescue'])}（" + top(Counter(r['d']['how'] for r in by_ev['rescue'])) + f"）· 沉了 {len(by_ev['sunk'])} · 冲走 {sum(r['d'].get('gone', 0) for r in by_ev['fall'])}")
     say('落水时屏幕位置(0顶1底) 中位 ' + str(med([r['d'].get('fy') for r in by_ev['fall']])))
+    new = [s for s in sw if 'gauges' in s]
+    if new:
+        say(f"  第四轮游泳：跳出指针出现 中位 {med([s['gauges'] for s in new])} 次/次落水 · 第一次蹬腿在落水后 中位 {med([s['wheel'] for s in new if s.get('wheel') is not None])} 秒"
+            f" · 一下没蹬就上岸 {pct(sum(1 for s in new if s.get('wheel') is None), len(new))} · 出水到：" + top(Counter(s['to'] for s in new)))
 
     say('\n## 送件')
     dl = [r['d'] for r in by_ev['deliver']]
@@ -202,6 +206,22 @@ def report(rows):
     say('\n## 危险和路面')
     say(f"进红线区 {len(by_ev['warn'])} 次 · 被甩出 {len(by_ev['thrown'])} 次（当时 " + top(Counter(f"{r['d']['state']}/{r['d'].get('on')}" for r in by_ev['thrown'])) + '）')
     say(f"跑太前车队加速 {len(by_ev['rush'])} 次 · 落到路上 " + top(Counter(r['d']['spot'] for r in by_ev['road'])) + f" · 尾气 {len(by_ev['exhaust'])} · 送完被拽回 {len(by_ev['yank'])} · 找到彩蛋信 {len(by_ev['egg'])}")
+
+    say('\n## 司机、拽回和踢下车')
+    say('司机喊话：' + top(Counter(r['d']['kind'] for r in by_ev['driver_say'])) + '（hurry=快到站 call5=送完倒数剩5秒 arrive=到站 idle_warn=催下车 kick=踢下车）')
+    say(f"到站前被催 {len(by_ev['hurry'])} 次 · 到站 {len(by_ev['route_end'])} 次 · 被拽回 " + top(Counter(r['d'].get('why') for r in by_ev['yank']))
+        + f" · 拽回到落车 中位 {med([r['d']['sec'] for r in by_ev['haul_land']])} 秒")
+    kicked = by_ev['kicked']
+    warned = [r for r in by_ev['driver_say'] if r['d']['kind'] == 'idle_warn']
+    say(f"在车上发呆被催 {len(warned)} 次 · 被踢下车 {len(kicked)} 次（催了没动的 {pct(len(kicked), len(warned))}）· 踢的距离 中位 {med([r['d']['d'] for r in kicked])}")
+
+    say('\n## 居民和房子')
+    dl4 = [d for d in dl if 'house' in d]
+    if dl4:
+        bad = Counter(d['res'] for d in dl4 if not d['ok'])
+        say(f"送件 {len(dl4)} 次（新版）· 送错最多的居民：" + (top(bad) if bad else '无') + ' · 房型出现：' + top(Counter(d['house'] for d in dl4), 6))
+    else:
+        say('还没有新版（带居民和房型）的送件数据')
 
     say('\n## 提示出现次数（越多越说明这里容易出错）')
     say(top(Counter(r['d']['key'] for r in by_ev['hint']), 16))
@@ -220,6 +240,18 @@ def report(rows):
     say('\n## 总部')
     say('结算后点：' + top(Counter(r['d']['id'] + ('' if r['d'].get('open', True) else '(未解锁)') for r in by_ev['hq_btn'])))
     say(f"看大图 {len(by_ev['photo'])} 次 · 保存 " + top(Counter(r['d']['res'] for r in by_ev['photo_save'])))
+    say(f"收进相册 {sum(1 for r in by_ev['photo_keep'] if r['d'].get('on'))} 次 · 取消 {sum(1 for r in by_ev['photo_keep'] if not r['d'].get('on'))} 次")
+
+    say('\n## 主页、总部大厅、家和福利社')
+    say(f"进主页 {len(by_ev['hub'])} 次 · 去哪：" + top(Counter(r['d']['to'] for r in by_ev['hub_go'])) + f" · 看工牌 {len(by_ev['profile'])} · 改名 {len(by_ev['rename'])}")
+    say(f"总部大厅 {len(by_ev['hall'])} 次 · 分页：" + top(Counter(r['d']['tab'] for r in by_ev['hall_tab'])) + f" · 看相册 {len(by_ev['album_view'])} · 移出相册 {len(by_ev['album_del'])}")
+    say(f"回家 {len(by_ev['home'])} 次 · 打开：" + top(Counter(r['d']['what'] for r in by_ev['home_open'])) + f" · 挂照片 {len(by_ev['photo_hang'])} · 换装 " + top(Counter(f"{r['d']['slot']}:{r['d']['id']}" for r in by_ev['wear'])))
+    buys = [r['d'] for r in by_ev['shop_buy']]
+    say(f"福利社 {len(by_ev['shop'])} 次 · 买了 {len(buys)} 件，花 {sum(b.get('price') or 0 for b in buys)} 金币：" + top(Counter(b['what'] for b in buys), 10))
+    say('成就：' + top(Counter(r['d']['id'] for r in by_ev['ach']), 10))
+    gear = [r['d']['gear'] for r in by_ev['run_start'] if r['d'].get('gear')]
+    if gear:
+        say('开局时的装备等级（中位）：' + ' · '.join(f"{k} {med([g.get(k, 0) for g in gear])}" for k in sorted({k for g in gear for k in g})))
     return '\n'.join(out)
 
 
