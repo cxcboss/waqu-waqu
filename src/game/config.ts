@@ -171,16 +171,39 @@ export const TUNING = {
   // Water
   current: 26,
   /** The current pulls a swimming frog harder than the floating things around it. */
-  swimCurrent: 46,
-  swimImpulse: 100,
-  swimMax: 240,
+  swimCurrent: 38,
   swimDrag: 2.6,
+  /** Swimming is a run of kicks while the wheel is held: speed of each kick, time between them, and the wind-up before the first. */
+  kickSpeed: 270,
+  kickT: 0.4,
+  kickWind: 0.08,
   /** Seconds spluttering after a fall, before the frog can swim. */
-  dunkSec: 0.8,
+  dunkSec: 0.5,
+  /** Parcels adrift are carried downstream this fast, heavier ones slower (by size). */
+  floatDrift: 24,
+  floatDriftK: [1, 0.7, 0.45] as const,
+  /** How far the tongue reaches for a parcel in the water, from a pad or swimming. */
+  tongueR: 165,
+  /** From the water, the frog can leap onto anything within this distance of its edge. */
+  leapR: 230,
+  /** Leap gauge: one sweep there and back (slower until gaugeLateDay), and the green zone's width. */
+  gaugeSweep: 2,
+  gaugeSweepLate: 1.2,
+  gaugeLateDay: 10,
+  gaugeZone: 0.46,
+  gaugeZoneTutorial: 0.56,
+  gaugeZoneMin: 0.34,
+  gaugeZonePerWeight: 0.02,
 
-  // Rushing ahead: above this fraction of the screen the convoy speeds up, up to rushMax times.
-  rushLine: 0.3,
-  rushMax: 2.6,
+  // Rushing ahead: above rushLine (fraction of the screen) the convoy speeds up hard, to at least
+  // rushFloor of the way to rushMax, and keeps it up until the frog is back below rushRelease;
+  // then it eases off slowly (rushDown) rather than at the usual rate.
+  rushLine: 0.34,
+  rushRelease: 0.48,
+  rushMax: 3.6,
+  rushFloor: 0.5,
+  rushUp: 6,
+  rushDown: 0.8,
 
   // Bottom warning zone (fraction of screen height)
   warnLine: 0.8,

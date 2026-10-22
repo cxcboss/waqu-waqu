@@ -6,9 +6,9 @@ import { WebPlatform } from './platform/web';
 
 const q = new URLSearchParams(location.search);
 // Play statistics: ?tm=off keeps this device out of them for good (?tm=on lets it back in);
-// nothing is collected on a local dev server or the /preview/ build unless asked with ?tm=on.
+// nothing is collected on a local dev server or a preview build (/preview/, /preview-play/ …) unless asked with ?tm=on.
 const tm = q.get('tm');
-const dev = /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) || location.protocol === 'file:' || location.pathname.includes('/preview/');
+const dev = /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) || location.protocol === 'file:' || /\/preview[\w-]*\//.test(location.pathname);
 const game = new Game(new WebPlatform(), { toggle: tm === 'on' || tm === 'off' ? tm : null, dev });
 // ?day=N jumps straight into a day (handy for testing).
 const day = Number(q.get('day'));
