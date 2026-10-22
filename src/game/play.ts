@@ -9,7 +9,7 @@ import { SIZE_INFO, TUNING } from './config';
 import type { Game, Scene } from './game';
 import { HqScene, type DayResult, type Photo } from './hq';
 import { buildLevel, dayConfig, type House, type Level, type Order, type Plat } from './level';
-import { OFFWORK_LINES } from './lines';
+import { HURRY_LINES, KICK_LINES, OFFWORK_LINES, dealLine } from './lines';
 import { MapScene, drawStamp } from './map';
 
 const FROG_S = 0.92; // frog sprite scale on top of K, matching the concept art
@@ -27,6 +27,8 @@ interface Jump {
   /** Where it took off from, and what the pull looked like, for the play statistics. */
   src?: Plat | null;
   info?: Data;
+  /** Kicked off the truck by the driver: tumbles head over heels on the way. */
+  spin?: boolean;
 }
 
 /**
@@ -112,7 +114,7 @@ const FLY_T = 0.5;
  */
 interface Cod { o: Order; h: House; t: number; opts: number[]; pick: number | null; pickT: number; btns: Rect[] }
 
-type HintKey = 'go' | 'refill' | 'call' | 'egg' | 'road' | 'swim' | 'rescue' | 'climb' | 'rush' | 'cod' | 'putBack' | 'tired' | 'warn' | 'urgent' | 'heavy' | 'wrongHouse';
+type HintKey = 'go' | 'refill' | 'call' | 'egg' | 'road' | 'swim' | 'rescue' | 'climb' | 'rush' | 'cod' | 'putBack' | 'tired' | 'warn' | 'urgent' | 'heavy' | 'wrongHouse' | 'kick';
 
 /**
  * Coached steps at the start of a day. 'intro' is the briefing card (every day); day 1 then walks
@@ -170,6 +172,14 @@ const FOOT_T = 3;
 const SMOG_T = 2.6;
 const SMOG_REACH = 0.7;
 const SMOG_SLOW = 1.5;
+/** Sitting on the truck with work left: the driver honks after IDLE_WARN seconds and kicks the frog off at IDLE_KICK. */
+const IDLE_WARN = 7;
+const IDLE_KICK = 10;
+const KICK_T = 0.8;
+/** Seconds before the end of the route when the driver starts calling a frog that isn't aboard. */
+const HURRY_AT = 6;
+/** The leap gauge hangs on this long after the frog swims out of reach, so it doesn't flicker at the edge. */
+const GAUGE_GRACE = 0.35;
 
 const LETTERS = [
   '“给河湾的快递员：谢谢你每天都来。——住在桥洞的老乌龟”',
@@ -267,12 +277,24 @@ export class PlayScene implements Scene {
   private reachPulse = 0;
   /** Seeing stars after being hauled onto the truck. */
   private dizzyT = 0;
+  /** What the driver is shouting from the cab, and the lines already used today (none twice in a day). */
+  private driver: { text: string; t: number; dur: number } | null = null;
+  private linesUsed = new Set<string>();
+  /** Seconds sat on the truck bed with work left to do; too long and the driver kicks the frog off. */
+  private idleT = 0;
+  private idleWarned = false;
+  /** The route has run out: the river stops, the frog is hauled aboard if it isn't already, then home. */
+  private routeEnd = false;
+  /** The driver has started calling the frog back before the end of the route, and the last whole second counted. */
+  private hurried = false;
+  private hurryN = Infinity;
+  private gaugeGrace = 0;
   /** Legs still aching after a charge held too long: no new pull until this runs out. */
   private tiredT = 0;
   /** Counters for the run's summary in the play statistics. */
   private tally = {
     taps: 0, tired: 0, miss: 0, far: 0, climbOk: 0, climbFail: 0, strokes: 0, swimSec: 0, warn: 0, warnSec: 0,
-    rush: 0, pauses: 0, putBack: 0, bagFull: 0, exhaust: 0, rescued: 0, sunk: 0, idle: 0,
+    rush: 0, pauses: 0, putBack: 0, bagFull: 0, exhaust: 0, rescued: 0, sunk: 0, idle: 0, kicked: 0,
     hints: {} as Record<string, number>, misses: {} as Record<string, number>,
   };
   /** The swim in progress, summed up when the frog gets out. */
@@ -357,6 +379,7 @@ export class PlayScene implements Scene {
     this.honkT = Math.max(0, this.honkT - dt);
     this.smogT = Math.max(0, this.smogT - dt);
     this.dizzyT = Math.max(0, this.dizzyT - dt);
+    if (this.driver && (this.driver.t += dt) > this.driver.dur) this.driver = null;
     // the swim wheel slides in while the frog is in the water
     this.wheelA = approach(this.wheelA, this.frog.state === 'swim' ? 1 : 0, 10, dt);
     for (const p of this.puffs) {
@@ -382,8 +405,8 @@ export class PlayScene implements Scene {
       this.updateRush(rush);
       const base = this.slowT > 0 || this.callT !== null ? TUNING.slowFactor : 1;
       let target = this.rushing ? 1 + (TUNING.rushMax - 1) * Math.max(TUNING.rushFloor, rush) : base;
-      if (this.ended === 'done') target = 0;
-      const rate = target > this.speedK ? (this.rushing ? TUNING.rushUp : 4) : this.speedK > 1 && !this.ended ? TUNING.rushDown : 4;
+      if (this.ended === 'done' || this.routeEnd) target = 0;
+      const rate = target > this.speedK ? (this.rushing ? TUNING.rushUp : 4) : this.speedK > 1 && !this.ended && !this.routeEnd ? TUNING.rushDown : 4;
       this.speedK = approach(this.speedK, target, rate, dt);
       // The river holds still while the tutorial has the player's hands busy.
       if (!this.frozen()) this.camY -= cfg.speed * this.speedK * dt;
@@ -426,9 +449,12 @@ export class PlayScene implements Scene {
       this.tutorial();
       this.updateRoad();
       this.updateCall(dt);
+      this.updateHurry();
+      this.updateIdle(dt);
       this.checkEgg();
+      if (!this.routeEnd && -this.camY >= cfg.length) this.arrive();
+      if (this.routeEnd) this.haulIn();
       this.checkOffwork();
-      if (!this.ended && -this.camY >= cfg.length) this.endDay('done');
     } else if (this.ended !== 'off') {
       this.endT += dt;
       if (this.endT > 2.6) this.finish();
@@ -451,7 +477,7 @@ export class PlayScene implements Scene {
   /** Whether the convoy can rush at all: not while the river holds still, the day is over, or the frog is aboard. */
   private canRush() {
     const f = this.frog;
-    return !this.frozen() && !this.ended && f.state !== 'board' && !(f.state === 'stand' && f.on?.kind === 'truck');
+    return !this.frozen() && !this.ended && !this.routeEnd && f.state !== 'board' && !(f.state === 'stand' && f.on?.kind === 'truck');
   }
 
   /** The frog's height on screen, or for a jump, where it will land. */
@@ -534,7 +560,18 @@ export class PlayScene implements Scene {
     f.swimT += dt;
     f.strokeT += dt;
     f.dunkT = Math.max(0, f.dunkT - dt);
-    if (this.gauge && f.dunkT <= 0 && f.hop <= 0) this.gauge.t += dt;
+    if (f.dunkT <= 0 && f.hop <= 0) {
+      // the gauge comes up by itself whenever there's something in reach to leap onto
+      if (this.leapTarget()) {
+        this.gaugeGrace = GAUGE_GRACE;
+        if (!this.gauge) {
+          this.gauge = { t: 0 };
+          this.game.audio.play('ui_tap', { volume: 0.5 });
+          if (!this.floaters.length) this.climbHint();
+        } else this.gauge.t += dt;
+      } else if (this.gauge && (this.gaugeGrace -= dt) <= 0) this.gauge = null;
+      else if (this.gauge) this.gauge.t += dt;
+    }
     if (f.hop > 0 && (f.hop -= dt) <= 0) {
       // back down where it started
       this.fx.push({ kind: 'splash', x: f.x, y: f.y, t: 0, dur: 0.45 });
@@ -646,22 +683,17 @@ export class PlayScene implements Scene {
     return Math.max(TUNING.gaugeZoneMin, base - TUNING.gaugeZonePerWeight * this.weight());
   }
 
-  /** A tap in the water away from the wheel: brings the gauge up, or, with it up, tries the leap. */
+  /** A tap in the water away from the wheel: with the gauge up (something is in reach), tries the leap. */
   private gaugeTap() {
     const f = this.frog;
     if (f.dunkT > 0 || f.hop > 0) return;
     const tgt = this.leapTarget();
     const g = this.gauge;
     if (!g) {
-      if (!tgt) {
-        this.tally.far++;
-        this.reachPulse = 1;
-        this.showToast('离荷叶和岸边太远，先游近一点');
-        this.game.audio.play('ui_error', { volume: 0.5 });
-        return;
-      }
-      this.gauge = { t: 0 };
-      this.game.audio.play('ui_tap', { volume: 0.7 });
+      this.tally.far++;
+      this.reachPulse = 1;
+      this.showToast('离荷叶和岸边太远，先游近一点');
+      this.game.audio.play('ui_error', { volume: 0.5 });
       return;
     }
     this.gauge = null;
@@ -1091,11 +1123,11 @@ export class PlayScene implements Scene {
   }
 
   private swimHint() {
-    this.showHint('swim', '掉水里了！按住【轮盘】游动', { dur: 5, sub: '点屏幕出指针，指到绿色再点一下，跳上最近的荷叶或岸边', warn: true, again: true });
+    this.showHint('swim', '掉水里了！按住【轮盘】游动', { dur: 5, sub: '游近荷叶或岸边会出现指针，指到绿色时点一下', warn: true, again: true });
   }
 
   private climbHint() {
-    this.showHint('climb', '点屏幕出【指针】，指到绿色再点一下', { dur: 5, sub: '会跳上最近的荷叶或岸边；点偏了只会原地蹦一下' });
+    this.showHint('climb', '指针出来了！指到【绿色】时点一下', { dur: 5, sub: '会跳上最近的荷叶或岸边；点偏了只会原地蹦一下' });
   }
 
   private endRescueLesson() {
@@ -1112,7 +1144,7 @@ export class PlayScene implements Scene {
   private updateFloaters(dt: number) {
     if (this.lessonAt !== null && this.time >= this.lessonAt) {
       this.lessonAt = null;
-      if (this.frog.state === 'swim') {
+      if (this.frog.state === 'swim' && !this.routeEnd) {
         this.stepBefore = this.step;
         this.setStep('rescue');
         this.aim = null;
@@ -1172,7 +1204,7 @@ export class PlayScene implements Scene {
     }
     if (!this.floaters.length) {
       this.doneHint('rescue');
-      if (f.state === 'swim') this.climbHint();
+      if (f.state === 'swim' && this.gauge) this.climbHint();
     }
   }
 
@@ -1187,7 +1219,7 @@ export class PlayScene implements Scene {
     this.showToast(`取件码 ${fl.o.code} 的包裹被水冲走了……`);
     if (!this.floaters.length) {
       this.doneHint('rescue');
-      if (this.frog.state === 'swim') this.climbHint();
+      if (this.frog.state === 'swim' && this.gauge) this.climbHint();
     }
   }
 
@@ -1486,21 +1518,22 @@ export class PlayScene implements Scene {
         this.honkT = 0.5;
         this.game.platform.vibrate(30);
       } else if (left >= 1 && left <= 6) au.play('ui_tick', { volume: 0.5 });
+      if (left === 5) this.driverSay(dealLine(HURRY_LINES, this.linesUsed));
     }
     // a frog in mid-air gets to land first
     if (this.callT <= 0 && (f.state === 'stand' || f.state === 'swim')) this.yank();
   }
 
-  /** Time's up (or swept away while the truck waits): the nearest truck hauls the frog aboard. */
-  private yank() {
+  /** Time's up (or swept away while the truck waits, or the route is over): the truck hauls the frog aboard. */
+  private yank(why: 'call' | 'route' = 'call') {
     const f = this.frog;
     if (f.state === 'board') return;
-    this.log('yank', { state: f.state, on: f.on?.kind ?? null });
+    this.log('yank', { state: f.state, on: f.on?.kind ?? null, why });
     this.endSwim('yank');
     const t = this.lv.truck;
     if (f.state === 'swim') this.leaveWater();
     this.hint = null;
-    this.showToast('时间到！被运输车一把拽了回去');
+    this.showToast(why === 'route' ? '下班时间到！被运输车拽回去' : '时间到！被运输车一把拽了回去');
     this.runToTruck(t, f.x, f.y, true);
     // the photo catches it at the top of the arc
     this.queueShot('yank', '被拽回车上！', 6, LASSO_T + TUG_T - f.board!.t + YANK_T * 0.45);
@@ -1527,13 +1560,116 @@ export class PlayScene implements Scene {
     this.game.audio.play('coin', { delay: 0.2, volume: 0.7 });
   }
 
-  /** Nothing left on the trucks or in the bag: landing on a truck ends the day early. */
+  /** The driver shouts something from the cab, with a honk. */
+  private driverSay(text: string, dur = 2.8) {
+    this.driver = { text, t: 0, dur };
+    this.honkT = 0.5;
+    this.game.audio.play('truck_horn', { volume: 0.7, rate: 1.1 });
+  }
+
+  /** The last seconds of the route with the frog off the truck: the driver calls it back, then honks the count down. */
+  private updateHurry() {
+    if (this.callT !== null || this.routeEnd || this.frozen()) return;
+    const f = this.frog;
+    const left = (this.cfg.length + this.camY) / this.cfg.speed;
+    const n = Math.ceil(left);
+    const tick = n < this.hurryN;
+    this.hurryN = n;
+    if (left > HURRY_AT || (f.state === 'stand' && f.on?.kind === 'truck') || f.state === 'board') return;
+    if (!this.hurried) {
+      this.hurried = true;
+      this.log('hurry', { state: f.state, on: f.on?.kind ?? null });
+      this.driverSay(dealLine(HURRY_LINES, this.linesUsed));
+      this.showHint('call', '快到站了！【跳回运输车】', { dur: 4, sub: '到站还没上车，会被绳子拽回去', warn: true, again: true });
+    } else if (tick && n >= 1 && n <= 3) {
+      this.game.audio.play('truck_horn', { rate: 1 + (3 - n) * 0.06 });
+      this.honkT = 0.5;
+      this.game.platform.vibrate(30);
+    }
+  }
+
+  /** The route is over: the river stops. Aboard, the frog drives home; anywhere else it gets hauled in first. */
+  private arrive() {
+    const f = this.frog;
+    this.routeEnd = true;
+    this.callT = null;
+    this.aim = null;
+    this.stopCharge();
+    this.hint = null;
+    this.log('route_end', { state: f.state, on: f.on?.kind ?? null });
+    if (!(f.state === 'stand' && f.on?.kind === 'truck') && f.state !== 'board') this.driverSay('到站啦！拽你回来！', 2);
+  }
+
+  /** At the end of the route, a frog off the truck is lassoed as soon as it's on something or in the water. */
+  private haulIn() {
+    const f = this.frog;
+    if (this.cod) return;
+    if (f.state === 'swim' || (f.state === 'stand' && f.on?.kind !== 'truck')) this.yank('route');
+  }
+
+  /** Sitting on the truck too long with work left: a honk, then the driver kicks the frog onto the nearest pad. */
+  private updateIdle(dt: number) {
+    const f = this.frog;
+    const onTruck = f.state === 'stand' && f.on?.kind === 'truck';
+    const work = this.bag.length > 0 || this.cargo().length > 0;
+    if (!onTruck || this.step !== null || this.frozen() || this.callT !== null || this.routeEnd || !work || this.dizzyT > 0) {
+      this.idleT = 0;
+      this.idleWarned = false;
+      return;
+    }
+    // winding up a jump is getting on with it
+    if (this.aim) return;
+    this.idleT += dt;
+    if (!this.idleWarned && this.idleT >= IDLE_WARN) {
+      this.idleWarned = true;
+      this.driverSay('喂，该下车干活了！', 2.2);
+      this.game.platform.vibrate(30);
+    }
+    if (this.idleT >= IDLE_KICK) this.kickOff();
+  }
+
+  private kickOff() {
+    const f = this.frog;
+    this.idleT = 0;
+    this.idleWarned = false;
+    // the nearest pad on screen, preferably in the middle so the convoy doesn't start rushing
+    const pads = this.lv.plats.filter((p) => p.kind === 'lily' && this.sy(p.y) > this.game.safeT + 170 && this.sy(p.y) < this.H * 0.75);
+    const mid = pads.filter((p) => this.sy(p.y) > this.H * TUNING.rushRelease - 40);
+    const pool = mid.length ? mid : pads;
+    if (!pool.length) return;
+    const p = pool.reduce((a, b) => (Math.hypot(a.x - f.x, a.y - f.y) <= Math.hypot(b.x - f.x, b.y - f.y) ? a : b));
+    this.tally.kicked++;
+    this.log('kicked', { d: Math.round(Math.hypot(p.x - f.x, p.y - f.y)) });
+    this.aim = null;
+    this.stopCharge();
+    this.driverSay(dealLine(KICK_LINES, this.linesUsed), 3);
+    const t = f.on!;
+    t.press = 0.6;
+    const x1 = p.x + (Math.random() - 0.5) * p.rx * 0.4, y1 = p.y + (Math.random() - 0.5) * p.ry * 0.3;
+    const dist = Math.hypot(x1 - f.x, y1 - f.y);
+    f.state = 'jump';
+    f.on = null;
+    f.settle = null;
+    f.jump = { x0: f.x, y0: f.y, x1, y1, t: 0, T: KICK_T, H: 150 + dist * 0.15, dist, to: p, how: 'jump', spin: true };
+    this.fx.push({ kind: 'dust', x: f.x, y: f.y, t: 0, dur: 0.5, size: 0.8 });
+    this.fx.push({ kind: 'say', x: 0, y: 0, t: 0, dur: 0.9, label: '哎哟！' });
+    this.shakeT = 0.15;
+    const au = this.game.audio;
+    au.play('parcel_place', { volume: 0.9, rate: 0.6 });
+    au.play('jump_whoosh', { volume: 0.8, delay: 0.05 });
+    au.play('frog_croak', { volume: 0.8, rate: 1.5, delay: 0.1 });
+    this.game.platform.vibrate(50);
+    this.showHint('kick', '在车上待太久，被司机【踢下车】了！', { dur: 4.5, sub: '拿好包裹就出发，别在车上发呆' });
+    this.queueShot('kick', '被司机一脚踢下车！', 7, KICK_T * 0.45);
+  }
+
+  /** Nothing left on the trucks or in the bag (or the route is over): landing on a truck ends the day. */
   private checkOffwork() {
     const f = this.frog;
     if (f.state !== 'stand' || f.on?.kind !== 'truck' || f.settle || this.step === 'intro') return;
     // hauled aboard: a moment to see stars before driving off
     if (this.dizzyT > DIZZY_T - 0.9) return;
-    if (this.bag.length || this.floaters.length || this.tongue || this.lv.orders.some((o) => o.state === 'pool')) return;
+    if (!this.routeEnd && (this.bag.length || this.floaters.length || this.tongue || this.lv.orders.some((o) => o.state === 'pool'))) return;
     const t = f.on;
     this.ended = 'off';
     this.callT = null;
@@ -1600,7 +1736,7 @@ export class PlayScene implements Scene {
   private finish() {
     if (!this.ended || this.leaving) return;
     this.leaving = true;
-    this.log('run_end', this.summary(this.ended));
+    this.log('run_end', this.summary(this.routeEnd ? 'done' : this.ended));
     for (const o of this.lv.orders) {
       if (o.state === 'pool' || o.state === 'bag') o.state = 'missed';
       else if (o.state === 'float') o.state = 'wet';
@@ -1891,7 +2027,7 @@ export class PlayScene implements Scene {
       this.tapFloater(fl);
       return;
     }
-    if (f.state === 'stand' && !this.aim && this.tiredT <= 0) {
+    if (f.state === 'stand' && !this.aim && this.tiredT <= 0 && !this.routeEnd) {
       this.aim = { id, sx: x, sy: y, x, y, t: 0 };
       this.exhaust();
     }
@@ -2333,6 +2469,7 @@ export class PlayScene implements Scene {
     }
     this.drawPuffs(ctx);
     this.drawDizzy(ctx);
+    this.drawDriver(ctx);
     this.drawLeapTarget(ctx);
     this.drawGauge(ctx);
   }
@@ -2727,6 +2864,40 @@ export class PlayScene implements Scene {
     }
   }
 
+  /** The driver's shout: a bubble out of the cab window, kept on screen. */
+  private drawDriver(ctx: Ctx) {
+    const d = this.driver;
+    if (!d) return;
+    const t = this.lv.truck;
+    const pop = easeOutBack(Math.min(1, d.t / 0.2));
+    const a = d.t > d.dur - 0.3 ? (d.dur - d.t) / 0.3 : 1;
+    ctx.save();
+    ctx.font = font(30, true);
+    const w = ctx.measureText(d.text).width + 44;
+    const cx = t.x - 60, cy = this.sy(t.y) - 120;
+    const bx = clamp(cx - w / 2 - 30, w / 2 + 12, 738 - w / 2), by = Math.max(this.game.safeT + 130, cy - 110);
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.translate(bx, by);
+    ctx.scale(pop, pop);
+    // tail toward the cab
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 70, 20);
+    ctx.lineTo(cx - bx, cy - by);
+    ctx.lineTo(w / 2 - 30, 20);
+    ctx.closePath();
+    ctx.fillStyle = P.white;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    panel(ctx, -w / 2, -30, w, 60, { r: 26, fill: P.white, shadow: false });
+    text(ctx, d.text, 0, 1, 30, { bold: true });
+    // who's talking
+    panel(ctx, -w / 2 - 6, -54, 76, 32, { r: 16, fill: P.blue, shadow: false });
+    text(ctx, '司机', -w / 2 + 32, -37, 20, { bold: true, color: P.white });
+    ctx.restore();
+  }
+
   private drawFrog(ctx: Ctx) {
     const sp = this.game.sprites;
     const f = this.frog;
@@ -2874,6 +3045,11 @@ export class PlayScene implements Scene {
         sx *= 0.9 + (k / 0.3) * 0.1;
       }
       rot = ((f.jump.x1 - f.jump.x0) / Math.max(1, f.jump.dist)) * 0.22;
+      // booted off the truck: tumbling backwards, all arms and legs
+      if (f.jump.spin) {
+        name = this.pose('frog_flung', 'frog_shock');
+        rot = -Math.PI * 2 * easeOutCubic(Math.min(1, k));
+      }
     }
     if (this.dizzyT > 0 && f.state === 'stand') {
       // landed hard at the end of the rope: wobbling, seeing stars
@@ -2883,7 +3059,7 @@ export class PlayScene implements Scene {
     const y = gy - f.z + sink + (wet ? 6 : 0);
     ctx.save();
     // flips turn about the frog's middle rather than its feet
-    const mid = b ? 50 : 0;
+    const mid = b || f.jump?.spin ? 50 : 0;
     ctx.translate(x + ox, y - mid);
     ctx.rotate(rot);
     if (flip) ctx.scale(-1, 1);
@@ -3898,7 +4074,7 @@ export class PlayScene implements Scene {
       } else {
         holes.push({ x: f.x - 80, y: fy - 80, w: 160, h: 120, round: true });
         line = segs('掉水里了！按住【轮盘】游动');
-        sub = '点屏幕出指针，指到绿色再点一下，跳上最近的荷叶或岸边';
+        sub = '游近荷叶或岸边会出现指针，指到绿色时点一下';
       }
       capY = fy < H * 0.45 ? H * 0.52 : this.game.safeT + 100;
       hand = { kind: 'stick', x: w.x, y: w.y };
