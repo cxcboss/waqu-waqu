@@ -94,6 +94,7 @@ function house(id: string, name: string, side: 1 | -1, doorColor: string, o: { t
 
 export const HOUSE_DEFS: HouseDef[] = [
   // The first three were painted before houses had doors that open; their doors are where the art has them.
+  // The rest: door = the leaf inside the frame, measured on the painted art (x center, y bottom, width, height).
   {
     id: 'teapot', name: '茶壶屋', rx: 150, ry: 64, b: [-170, -222, 182, 106], door: { x: 0, y: -2, w: 56, h: 74 }, doorColor: '#3F5E78',
     spot: [-96, -6], porch: [44, 30], plate: [107, -48], top: 210,
@@ -106,23 +107,23 @@ export const HOUSE_DEFS: HouseDef[] = [
     id: 'can', name: '罐头屋', rx: 120, ry: 52, b: [-160, -236, 160, 96], door: { x: -40, y: -6, w: 36, h: 58 }, doorColor: '#3F5E78',
     spot: [-88, 8], porch: [36, 28], plate: [95, -44], top: 230,
   },
-  house('pumpkin', '南瓜屋', -1, '#94683F'),
-  house('mushroom', '蘑菇屋', 1, '#C19468', { top: 250 }),
-  house('stump', '树桩屋', -1, '#7FB069'),
-  house('acorn', '橡果屋', 1, '#E9824E'),
-  house('barrel', '木桶屋', -1, '#3F5E78'),
-  house('milk', '牛奶盒屋', 1, '#E9824E', { tall: true, top: 330 }),
-  house('shell', '海螺屋', -1, '#5FA9A3'),
-  house('strawberry', '草莓屋', 1, '#F4E9C8'),
-  house('lantern', '灯笼屋', -1, '#E8B74A'),
-  house('beehive', '蜂巢屋', 1, '#94683F'),
-  house('mailbox', '邮筒屋', -1, '#E8B74A', { tall: true, top: 340 }),
-  house('basket', '野餐篮屋', 1, '#D9534F'),
-  house('gourd', '葫芦屋', -1, '#94683F', { tall: true, top: 370 }),
-  house('lighthouse', '灯塔屋', 1, '#3F5E78', { tall: true, top: 380 }),
-  house('clock', '闹钟屋', -1, '#3F5E78'),
-  house('spool', '线轴屋', 1, '#E9824E'),
-  house('books', '书堆屋', -1, '#4F8A4B', { tall: true, top: 320 }),
+  house('pumpkin', '南瓜屋', -1, '#94683F', { door: { x: -20, y: -4, w: 40, h: 63 } }),
+  house('mushroom', '蘑菇屋', 1, '#C19468', { top: 250, door: { x: 27, y: -2, w: 52, h: 72 } }),
+  house('stump', '树桩屋', -1, '#7FB069', { door: { x: -17, y: -4, w: 46, h: 65 } }),
+  house('acorn', '橡果屋', 1, '#E9824E', { door: { x: 36, y: 2, w: 43, h: 63 } }),
+  house('barrel', '木桶屋', -1, '#3F5E78', { door: { x: -20, y: 3, w: 42, h: 66 } }),
+  house('milk', '牛奶盒屋', 1, '#E9824E', { tall: true, top: 330, door: { x: 37, y: 4, w: 43, h: 60 } }),
+  house('shell', '海螺屋', -1, '#5FA9A3', { door: { x: -23, y: -3, w: 40, h: 58 } }),
+  house('strawberry', '草莓屋', 1, '#F4E9C8', { door: { x: 38, y: -1, w: 55, h: 68 } }),
+  house('lantern', '灯笼屋', -1, '#E8B74A', { door: { x: -25, y: -6, w: 52, h: 64 } }),
+  house('beehive', '蜂巢屋', 1, '#94683F', { door: { x: 30, y: -1, w: 45, h: 69 } }),
+  house('mailbox', '邮筒屋', -1, '#E8B74A', { tall: true, top: 340, door: { x: -27, y: -5, w: 54, h: 75 } }),
+  house('basket', '野餐篮屋', 1, '#D9534F', { door: { x: 33, y: 2, w: 45, h: 62 } }),
+  house('gourd', '葫芦屋', -1, '#94683F', { tall: true, top: 370, door: { x: -21, y: -1, w: 55, h: 71 } }),
+  house('lighthouse', '灯塔屋', 1, '#3F5E78', { tall: true, top: 380, door: { x: 23, y: -5, w: 39, h: 54 } }),
+  house('clock', '闹钟屋', -1, '#3F5E78', { door: { x: -25, y: -8, w: 40, h: 53 } }),
+  house('spool', '线轴屋', 1, '#E9824E', { door: { x: 34, y: -9, w: 43, h: 57 } }),
+  house('books', '书堆屋', -1, '#4F8A4B', { tall: true, top: 320, door: { x: -25, y: 4, w: 45, h: 59 } }),
 ];
 
 export const HOUSE: Record<string, HouseDef> = Object.fromEntries(HOUSE_DEFS.map((h) => [h.id, h]));

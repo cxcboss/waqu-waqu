@@ -64,3 +64,8 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - GitHub Pages：`npm run deploy`（scripts/deploy.sh，强推 gh-pages）。
 - Cloudflare Pages：`scripts/deploy-cf.sh`，项目名 `waqu-waqu`，凭据从环境变量 `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` 读，不要写进仓库。缓存规则在 `public/_headers`。
 - 加载页：`src/game/loading.ts`（贪吃蛙小游戏，素材加载完前显示，明确标注「加载中」）。
+
+## 美术状态（2026-10-23）
+- 已换进 AI 图：20 位居民 × 9 姿势、20 张头像、20 座房子（17 座新房子的门位置按画面量过，写在 cast.ts 的 door）、茶壶屋开门图 `door_teapot`。
+- 还没出图：另外 19 座房子的开门图（用代码画的暗门洞和摆门）、青蛙 15 个新状态（借旧青蛙图）。出了就放进 public/art/ 并写进 manifest.json。
+- 换图脚本在项目文件 wa-qu/art-pipeline/（round4.py 是这一轮的）。
