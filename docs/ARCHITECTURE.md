@@ -66,6 +66,6 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - 加载页：`src/game/loading.ts`（贪吃蛙小游戏，素材加载完前显示，明确标注「加载中」）。
 
 ## 美术状态（2026-10-23）
-- 已换进 AI 图：20 位居民 × 9 姿势、20 张头像、20 座房子（17 座新房子的门位置按画面量过，写在 cast.ts 的 door）、茶壶屋开门图 `door_teapot`。
-- 还没出图：另外 19 座房子的开门图（用代码画的暗门洞和摆门）、青蛙 15 个新状态（借旧青蛙图）。出了就放进 public/art/ 并写进 manifest.json。
-- 换图脚本在项目文件 wa-qu/art-pipeline/（round4.py 是这一轮的）。
+- 第四轮美术已全部换进：20 位居民 × 9 姿势、20 张头像、20 座房子、20 张开门图 `door_<房型>`、青蛙 15 个新状态（frog_land 等）。
+- 房子门位置（cast.ts 的 door）按画面量过（门扇内框）；开门图按已上线的关门房子对位后裁出门洞。
+- 换图脚本在项目文件 wa-qu/art-pipeline/（round4.py 居民/房子，round4b.py 开门图/青蛙，compress.py 压缩）。
