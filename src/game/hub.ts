@@ -147,8 +147,10 @@ export class HubScene implements Scene {
     const creekY = yAt(0.42);
     // Painted village (a dusk scene with the buildings' pads left empty): places go where the picture has them.
     const art = sp.has('hub_bg');
+    // tall phones stretch the picture a little more up and down than sideways, so both pads stay on screen
     const bgk = art ? Math.max(1, H / sp.get('hub_bg').h) : 1;
-    const at = (u: number, v: number) => ({ x: 375 + (u - 0.5) * 750 * bgk, y: v * sp.get('hub_bg').h * bgk });
+    const bgx = Math.min(bgk, 1.2);
+    const at = (u: number, v: number) => ({ x: 375 + (u - 0.5) * 750 * bgx, y: v * sp.get('hub_bg').h * bgk });
     let hq = { x: 215, y: yAt(0.31) };
     let shop = { x: 560, y: yAt(0.3) };
     let home = { x: 210, y: yAt(0.94) };
@@ -167,7 +169,7 @@ export class HubScene implements Scene {
       this.spots = { hq: at(0.4, 0.29), shop: at(0.8, 0.5), home: at(0.25, 0.585), work: at(0.46, 0.53) };
     }
 
-    if (art) sp.draw(ctx, 'hub_bg', 375 - (750 * bgk) / 2, 0, bgk);
+    if (art) sp.draw(ctx, 'hub_bg', 375 - (750 * bgx) / 2, 0, bgx, bgk);
     else if (sp.has('hub_bg')) {
       const bg = sp.get('hub_bg');
       const k = Math.max(1, H / bg.h);
