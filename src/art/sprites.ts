@@ -145,7 +145,6 @@ for (const [k, b] of [
 for (const [k, b] of [['scarf', [-68, -14, 68, 70]], ['bow', [-40, -24, 40, 24]], ['camera', [-44, -12, 44, 68]]] as const) def(`neck_${k}`, [...b], () => H.neck(k));
 for (const k of ['bag', 'shoe', 'fin']) def(`gear_${k}`, [-62, -64, 62, 64], () => H.gearIcon(k));
 /** Optional painted backgrounds; without them the screens draw their own. */
-paintedOnly('hub_bg', [0, 0, 1080, 1620]);
 paintedOnly('home_room', [0, 0, 1080, 1620]);
 paintedOnly('shop_room', [0, 0, 1080, 1620]);
 
@@ -159,9 +158,11 @@ for (const [name, b, s] of [
   ['hub_flowers_a', [-80, -100, 80, 0], K],
   ['hub_flowers_b', [-70, -110, 70, 0], K],
   ['hub_lamp', [-45, -240, 45, 0], K],
-  ['hub_hq_dusk', [-226, -410, 226, 0], K],
-  ['hub_shop_dusk', [-182, -366, 182, 0], K],
-  ['hub_home_dusk', [-186, -342, 186, 0], K],
+  ['hub_bg_day', [0, 0, 1080, 1620], K],
+  ['hub_bg_eve', [0, 0, 1080, 1620], K],
+  ['hub_hq_eve', [-226, -380, 226, 30], K],
+  ['hub_shop_eve', [-182, -340, 182, 26], K],
+  ['hub_home_eve', [-182, -314, 190, 28], K],
   ['owl_read', [-150, -320, 150, 6], K],
   ['owl_stamp', [-150, -320, 150, 6], K],
   ['owl_cheer', [-150, -320, 150, 6], K],

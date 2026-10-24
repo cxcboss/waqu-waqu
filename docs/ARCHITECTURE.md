@@ -71,7 +71,13 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - 换图脚本在项目文件 wa-qu/art-pipeline/（round4.py 居民/房子，round4b.py 开门图/青蛙，compress.py 压缩）。
 
 ## 美术状态（2026-10-24，第五轮场景新增）
-- 已换进：主页黄昏河湾整图（`hub_bg.jpg`，底图里自带小路、桥、茶壶家和一辆卡车；总部、福利社的黄昏版建筑叠在两块空地上，运输车图盖住底图里的卡车，主页用 `hotspot()` 给底图里的「我的家」和卡车做点击区）、猫头鹰 4 个姿势（总部按标签换）、总部 5 个标签图标、7 张职级工牌、22 枚成就勋章（`medal_<id>`，没拿到的用 `_off` 灰版）、4 个相框（竖版，挂墙时横着转 90°，见 `drawFrame`）、家的日夜窗户、信箱、账本、开门衣柜、8 件新家具（已进 `catalog.ts`）、福利社仓鼠 4 个表情、柜台、货架、特价牌、礼物盒、分类图标、装备 2–5 级图标 `gear_<id>_lv<n>`。
+- 已换进：主页河湾整图、猫头鹰 4 个姿势（总部按标签换）、总部 5 个标签图标、7 张职级工牌、22 枚成就勋章（`medal_<id>`，没拿到的用 `_off` 灰版）、4 个相框（竖版，挂墙时横着转 90°，见 `drawFrame`）、家的日夜窗户、信箱、账本、开门衣柜、8 件新家具（已进 `catalog.ts`）、福利社仓鼠 4 个表情、柜台、货架、特价牌、礼物盒、分类图标、装备 2–5 级图标 `gear_<id>_lv<n>`。
 - 都是 lazy 精灵（`sprites.ts` 里「Scene art」那一段），场景构造时 `ensure()`，没图自动回退到原来的代码绘制。
-- 还没有：白天版主页（`hub_bg` 白天、`hub_hq/hub_shop/hub_home` 三栋白天建筑）、帽子/围巾/原 8 件家具/邮差包等装备 1 级图标（旧清单「主页和个人系统」32 张还没出图）；新出的 `hub_tree_*`、`hub_flowers_*`、`hub_bridge`、`hub_lamp`、`hub_signpost` 以及 `hub_*_dusk` 里的 `hub_home_dusk` 已入库但暂未使用（底图已自带这些）。
+- 第五轮已入库但暂未使用：`hub_tree_*`、`hub_flowers_*`、`hub_bridge`、`hub_lamp`、`hub_signpost`（第六轮底图自带这些）。
+
+## 美术状态（2026-10-24，第六轮补全缺失）
+- 主页：`hub_bg_day.jpg` / `hub_bg_eve.jpg`（1024×1536，三块空地）+ 三栋建筑 `hub_hq/hub_shop/hub_home` 和 `_eve` 夜景版。`HubScene.night`（19:00–6:00，与家里窗户同一规则）选日夜；建筑用 `place()` 叠在空地上（位置是底图比例 `at(u,v)`，改底图要重量），运输车由代码画（`drawTruckBase` + `truck_blue`，缩放 0.62）。旧的 `hub_bg.jpg` 和 `hub_*_dusk` 已删除。
+- 我的家：`home_room.jpg` 房间底图，`home_bed/wardrobe/desk` 和原 8 件家具 `deco_*` 换成画好的。
+- 衣帽装备：8 顶帽子、3 件围巾/领结/相机、邮差包/弹力鞋/脚蹼 1 级图标（`gear_bag/shoe/fin`，`gearIcon` 在 1 级自动用它）。
+- 换图脚本：`wa-qu/art-pipeline/round6.py`（原图先在本机裁到非透明边并缩到 800px 再传，因为 Mac 文件夹直传 2–3MB 大图会超时；背景存 jpg）。
 - 换图脚本：项目文件 `wa-qu/art-pipeline/round5.py`（裁掉透明边、按 final_size 放进画框、256 色 PNG、勋章另出灰版）。

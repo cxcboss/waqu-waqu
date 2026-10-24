@@ -28,6 +28,8 @@ export class HubScene implements Scene {
   /** The frog hopping toward where it was sent; the screen changes when it lands. */
   private hop: { to: Place; t: number; x0: number; y0: number; x1: number; y1: number; done?: boolean } | null = null;
   private joy = 0;
+  /** After 19:00 and before 6:00 the village is lit by the evening sun (same rule as the room's window). */
+  private night = new Date().getHours() >= 19 || new Date().getHours() < 6;
   private profile: { t: number } | null = null;
   private spots: Record<Place, { x: number; y: number }> = { hq: { x: 0, y: 0 }, shop: { x: 0, y: 0 }, home: { x: 0, y: 0 }, work: { x: 0, y: 0 } };
   private frogAt = { x: 375, y: 0 };
@@ -38,7 +40,7 @@ export class HubScene implements Scene {
   constructor(private game: Game) {
     game.audio.setMusic('bgm_title');
     game.tm.day = null;
-    void game.sprites.ensure(['hub_hq_dusk', 'hub_shop_dusk', 'hub_home_dusk']);
+    void game.sprites.ensure([`hub_bg_${this.night ? 'eve' : 'day'}`, ...['hq', 'shop', 'home'].map((k) => `hub_${k}${this.night ? '_eve' : ''}`)]);
     game.tm.log('hub', { unlocked: game.save.day, coins: game.save.coins, notes: unreadNotes(game.save) });
   }
 
@@ -145,12 +147,13 @@ export class HubScene implements Scene {
     const sh = y1 - y0;
     const yAt = (k: number) => y0 + sh * k;
     const creekY = yAt(0.42);
-    // Painted village (a dusk scene with the buildings' pads left empty): places go where the picture has them.
-    const art = sp.has('hub_bg');
+    // Painted village (day or evening, three empty pads for the buildings): places go where the picture has them.
+    const bgName = `hub_bg_${this.night ? 'eve' : 'day'}`, sfx = this.night ? '_eve' : '';
+    const art = sp.has(bgName);
     // tall phones stretch the picture a little more up and down than sideways, so both pads stay on screen
-    const bgk = art ? Math.max(1, H / sp.get('hub_bg').h) : 1;
+    const bgk = art ? Math.max(1, H / sp.get(bgName).h) : 1;
     const bgx = Math.min(bgk, 1.2);
-    const at = (u: number, v: number) => ({ x: 375 + (u - 0.5) * 750 * bgx, y: v * sp.get('hub_bg').h * bgk });
+    const at = (u: number, v: number) => ({ x: 375 + (u - 0.5) * 750 * bgx, y: v * sp.get(bgName).h * bgk });
     let hq = { x: 215, y: yAt(0.31) };
     let shop = { x: 560, y: yAt(0.3) };
     let home = { x: 210, y: yAt(0.94) };
@@ -161,34 +164,37 @@ export class HubScene implements Scene {
       home: { x: home.x + 70, y: home.y + 10 }, work: { x: truck.x - 70, y: truck.y + 40 },
     };
     if (art) {
-      hq = at(0.4, 0.262);
-      shop = at(0.835, 0.462);
-      home = at(0.2, 0.545);
-      truck = at(0.488, 0.449);
-      this.frogAt = at(0.4, 0.665);
-      this.spots = { hq: at(0.4, 0.29), shop: at(0.8, 0.5), home: at(0.25, 0.585), work: at(0.46, 0.53) };
+      hq = at(0.42, 0.245);
+      shop = at(0.81, 0.435);
+      home = at(0.185, 0.5);
+      truck = at(0.5, 0.5);
+      this.frogAt = at(0.34, 0.72);
+      this.spots = { hq: at(0.42, 0.285), shop: at(0.78, 0.49), home: at(0.25, 0.54), work: at(0.42, 0.56) };
     }
 
-    if (art) sp.draw(ctx, 'hub_bg', 375 - (750 * bgx) / 2, 0, bgx, bgk);
-    else if (sp.has('hub_bg')) {
-      const bg = sp.get('hub_bg');
-      const k = Math.max(1, H / bg.h);
-      sp.draw(ctx, 'hub_bg', 375 - (750 * k) / 2, 0, k);
-    } else this.drawGround(ctx, creekY, truck.x, y0, H);
+    if (art) sp.draw(ctx, bgName, 375 - (750 * bgx) / 2, 0, bgx, bgk);
+    else this.drawGround(ctx, creekY, truck.x, y0, H);
 
     const unread = unreadNotes(s) > 0;
     const shopNew = this.affordable();
     const homeNew = s.letters.length > s.seen.letters;
     if (art) {
-      if (sp.has('hub_hq_dusk')) this.place(ctx, 'hq', 'hub_hq_dusk', hq.x, hq.y, '河湾总部', '送单 · 日志 · 相册', unread, 0.74);
+      if (sp.has(`hub_hq${sfx}`)) this.place(ctx, 'hq', `hub_hq${sfx}`, hq.x, hq.y, '河湾总部', '送单 · 日志 · 相册', unread, 0.8);
       else this.hotspot(ctx, 'hq', hq.x, hq.y - 80, 230, 200, '河湾总部', '送单 · 日志 · 相册', unread);
-      if (sp.has('hub_shop_dusk')) this.place(ctx, 'shop', 'hub_shop_dusk', shop.x, shop.y, '福利社', '装备 · 衣帽 · 家居', shopNew, 0.95);
+      if (sp.has(`hub_shop${sfx}`)) this.place(ctx, 'shop', `hub_shop${sfx}`, shop.x, shop.y, '福利社', '装备 · 衣帽 · 家居', shopNew, 0.9);
       else this.hotspot(ctx, 'shop', shop.x, shop.y - 100, 250, 220, '福利社', '装备 · 衣帽 · 家居', shopNew);
-      this.hotspot(ctx, 'home', home.x, home.y, 270, 250, '我的家', '房间 · 照片墙 · 记录', homeNew);
-      // the picture's own truck is covered by the blue courier truck, which idles on the road
+      if (sp.has(`hub_home${sfx}`)) this.place(ctx, 'home', `hub_home${sfx}`, home.x, home.y, '我的家', '房间 · 照片墙 · 记录', homeNew, 0.9);
+      else this.hotspot(ctx, 'home', home.x, home.y - 80, 270, 250, '我的家', '房间 · 照片墙 · 记录', homeNew);
+      // the courier truck waits on the road
       const ty = truck.y + Math.sin(this.t * 13) * 0.8;
-      sp.draw(ctx, 'truck_blue', truck.x - 3, ty + 6, 0.82);
-      this.hotspot(ctx, 'work', truck.x, truck.y - 20, 150, 210, '运输车', `去上班 · 第${clamp(s.day, 1, DAYS.length)}天`, false, 210);
+      ctx.save();
+      ctx.translate(truck.x, ty);
+      ctx.scale(0.62, 0.62);
+      drawTruckBase(ctx, 0, 0, this.t * 60);
+      sp.draw(ctx, 'truck_blue', 0, 0, 0.82);
+      ctx.restore();
+      this.sign(ctx, 'work', truck.x - 105, truck.y + 62, '运输车', `去上班 · 第${clamp(s.day, 1, DAYS.length)}天`, false, 210);
+      this.taps.add('work', { x: truck.x - 60, y: truck.y - 80, w: 120, h: 140 });
     } else {
       // paths from the square to every place
       this.path(ctx, [[this.frogAt.x, this.frogAt.y], [300, creekY + 40], [hq.x + 40, hq.y + 30]]);
@@ -543,7 +549,7 @@ export class HubScene implements Scene {
     text(ctx, `入职 ${shortDate(s.since)} · ${s.log.length ? `已上班 ${s.career.runs} 天` : '今天第一天'}`, 577, top + 86, 20, { color: P.inkSoft });
 
     // village ribbon (the painted village needs no title)
-    if (sp.has('hub_bg')) return;
+    if (sp.has(`hub_bg_${this.night ? 'eve' : 'day'}`)) return;
     const ry = top + 154;
     ctx.save();
     ctx.translate(375, ry);
