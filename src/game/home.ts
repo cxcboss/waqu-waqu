@@ -1,6 +1,7 @@
 // The frog's home (我的家): its room with a photo wall for pictures kept from HQ, furniture bought at
 // the shop, the wardrobe, a desk with personal records and the money book, and the letters found.
 import { INK, P } from '../art/palette';
+import type { SpriteBank } from '../art/sprites';
 import { ellipse, roundRect, text, wrapText, type Rect } from '../art/ui';
 import { clamp } from '../engine/math';
 import type { Ctx, ImageSource } from '../platform/types';
@@ -10,7 +11,7 @@ import { DAYS } from './config';
 import type { Game, Scene } from './game';
 import { HallScene } from './hall';
 import { HubScene } from './hub';
-import { Scroller, Taps, Toast, dialog, dot, drawDressedFrog, header, pill, shortDate, tabs } from './menu';
+import { Scroller, Taps, Toast, dialog, dot, drawDressedFrog, header, iconAt, pill, shortDate, tabs } from './menu';
 import { ShopScene } from './shop';
 
 type Modal =
@@ -34,6 +35,8 @@ export class HomeScene implements Scene {
 
   constructor(private game: Game) {
     game.audio.setMusic('bgm_hq');
+    setFrameArt(game.sprites);
+    void game.sprites.ensure(['home_window_day', 'home_window_night', 'home_mailbox', 'home_ledger', 'home_wardrobe_open', ...ITEMS.map((i) => i.id)]);
     game.tm.log('home', { frames: game.save.room.frames.filter(Boolean).length, decos: this.decos().length });
   }
 
@@ -196,8 +199,17 @@ export class HomeScene implements Scene {
     // wall things: window, photo wall, shelf, clock, lights (hung down from the wainscot)
     const row2 = floorY - 230, row1 = row2 - 170;
     const wy = row1 - 80;
-    this.drawWindow(ctx, 545, wy, 170, 220);
-    if (this.shown('deco_fish')) sp.draw(ctx, 'deco_fish', 630, wy + 226);
+    const night = new Date().getHours() >= 19 || new Date().getHours() < 6;
+    const win = night ? 'home_window_night' : 'home_window_day';
+    if (sp.has(win)) {
+      // painted window with its shutters; the sill is the bottom edge of the picture
+      sp.draw(ctx, win, 630, wy + 122, 1.0);
+      if (this.shown('deco_curtain')) iconAt(ctx, sp, 'deco_curtain', 630, wy + 118, 250, 0.96);
+      if (this.shown('deco_fish')) sp.draw(ctx, 'deco_fish', 630, wy + 236);
+    } else {
+      this.drawWindow(ctx, 545, wy, 170, 220);
+      if (this.shown('deco_fish')) sp.draw(ctx, 'deco_fish', 630, wy + 226);
+    }
     this.slots = [];
     for (let i = 0; i < 6; i++) {
       const cx = [100, 236, 372][i % 3], cy = i < 3 ? row1 : row2;
@@ -209,6 +221,8 @@ export class HomeScene implements Scene {
       sp.draw(ctx, 'deco_clock', 487, row1 + 20, 1, 1, sw * 0.1);
     }
     if (this.shown('deco_shelf')) sp.draw(ctx, 'deco_shelf', 470, floorY - 80);
+    if (this.shown('deco_painting')) iconAt(ctx, sp, 'deco_painting', 487, row2 - 42, 124);
+    if (this.shown('deco_flag')) iconAt(ctx, sp, 'deco_flag', 70, floorY - 120, 116);
 
     // floor things, back to front
     const bedY = Math.min(roomBot - 30, floorY + 470);
@@ -221,12 +235,24 @@ export class HomeScene implements Scene {
         text(ctx, '♪', 114 - k * 30, floorY - 54 - k * 60, 26, { color: P.orangeDeep, alpha: 1 - k });
       }
     }
+    if (this.shown('deco_trophy')) iconAt(ctx, sp, 'deco_trophy', 142, floorY + 215, 150);
+    if (this.shown('deco_globe')) iconAt(ctx, sp, 'deco_globe', 548, floorY + 300, 124);
+    if (this.shown('deco_cushion')) iconAt(ctx, sp, 'deco_cushion', 255, floorY + 345, 104);
+    if (this.shown('deco_hammock')) iconAt(ctx, sp, 'deco_hammock', 470, bedY - 62, 220);
+    if (this.shown('deco_teatable')) iconAt(ctx, sp, 'deco_teatable', 345, floorY + 405, 120);
     const desk = { x: 420, y: floorY + 110 };
     sp.draw(ctx, 'home_desk', desk.x, desk.y);
     if (this.shown('deco_lamp')) sp.draw(ctx, 'deco_lamp', desk.x - 96, desk.y - 118);
     this.taps.add('records', { x: desk.x - 111, y: desk.y - 160, w: 150, h: 160 });
     this.taps.add('letters', { x: desk.x + 10, y: desk.y - 160, w: 100, h: 160 });
     if (s.letters.length > s.seen.letters) dot(ctx, desk.x + 82, desk.y - 156);
+    // the mailbox by the door: the same letters as the desk, with a flag that waves when something new came
+    if (sp.has('home_mailbox')) {
+      const mx = 690, my = floorY + 335;
+      iconAt(ctx, sp, 'home_mailbox', mx, my - 56, 118);
+      this.taps.add('letters', { x: mx - 46, y: my - 126, w: 92, h: 130 });
+      if (s.letters.length > s.seen.letters) dot(ctx, mx + 30, my - 118);
+    }
     sp.draw(ctx, 'home_wardrobe', 646, floorY + 96);
     this.taps.add('wardrobe', { x: 566, y: floorY + 96 - 290, w: 160, h: 290 });
     this.drawFrog(ctx, 375, floorY + 210);
@@ -330,7 +356,7 @@ export class HomeScene implements Scene {
   private drawSlot(ctx: Ctx, i: number, cx: number, cy: number) {
     const s = this.game.save;
     const f = s.room.frames[i];
-    const w = 126, h = 104;
+    const w = 134, h = 110;
     const r = { x: cx - w / 2 - 6, y: cy - h / 2 - 20, w: w + 12, h: h + 30 };
     const down = this.taps.add(`slot${i}`, r, 4);
     this.slots[i] = r;
@@ -506,7 +532,8 @@ export class HomeScene implements Scene {
     ctx.fillStyle = P.tealLight;
     ctx.fill();
     const hop = this.joy > 0 ? Math.sin((1 - this.joy / 0.6) * Math.PI) * 30 : 0;
-    drawDressedFrog(ctx, g.sprites, s.wear, this.joy > 0 ? 'frog_happy' : 'frog_stand', 375, d.y + 320 - hop, 1.05);
+    iconAt(ctx, g.sprites, 'home_wardrobe_open', d.x + d.w - 150, d.y + 168, 300);
+    drawDressedFrog(ctx, g.sprites, s.wear, this.joy > 0 ? 'frog_happy' : 'frog_stand', d.x + 190, d.y + 320 - hop, 1.05);
     let y = d.y + 380;
     for (const [slot, label, kind] of [['hat', '帽子', 'hat'], ['neck', '脖子上', 'neck']] as const) {
       text(ctx, label, d.x + 40, y, 26, { bold: true, align: 'left' });
@@ -542,6 +569,7 @@ export class HomeScene implements Scene {
     const s = g.save;
     const k = s.career;
     text(ctx, '个人记录', d.x + 40, d.y + 48, 34, { bold: true, align: 'left' });
+    if (m.tab === 1) iconAt(ctx, g.sprites, 'home_ledger', d.x + d.w - 235, d.y + 50, 96);
     tabs(ctx, this.taps, 'rt', d.x + 30, d.y + 100, d.w - 60, ['我的记录', '账本'], m.tab);
     ctx.fillStyle = P.paper;
     ctx.fillRect(d.x + 24, d.y + 160, d.w - 48, 4);
@@ -689,8 +717,38 @@ export function drawPhoto(ctx: Ctx, img: ImageSource | null, x: number, y: numbe
   ctx.strokeRect(x, y, w, h);
 }
 
+let frameSp: SpriteBank | null = null;
+/** Lets drawFrame use the painted frames once the shop sprites are loaded. */
+export function setFrameArt(sp: SpriteBank) {
+  frameSp = sp;
+  void sp.ensure(Object.keys(FRAME_OPEN));
+}
+/** Where the picture shows in each painted frame (fractions of the portrait art: x0, y0, x1, y1). */
+const FRAME_OPEN: Record<string, [number, number, number, number]> = {
+  frame_wood: [0.18, 0.138, 0.806, 0.868], frame_lily: [0.083, 0.082, 0.915, 0.939],
+  frame_shell: [0.2, 0.183, 0.822, 0.861], frame_gold: [0.185, 0.182, 0.813, 0.898],
+};
+
 /** A photo in one of the frame styles from the shop. */
 export function drawFrame(ctx: Ctx, style: string, x: number, y: number, w: number, h: number, img: ImageSource | null) {
+  const open = FRAME_OPEN[style];
+  if (open && frameSp?.has(style)) {
+    // the painted frames are portrait; hang them on their side so landscape photos fit
+    const [x0, y0, x1, y1] = open;
+    ctx.save();
+    ctx.fillStyle = 'rgba(74,59,48,0.18)';
+    roundRect(ctx, x + 3, y + 5, w, h, 6);
+    ctx.fill();
+    ctx.restore();
+    drawPhoto(ctx, img, x + w * y0, y + h * (1 - x1), w * (y1 - y0), h * (x1 - x0));
+    const s = frameSp.get(style);
+    ctx.save();
+    ctx.translate(x + w / 2, y + h / 2);
+    ctx.rotate(-Math.PI / 2);
+    frameSp.draw(ctx, style, 0, 0, h / s.w, w / s.h);
+    ctx.restore();
+    return;
+  }
   const b = Math.max(6, Math.min(w, h) * 0.12);
   const look: Record<string, [string, string]> = {
     frame_wood: [P.wood, P.woodDeep], frame_lily: [P.lily, P.lilyDeep], frame_shell: ['#F4D9CF', '#D9A898'], frame_gold: [P.gold, P.mustard],

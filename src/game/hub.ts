@@ -38,6 +38,7 @@ export class HubScene implements Scene {
   constructor(private game: Game) {
     game.audio.setMusic('bgm_title');
     game.tm.day = null;
+    void game.sprites.ensure(['hub_hq_dusk', 'hub_shop_dusk', 'hub_home_dusk']);
     game.tm.log('hub', { unlocked: game.save.day, coins: game.save.coins, notes: unreadNotes(game.save) });
   }
 
@@ -144,48 +145,73 @@ export class HubScene implements Scene {
     const sh = y1 - y0;
     const yAt = (k: number) => y0 + sh * k;
     const creekY = yAt(0.42);
-    const hq = { x: 215, y: yAt(0.31) };
-    const shop = { x: 560, y: yAt(0.3) };
-    const home = { x: 210, y: yAt(0.94) };
-    const truck = { x: 658, y: yAt(0.8) };
+    // Painted village (a dusk scene with the buildings' pads left empty): places go where the picture has them.
+    const art = sp.has('hub_bg');
+    const bgk = art ? Math.max(1, H / sp.get('hub_bg').h) : 1;
+    const at = (u: number, v: number) => ({ x: 375 + (u - 0.5) * 750 * bgk, y: v * sp.get('hub_bg').h * bgk });
+    let hq = { x: 215, y: yAt(0.31) };
+    let shop = { x: 560, y: yAt(0.3) };
+    let home = { x: 210, y: yAt(0.94) };
+    let truck = { x: 658, y: yAt(0.8) };
     this.frogAt = { x: 390, y: yAt(0.62) };
     this.spots = {
       hq: { x: hq.x + 10, y: hq.y + 20 }, shop: { x: shop.x - 10, y: shop.y + 20 },
       home: { x: home.x + 70, y: home.y + 10 }, work: { x: truck.x - 70, y: truck.y + 40 },
     };
+    if (art) {
+      hq = at(0.4, 0.262);
+      shop = at(0.835, 0.462);
+      home = at(0.2, 0.545);
+      truck = at(0.488, 0.449);
+      this.frogAt = at(0.4, 0.665);
+      this.spots = { hq: at(0.4, 0.29), shop: at(0.8, 0.5), home: at(0.25, 0.585), work: at(0.46, 0.53) };
+    }
 
-    if (sp.has('hub_bg')) {
+    if (art) sp.draw(ctx, 'hub_bg', 375 - (750 * bgk) / 2, 0, bgk);
+    else if (sp.has('hub_bg')) {
       const bg = sp.get('hub_bg');
       const k = Math.max(1, H / bg.h);
       sp.draw(ctx, 'hub_bg', 375 - (750 * k) / 2, 0, k);
     } else this.drawGround(ctx, creekY, truck.x, y0, H);
 
-    // paths from the square to every place
-    this.path(ctx, [[this.frogAt.x, this.frogAt.y], [300, creekY + 40], [hq.x + 40, hq.y + 30]]);
-    this.path(ctx, [[this.frogAt.x, this.frogAt.y], [470, creekY + 30], [shop.x - 30, shop.y + 30]]);
-    this.path(ctx, [[this.frogAt.x, this.frogAt.y], [300, yAt(0.8)], [home.x + 60, home.y + 20]]);
-    this.path(ctx, [[this.frogAt.x, this.frogAt.y], [520, yAt(0.74)], [truck.x - 80, truck.y + 30]]);
-    this.bridge(ctx, 372, creekY);
-
-    // trees and flowers around the village
-    for (const [x, k, sc] of [[46, 0.18, 0.8], [700, 0.16, 0.7], [470, 0.12, 0.6], [56, 0.62, 0.9], [560, 0.98, 0.75], [400, 1.02, 0.6]] as const) this.tree(ctx, x, yAt(k), sc);
-    for (let i = 0; i < 16; i++) this.flower(ctx, (i * 173 + 40) % 600 + 20, yAt(0.48 + ((i * 37) % 50) / 100), i);
-
-    // the places, drawn back to front
     const unread = unreadNotes(s) > 0;
     const shopNew = this.affordable();
     const homeNew = s.letters.length > s.seen.letters;
-    this.place(ctx, 'hq', 'hub_hq', hq.x, hq.y, '河湾总部', '送单 · 日志 · 相册', unread);
-    this.place(ctx, 'shop', 'hub_shop', shop.x, shop.y, '福利社', '装备 · 衣帽 · 家居', shopNew);
-    this.smoke(ctx, home.x + 104 * K, home.y - 300 * K);
-    this.place(ctx, 'home', 'hub_home', home.x, home.y, '我的家', '房间 · 照片墙 · 记录', homeNew);
-    // the truck waiting on the road
-    const ty = truck.y + Math.sin(this.t * 13) * 0.8;
-    drawTruckBase(ctx, truck.x, ty, this.t * 60);
-    sp.draw(ctx, 'truck_blue', truck.x, ty, 0.82);
-    this.sign(ctx, 'work', 750 - 20 - 210, truck.y + 118, '运输车', `去上班 · 第${clamp(s.day, 1, DAYS.length)}天`, false, 210);
-    const wr = { x: truck.x - 90, y: truck.y - 120, w: 180, h: 240 };
-    this.taps.add('work', wr);
+    if (art) {
+      if (sp.has('hub_hq_dusk')) this.place(ctx, 'hq', 'hub_hq_dusk', hq.x, hq.y, '河湾总部', '送单 · 日志 · 相册', unread, 0.74);
+      else this.hotspot(ctx, 'hq', hq.x, hq.y - 80, 230, 200, '河湾总部', '送单 · 日志 · 相册', unread);
+      if (sp.has('hub_shop_dusk')) this.place(ctx, 'shop', 'hub_shop_dusk', shop.x, shop.y, '福利社', '装备 · 衣帽 · 家居', shopNew, 0.95);
+      else this.hotspot(ctx, 'shop', shop.x, shop.y - 100, 250, 220, '福利社', '装备 · 衣帽 · 家居', shopNew);
+      this.hotspot(ctx, 'home', home.x, home.y, 270, 250, '我的家', '房间 · 照片墙 · 记录', homeNew);
+      // the picture's own truck is covered by the blue courier truck, which idles on the road
+      const ty = truck.y + Math.sin(this.t * 13) * 0.8;
+      sp.draw(ctx, 'truck_blue', truck.x - 3, ty + 6, 0.82);
+      this.hotspot(ctx, 'work', truck.x, truck.y - 20, 150, 210, '运输车', `去上班 · 第${clamp(s.day, 1, DAYS.length)}天`, false, 210);
+    } else {
+      // paths from the square to every place
+      this.path(ctx, [[this.frogAt.x, this.frogAt.y], [300, creekY + 40], [hq.x + 40, hq.y + 30]]);
+      this.path(ctx, [[this.frogAt.x, this.frogAt.y], [470, creekY + 30], [shop.x - 30, shop.y + 30]]);
+      this.path(ctx, [[this.frogAt.x, this.frogAt.y], [300, yAt(0.8)], [home.x + 60, home.y + 20]]);
+      this.path(ctx, [[this.frogAt.x, this.frogAt.y], [520, yAt(0.74)], [truck.x - 80, truck.y + 30]]);
+      this.bridge(ctx, 372, creekY);
+
+      // trees and flowers around the village
+      for (const [x, k, sc] of [[46, 0.18, 0.8], [700, 0.16, 0.7], [470, 0.12, 0.6], [56, 0.62, 0.9], [560, 0.98, 0.75], [400, 1.02, 0.6]] as const) this.tree(ctx, x, yAt(k), sc);
+      for (let i = 0; i < 16; i++) this.flower(ctx, (i * 173 + 40) % 600 + 20, yAt(0.48 + ((i * 37) % 50) / 100), i);
+
+      // the places, drawn back to front
+      this.place(ctx, 'hq', 'hub_hq', hq.x, hq.y, '河湾总部', '送单 · 日志 · 相册', unread);
+      this.place(ctx, 'shop', 'hub_shop', shop.x, shop.y, '福利社', '装备 · 衣帽 · 家居', shopNew);
+      this.smoke(ctx, home.x + 104 * K, home.y - 300 * K);
+      this.place(ctx, 'home', 'hub_home', home.x, home.y, '我的家', '房间 · 照片墙 · 记录', homeNew);
+      // the truck waiting on the road
+      const ty = truck.y + Math.sin(this.t * 13) * 0.8;
+      drawTruckBase(ctx, truck.x, ty, this.t * 60);
+      sp.draw(ctx, 'truck_blue', truck.x, ty, 0.82);
+      this.sign(ctx, 'work', 750 - 20 - 210, truck.y + 118, '运输车', `去上班 · 第${clamp(s.day, 1, DAYS.length)}天`, false, 210);
+      const wr = { x: truck.x - 90, y: truck.y - 120, w: 180, h: 240 };
+      this.taps.add('work', wr);
+    }
 
     this.drawFrog(ctx);
     this.drawHeader(ctx);
@@ -212,7 +238,12 @@ export class HubScene implements Scene {
     if (this.newbie) ctx.globalAlpha = 0.45;
     button(ctx, 504, by, 214, 104, '路线图', { pressed: mapDown, size: 34 });
     ctx.restore();
-    text(ctx, `第${day}天 · ${DAYS[day - 1].intro}`, 375, by + 132, 22, { color: INK, alpha: 0.75, maxWidth: 680 });
+    if (art) {
+      roundRect(ctx, 40, by + 112, 670, 32, 16);
+      ctx.fillStyle = 'rgba(255,250,238,0.88)';
+      ctx.fill();
+    }
+    text(ctx, `第${day}天 · ${DAYS[day - 1].intro}`, 375, by + 128, 22, { color: INK, alpha: 0.85, maxWidth: 650 });
 
     if (this.profile) this.drawProfile(ctx);
     this.toast.render(ctx, top + 120);
@@ -396,10 +427,10 @@ export class HubScene implements Scene {
   }
 
   /** A building with its signpost; the whole thing is one tap target. */
-  private place(ctx: Ctx, id: Place, sprite: string, x: number, y: number, name: string, sub: string, isNew: boolean) {
+  private place(ctx: Ctx, id: Place, sprite: string, x: number, y: number, name: string, sub: string, isNew: boolean, k = 1) {
     const sp = this.game.sprites;
     const s = sp.get(sprite);
-    const r = { x: x - s.ax, y: y - s.ay, w: s.w, h: s.h + 90 };
+    const r = { x: x - s.ax * k, y: y - s.ay * k, w: s.w * k, h: s.h * k + 90 };
     const down = this.taps.add(id, r);
     const bounce = this.hop?.to === id ? Math.sin((this.hop.t / HOP_T) * Math.PI) * 0.03 : 0;
     const locked = this.newbie;
@@ -410,15 +441,27 @@ export class HubScene implements Scene {
       ctx.scale(0.97, 0.97);
       ctx.translate(-x, -y);
     }
-    sp.draw(ctx, sprite, x, y, 1 + bounce, 1 - bounce);
+    sp.draw(ctx, sprite, x, y, k * (1 + bounce), k * (1 - bounce));
     ctx.restore();
     ctx.save();
     if (locked) ctx.globalAlpha = 0.6;
-    this.sign(ctx, id, x - 110, y + 10, locked ? '未开放' : name, locked ? '通过第 1 天后开放' : sub, locked ? false : isNew, 220, down);
+    this.sign(ctx, id, x - 110, y + 10 - (k < 1 ? 6 : 0), locked ? '未开放' : name, locked ? '通过第 1 天后开放' : sub, locked ? false : isNew, 220, down);
+    ctx.restore();
+  }
+
+  /** A place that is part of the painted background: just a sign and a tap area. */
+  private hotspot(ctx: Ctx, id: Place, x: number, y: number, w: number, h: number, name: string, sub: string, isNew: boolean, signW = 220) {
+    const down = this.taps.add(id, { x: x - w / 2, y: y - h / 2, w, h: h + 90 });
+    const locked = this.newbie && id !== 'work';
+    const bounce = this.hop?.to === id ? Math.sin((this.hop.t / HOP_T) * Math.PI) * 6 : 0;
+    ctx.save();
+    if (locked) ctx.globalAlpha = 0.6;
+    this.sign(ctx, id, x - signW / 2, y + h / 2 - 20 - bounce, locked ? '未开放' : name, locked ? '通过第 1 天后开放' : sub, locked ? false : isNew, signW, down);
     ctx.restore();
   }
 
   private sign(ctx: Ctx, id: string, x: number, y: number, name: string, sub: string, isNew: boolean, w: number, down = this.taps.pressed === id) {
+    x = clamp(x, 10, 740 - w);
     const r = { x, y, w, h: 76 };
     this.taps.add(id, r, 6);
     pressIn(ctx, r, down);
@@ -497,7 +540,8 @@ export class HubScene implements Scene {
     ctx.fill();
     text(ctx, `入职 ${shortDate(s.since)} · ${s.log.length ? `已上班 ${s.career.runs} 天` : '今天第一天'}`, 577, top + 86, 20, { color: P.inkSoft });
 
-    // village ribbon
+    // village ribbon (the painted village needs no title)
+    if (sp.has('hub_bg')) return;
     const ry = top + 154;
     ctx.save();
     ctx.translate(375, ry);

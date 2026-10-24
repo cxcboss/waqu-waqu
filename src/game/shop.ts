@@ -9,9 +9,13 @@ import { GEAR, ITEMS, dailyDeal, gearDef, gearMax, item, priceOf, type GearId, t
 import type { Game, Scene } from './game';
 import { itemIcon } from './home';
 import { HubScene } from './hub';
-import { Scroller, Taps, Toast, dialog, drawDressedFrog, header, pill, tabs } from './menu';
+import { Scroller, Taps, Toast, dialog, drawDressedFrog, header, iconAt, pill, tabs } from './menu';
 
 const TABS = ['装备', '衣帽', '家居', '相框'];
+const TAB_ICONS = ['cat_gear', 'cat_hat', 'cat_deco', 'cat_frame'];
+const HAMSTER = ['happy', 'give', 'think', 'bow'].map((k) => `shop_hamster_${k}`);
+/** A gear icon for its level: the painted ones start at level 2, level 1 keeps the plain icon. */
+const gearIcon = (id: GearId, lv: number, plain: string) => (lv >= 2 ? `gear_${id}_lv${lv}` : plain);
 const KINDS: ItemKind[][] = [[], ['hat', 'neck'], ['deco'], ['frame']];
 const HELLO = ['欢迎光临福利社！', '随便看看，不买也行～', '今天也辛苦啦！'];
 
@@ -30,6 +34,9 @@ export class ShopScene implements Scene {
   /** A hat being looked at, shown on the frog at the counter. */
   private tryOn: string | null = null;
   private cheer = 0;
+  /** Seconds left of the hamster's worried look (not enough coins) and of the parcel on the counter. */
+  private think = 0;
+  private gift = 0;
 
   constructor(private game: Game, tab = 0) {
     this.tab = tab;
@@ -37,6 +44,7 @@ export class ShopScene implements Scene {
     this.line = { text: Math.random() < 0.6 ? `今日特价：${deal.name}，打八折！` : HELLO[Math.floor(Math.random() * HELLO.length)], t: 0 };
     game.audio.setMusic('bgm_hq');
     game.audio.play('ui_open');
+    void game.sprites.ensure([...TAB_ICONS, ...HAMSTER, 'shop_counter', 'shop_dealboard', 'shop_gift', 'shop_shelf_jars', ...GEAR.flatMap((g) => [2, 3, 4, 5].map((l) => `gear_${g.id}_lv${l}`))]);
     game.tm.log('shop', { tab, coins: game.save.coins });
   }
 
@@ -48,6 +56,8 @@ export class ShopScene implements Scene {
     if (this.pick) this.pick.t += dt;
     this.flash = Math.max(0, this.flash - dt * 2);
     this.cheer = Math.max(0, this.cheer - dt);
+    this.think = Math.max(0, this.think - dt);
+    this.gift = Math.max(0, this.gift - dt);
   }
 
   private say(s: string) {
@@ -119,6 +129,7 @@ export class ShopScene implements Scene {
     if (s.coins < price) {
       g.audio.play('ui_error');
       this.say(`还差 ${price - s.coins} 金币哦，多送几单再来！`);
+      this.think = 2.2;
       return;
     }
     if ('gear' in p) {
@@ -143,6 +154,7 @@ export class ShopScene implements Scene {
     g.tm.log('shop_buy', { what: 'gear' in p ? `${p.gear}${s.gear[p.gear]}` : p.item, price, coins: s.coins });
     this.flash = 1;
     this.cheer = 0.8;
+    this.gift = 1.1;
     this.say(['谢谢惠顾！', '眼光真好！', '这个超适合你！'][Math.floor(Math.random() * 3)]);
     g.celebrate(checkAchievements(s));
     g.writeSave();
@@ -172,7 +184,7 @@ export class ShopScene implements Scene {
     this.drawCounter(ctx, bannerTop, bannerBot);
 
     const sheetTop = bannerBot + 70;
-    tabs(ctx, this.taps, 'tab', 24, sheetTop - 58, 702, TABS, this.tab);
+    tabs(ctx, this.taps, 'tab', 24, sheetTop - 58, 702, TABS, this.tab, [], { sp: this.game.sprites, names: TAB_ICONS });
     roundRect(ctx, 16, sheetTop, 718, bot - 16 - sheetTop, 18);
     ctx.fillStyle = P.paper;
     ctx.fill();
@@ -208,8 +220,9 @@ export class ShopScene implements Scene {
       ctx.fillRect(0, 0, 750, y1 + 80);
       ctx.fillStyle = 'rgba(148,104,63,0.35)';
       for (let x = 0; x < 750; x += 46) ctx.fillRect(x, 0, 3, y1 + 80);
+      if (sp.has('shop_shelf_jars')) sp.draw(ctx, 'shop_shelf_jars', 0, y0 + 12, 750 / 620);
       // shelves of goods
-      for (const [sy, n] of [[y0 + 70, 0], [y0 + 170, 1]] as const) {
+      else for (const [sy, n] of [[y0 + 70, 0], [y0 + 170, 1]] as const) {
         ctx.fillStyle = P.woodDeep;
         ctx.fillRect(20, sy, 710, 14);
         ctx.strokeStyle = INK;
@@ -228,6 +241,9 @@ export class ShopScene implements Scene {
     }
     // the counter top
     const cy = y1 - 30;
+    const paintedCounter = sp.has('shop_counter');
+    if (paintedCounter) sp.draw(ctx, 'shop_counter', 0, cy - 36);
+    else {
     ctx.fillStyle = P.wood;
     ctx.fillRect(0, cy, 750, y1 + 80 - cy);
     ctx.strokeStyle = 'rgba(148,104,63,0.6)';
@@ -243,25 +259,42 @@ export class ShopScene implements Scene {
     ctx.strokeStyle = INK;
     ctx.lineWidth = 2.5;
     ctx.strokeRect(-2, cy - 14, 754, 18);
+    }
     // hamster behind the counter, bobbing more when happy
     const hop = this.cheer > 0 ? Math.abs(Math.sin(this.cheer * 12)) * 14 : Math.sin(this.t * 2.2) * 2;
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, 750, cy - 12);
     ctx.clip();
-    sp.draw(ctx, 'shop_hamster', 560, cy + 40 - hop, 1.15);
+    const pose = this.think > 0 ? 'think' : this.cheer > 0.4 ? 'give' : this.cheer > 0 ? 'happy' : this.t < 1.4 ? 'bow' : 'happy';
+    const hamster = sp.has(`shop_hamster_${pose}`) ? `shop_hamster_${pose}` : 'shop_hamster';
+    sp.draw(ctx, hamster, 560, cy + 40 - hop, 1.15);
     ctx.restore();
-    text(ctx, '店长 · 仓鼠阿圆', 560, cy + 22, 20, { color: INK, bold: true, alpha: 0.75 });
-    // a till on the counter
-    roundRect(ctx, 650, cy - 66, 76, 54, 8);
-    ctx.fillStyle = P.blue;
-    ctx.fill();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    roundRect(ctx, 660, cy - 58, 56, 18, 4);
-    ctx.fillStyle = P.tealLight;
-    ctx.fill();
+    if (!paintedCounter) {
+      text(ctx, '店长 · 仓鼠阿圆', 560, cy + 22, 20, { color: INK, bold: true, alpha: 0.75 });
+      // a till on the counter
+      roundRect(ctx, 650, cy - 66, 76, 54, 8);
+      ctx.fillStyle = P.blue;
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      roundRect(ctx, 660, cy - 58, 56, 18, 4);
+      ctx.fillStyle = P.tealLight;
+      ctx.fill();
+    }
+    // the daily deal on a chalkboard, and the parcel handed over after a purchase
+    if (sp.has('shop_dealboard')) {
+      const deal = item(dailyDeal())!;
+      iconAt(ctx, sp, 'shop_dealboard', 106, y0 + 100, 190);
+      text(ctx, '今日特价', 106, y0 + 86, 19, { color: P.cream, bold: true });
+      text(ctx, deal.name, 106, y0 + 112, 24, { color: P.white, bold: true, maxWidth: 140 });
+      text(ctx, `${priceOf(deal)} 金币`, 106, y0 + 138, 19, { color: P.gold, bold: true });
+    }
+    if (this.gift > 0 && sp.has('shop_gift')) {
+      const k = 1 - this.gift / 1.1;
+      iconAt(ctx, sp, 'shop_gift', 470 - k * 230, cy - 62 - Math.sin(k * Math.PI) * 50, 90, Math.min(1, this.gift * 4));
+    }
     // the frog, trying on whatever's being looked at
     const wear = { ...s.wear };
     const tryIt = this.tryOn ? item(this.tryOn) : null;
@@ -314,7 +347,9 @@ export class ShopScene implements Scene {
       roundRect(ctx, r.x + 20, r.y + 20, 150, 150, 16);
       ctx.fillStyle = P.cream;
       ctx.fill();
-      this.game.sprites.draw(ctx, gd.sprite, r.x + 95, r.y + 95, 1.1 + 0.05 * lv);
+      const gi = gearIcon(gd.id, lv, gd.sprite);
+      if (gi === gd.sprite) this.game.sprites.draw(ctx, gd.sprite, r.x + 95, r.y + 95, 1.1 + 0.05 * lv);
+      else iconAt(ctx, this.game.sprites, gi, r.x + 95, r.y + 95, 138);
       text(ctx, gd.name, r.x + 196, r.y + 42, 32, { align: 'left', bold: true });
       text(ctx, `${lv} 级 · ${gd.looks[lv - 1]}`, r.x + 196, r.y + 82, 24, { align: 'left', color: P.orangeDeep, bold: true });
       text(ctx, gd.effect(lv), r.x + 196, r.y + 118, 22, { align: 'left', color: P.inkSoft, maxWidth: 450 });
@@ -427,7 +462,16 @@ export class ShopScene implements Scene {
       const gd = gearDef(p.gear);
       const lv = s.gear[p.gear] ?? 1;
       name = gd.name;
-      g.sprites.draw(ctx, gd.sprite, 375, d.y + 200, 1.6);
+      if (lv < gearMax(p.gear)) {
+        // what it looks like now and after the upgrade
+        const cur = gearIcon(gd.id, lv, gd.sprite), nxt = gearIcon(gd.id, lv + 1, gd.sprite);
+        if (cur === gd.sprite) g.sprites.draw(ctx, gd.sprite, 375 - 130, d.y + 200, 1.3);
+        else iconAt(ctx, g.sprites, cur, 375 - 130, d.y + 200, 150);
+        iconAt(ctx, g.sprites, nxt, 375 + 130, d.y + 200, 170);
+        text(ctx, '→', 375, d.y + 200, 44, { color: P.orangeDeep, bold: true });
+        text(ctx, '现在', 375 - 130, d.y + 288, 20, { color: P.inkSoft });
+        text(ctx, '升级后', 375 + 130, d.y + 288, 20, { color: P.orangeDeep, bold: true });
+      } else iconAt(ctx, g.sprites, gearIcon(gd.id, lv, gd.sprite), 375, d.y + 200, 190) || g.sprites.draw(ctx, gd.sprite, 375, d.y + 200, 1.6);
       lines = [gd.desc, `现在：${lv} 级 · ${gd.looks[lv - 1]} · ${gd.effect(lv)}`];
       if (lv < gearMax(p.gear)) lines.push(`升级后：${lv + 1} 级 · ${gd.looks[lv]} · ${gd.effect(lv + 1)}`);
       else status = '已经满级了';

@@ -12,10 +12,13 @@ import { DAYS } from './config';
 import type { Game, Scene } from './game';
 import { HubScene } from './hub';
 import { drawStamp } from './map';
-import { Scroller, Taps, Toast, dot, header, shortDate, tabs } from './menu';
+import { Scroller, Taps, Toast, dot, header, iconAt, shortDate, tabs } from './menu';
 import { PhotoViewer, type ViewerPhoto } from './viewer';
 
 const TABS = ['送单', '日志', '相册', '荣誉', '动态'];
+const TAB_ICONS = ['tab_record', 'tab_log', 'tab_album', 'tab_honour', 'tab_news'];
+/** Which painted owl pose goes with each tab. */
+const OWL_POSE = ['owl_read', 'owl_stamp', 'owl_cheer', 'owl_cheer', 'owl_read'];
 const OWL = [
   '这是你的送单记录，继续保持。',
   '每天下班的工作日志都在这里。',
@@ -49,6 +52,7 @@ export class HallScene implements Scene {
     this.seen0 = game.save.seen.notes;
     game.audio.setMusic('bgm_hq');
     game.audio.play('owl_hoot', { delay: 0.3, volume: 0.6 });
+    void game.sprites.ensure([...TAB_ICONS, ...new Set(OWL_POSE), 'owl_sleepy', ...RANKS.map((_, i) => `badge_rank${i}`), ...ACHIEVEMENTS.flatMap((a) => [`medal_${a.id}`, `medal_${a.id}_off`])]);
     game.tm.log('hall', { tab, notes: this.unread });
     if (tab === 4) this.markRead();
   }
@@ -164,13 +168,18 @@ export class HallScene implements Scene {
     }
     const ox = 640 * K, oy = counterY + 3;
     const bob = Math.sin(this.t * 2) * 2;
-    sp.draw(ctx, 'owl', ox, oy + bob, 0.92);
-    sp.draw(ctx, 'owl_wing', ox + 96 * K, oy + bob - 138 * K, 0.92, 0.92, -0.1 + Math.sin(this.t * 1.5) * 0.04);
+    // painted poses are whole owls; the old one is a body plus a flapping wing
+    const pose = this.game.save.log.length || this.tab ? OWL_POSE[this.tab] : 'owl_sleepy';
+    if (sp.has(pose)) sp.draw(ctx, pose, ox, oy + bob, 0.92);
+    else {
+      sp.draw(ctx, 'owl', ox, oy + bob, 0.92);
+      sp.draw(ctx, 'owl_wing', ox + 96 * K, oy + bob - 138 * K, 0.92, 0.92, -0.1 + Math.sin(this.t * 1.5) * 0.04);
+    }
     sp.draw(ctx, 'hq_counter', 0, counterY);
     this.bubble(ctx, 250, counterY - 150, OWL[this.tab]);
 
     const sheetTop = counterY + 110, sheetBot = bot - 16;
-    tabs(ctx, this.taps, 'tab', 24, sheetTop - 58, 702, TABS, this.tab, [false, false, false, false, this.unread > 0 && this.tab !== 4]);
+    tabs(ctx, this.taps, 'tab', 24, sheetTop - 58, 702, TABS, this.tab, [false, false, false, false, this.unread > 0 && this.tab !== 4], { sp, names: TAB_ICONS });
     roundRect(ctx, 16, sheetTop, 718, sheetBot - sheetTop, 18);
     ctx.fillStyle = P.paper;
     ctx.fill();
@@ -235,27 +244,32 @@ export class HallScene implements Scene {
     const n = stampCount(s);
     const ri = rankIndex(n);
     const next = RANKS[ri + 1];
-    roundRect(ctx, 40, y, 670, 110, 16);
+    const badge = sp.has(`badge_rank${ri}`);
+    const ph = badge ? 150 : 110;
+    roundRect(ctx, 40, y, 670, ph, 16);
     ctx.fillStyle = P.cream;
     ctx.fill();
+    // the rank's own staff card
+    if (badge) iconAt(ctx, sp, `badge_rank${ri}`, 590, y + ph / 2 + 4, 170);
     text(ctx, `职级：${RANKS[ri].name}`, 64, y + 34, 30, { bold: true, align: 'left' });
-    text(ctx, next ? `下一级「${next.name}」还差 ${next.need - n} 枚好评章` : '已经是最高职级', 64, y + 78, 22, { align: 'left', color: P.inkSoft });
-    const bx = 470, bw = 210;
-    roundRect(ctx, bx, y + 30, bw, 22, 11);
+    text(ctx, next ? `下一级「${next.name}」还差 ${next.need - n} 枚好评章` : '已经是最高职级', 64, y + 78, 22, { align: 'left', color: P.inkSoft, maxWidth: badge ? 400 : 600 });
+    const bx = badge ? 64 : 470, bw = badge ? 250 : 210, by = badge ? y + 100 : y + 30;
+    roundRect(ctx, bx, by, bw, 22, 11);
     ctx.fillStyle = P.paperShade;
     ctx.fill();
     const kk = next ? clamp((n - RANKS[ri].need) / (next.need - RANKS[ri].need), 0, 1) : 1;
     if (kk > 0) {
-      roundRect(ctx, bx, y + 30, Math.max(22, bw * kk), 22, 11);
+      roundRect(ctx, bx, by, Math.max(22, bw * kk), 22, 11);
       ctx.fillStyle = P.gold;
       ctx.fill();
     }
-    roundRect(ctx, bx, y + 30, bw, 22, 11);
+    roundRect(ctx, bx, by, bw, 22, 11);
     ctx.strokeStyle = INK;
     ctx.lineWidth = 2;
     ctx.stroke();
-    text(ctx, `${n} 枚`, bx + bw / 2, y + 78, 22, { bold: true });
-    y += 140;
+    if (badge) text(ctx, `${n} 枚`, bx + bw + 40, by + 12, 22, { bold: true });
+    else text(ctx, `${n} 枚`, bx + bw / 2, y + 78, 22, { bold: true });
+    y += ph + 30;
 
     this.heading(ctx, '送单情况', y);
     y += 50;
@@ -440,13 +454,15 @@ export class HallScene implements Scene {
       ctx.strokeStyle = done ? P.gold : P.kraft;
       ctx.lineWidth = 2;
       ctx.stroke();
-      ellipse(ctx, 96, y + 56, 34, 34);
-      ctx.fillStyle = done ? P.gold : P.paperShade;
-      ctx.fill();
-      ctx.strokeStyle = done ? INK : 'rgba(74,59,48,0.4)';
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-      text(ctx, '★', 96, y + 58, 34, { color: done ? P.white : 'rgba(74,59,48,0.3)', bold: true });
+      if (!iconAt(ctx, this.game.sprites, done ? `medal_${a.id}` : `medal_${a.id}_off`, 96, y + 56, 84)) {
+        ellipse(ctx, 96, y + 56, 34, 34);
+        ctx.fillStyle = done ? P.gold : P.paperShade;
+        ctx.fill();
+        ctx.strokeStyle = done ? INK : 'rgba(74,59,48,0.4)';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        text(ctx, '★', 96, y + 58, 34, { color: done ? P.white : 'rgba(74,59,48,0.3)', bold: true });
+      }
       text(ctx, a.name, 148, y + 32, 28, { align: 'left', bold: true, color: done ? INK : P.inkSoft });
       text(ctx, a.desc, 148, y + 66, 21, { align: 'left', color: P.inkSoft, maxWidth: 380 });
       const reward = `+${a.coins} 金币${a.reward ? ` · ${item(a.reward)?.name}` : ''}`;

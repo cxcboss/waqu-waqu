@@ -205,7 +205,17 @@ export function header(ctx: Ctx, game: Game, taps: Taps, title: string, o: { bac
 }
 
 /** A row of paper tabs; `dots` puts a red dot on a tab. Registers `${prefix}${i}`. */
-export function tabs(ctx: Ctx, taps: Taps, prefix: string, x: number, y: number, w: number, labels: string[], sel: number, dots: boolean[] = []) {
+/** Draws a painted sprite centred on (x, y) with its longer side `size` long; false while it isn't loaded. */
+export function iconAt(ctx: Ctx, sp: SpriteBank, name: string, x: number, y: number, size: number, alpha = 1) {
+  if (!sp.has(name)) return false;
+  const s = sp.get(name);
+  const k = size / Math.max(s.w, s.h);
+  sp.draw(ctx, name, x - (s.w / 2 - s.ax) * k, y - (s.h / 2 - s.ay) * k, k, k, 0, alpha);
+  return true;
+}
+
+/** Paper tabs; `icons` are sprite names drawn beside each label when painted. */
+export function tabs(ctx: Ctx, taps: Taps, prefix: string, x: number, y: number, w: number, labels: string[], sel: number, dots: boolean[] = [], icons?: { sp: SpriteBank; names: string[] }) {
   const n = labels.length;
   const tw = w / n;
   for (let i = 0; i < n; i++) {
@@ -227,7 +237,9 @@ export function tabs(ctx: Ctx, taps: Taps, prefix: string, x: number, y: number,
     ctx.strokeStyle = INK;
     ctx.lineWidth = 2;
     ctx.stroke();
-    text(ctx, labels[i], r.x + r.w / 2, r.y + 32, on ? 28 : 25, { bold: on, color: on ? INK : P.inkSoft, maxWidth: r.w - 14 });
+    const painted = icons && icons.sp.has(icons.names[i]);
+    if (painted) iconAt(ctx, icons.sp, icons.names[i], r.x + 30, r.y + r.h / 2 + 1, on ? 46 : 40);
+    text(ctx, labels[i], r.x + r.w / 2 + (painted ? 22 : 0), r.y + 32, on ? 28 : 25, { bold: on, color: on ? INK : P.inkSoft, maxWidth: r.w - (painted ? 60 : 14) });
     if (dots[i]) dot(ctx, r.x + r.w - 14, r.y + 12);
     ctx.restore();
     pressOut(ctx, down, () => roundRect(ctx, r.x, r.y, r.w, r.h, 12));
