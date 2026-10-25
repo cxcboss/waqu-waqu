@@ -80,6 +80,13 @@ export class WebPlatform implements Platform {
     c.addEventListener('pointercancel', (e) => cb('cancel', pt(e)));
   }
 
+  onWheel(cb: (dy: number) => void): void {
+    this.canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      cb(e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY);
+    }, { passive: false });
+  }
+
   onVisibility(cb: (visible: boolean) => void): void {
     document.addEventListener('visibilitychange', () => cb(document.visibilityState === 'visible'));
   }

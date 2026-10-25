@@ -123,6 +123,8 @@ export function upgradeSave(s: SaveData): SaveData {
   s.letters = Array.isArray(s.letters) ? s.letters : [];
   s.seen = Object.assign({ notes: 0, letters: 0, ach: 0 }, s.seen);
   s.seq = s.seq || 0;
+  // a day passed before later days existed (or before the unlock was saved) still opens the next one
+  for (let d = DAYS.length - 1; d >= 1; d--) if (s.stamps?.[d]?.[0]) { s.day = Math.max(s.day, d + 1); break; }
   return s;
 }
 
