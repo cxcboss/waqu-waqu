@@ -12,6 +12,10 @@ import { HubScene } from './hub';
 interface Stop { day: number; x: number; y: number }
 
 const HOP_T = 0.45;
+/** Vertical distance between neighbouring stops. */
+const GAP = 250;
+/** A drag longer than this is a scroll, not a tap. */
+const DRAG_MIN = 12;
 
 /**
  * The route map: chapter one's river (春 · 柳湾), one stop per day from the bottom up, each showing
@@ -21,8 +25,13 @@ export class MapScene implements Scene {
   readonly id = 'map';
   private t = 0;
   private sel: number;
-  /** The chapter on show; arrows in the ribbon page through all six. */
+  /** The chapter under the middle of the screen (the ribbon names it). */
   private view: number;
+  /** How far the whole river has been pulled down; 0 puts day 1 near the bottom. */
+  private off = 0;
+  private offV = 0;
+  private drag: { id: number; y0: number; off0: number; y: number; moved: boolean } | null = null;
+  private lastY = 0;
   /** The frog hopping from one stop to another. */
   private hop: { from: number; t: number } | null = null;
   private stops: Stop[] = [];
@@ -34,6 +43,7 @@ export class MapScene implements Scene {
   constructor(private game: Game, day?: number) {
     this.sel = clamp(day ?? game.save.day, 1, this.unlocked);
     this.view = chapterOf(this.sel);
+    this.off = this.centreOn(this.sel);
     game.audio.setMusic('bgm_title');
     game.tm.day = null;
     game.tm.log('map', { sel: this.sel, unlocked: this.unlocked });
@@ -43,14 +53,52 @@ export class MapScene implements Scene {
     return clamp(this.game.save.day, 1, DAYS.length);
   }
 
+  /** Stop 0's anchor y and the scroll range, from the current screen. */
+  private get y0() {
+    return this.game.H - this.game.safeB - 24 - 300 - 120;
+  }
+
+  private get maxOff() {
+    return (DAYS.length - 1) * GAP + this.game.safeT + 350 - this.y0;
+  }
+
+  private centreOn(day: number) {
+    const mid = (this.game.safeT + 130 + this.y0 + 100) / 2;
+    return clamp(mid - this.y0 + (day - 1) * GAP, -30, this.maxOff);
+  }
+
+  wheelBy(dy: number) {
+    this.off = clamp(this.off - dy, -30, this.maxOff);
+    this.offV = 0;
+  }
+
+  move(_x: number, y: number, id: number) {
+    const d = this.drag;
+    if (!d || d.id !== id) return;
+    if (!d.moved && Math.abs(y - d.y0) > DRAG_MIN) d.moved = true;
+    if (d.moved) {
+      this.off = clamp(d.off0 + (y - d.y0), -30, this.maxOff);
+      this.offV = (y - this.lastY) * 60;
+      this.pressed = null;
+    }
+    this.lastY = y;
+  }
+
   update(dt: number) {
     this.t += dt;
+    if (!this.drag && Math.abs(this.offV) > 5) {
+      this.off = clamp(this.off + this.offV * dt, -30, this.maxOff);
+      this.offV *= Math.pow(0.04, dt);
+    }
     this.sheetT += dt;
     if (this.hop && (this.hop.t += dt) >= HOP_T) this.hop = null;
     if (this.toast && (this.toast.t += dt) > 2) this.toast = null;
   }
 
-  down(x: number, y: number) {
+  down(x: number, y: number, id = 0) {
+    this.drag = { id, y0: y, off0: this.off, y, moved: false };
+    this.lastY = y;
+    this.offV = 0;
     for (const b of this.btns) if (hit(b.rect, x, y, 6)) this.pressed = b.id;
     if (this.pressed) return;
     const s = this.stopAt(x, y);
@@ -61,9 +109,12 @@ export class MapScene implements Scene {
     return this.stops.find((s) => Math.hypot(x - s.x, (y - s.y) * 1.2) <= 90 || hit({ x: s.x - 115, y: s.y + 26, w: 230, h: 76 }, x, y));
   }
 
-  up(x: number, y: number) {
+  up(x: number, y: number, pid = 0) {
+    const moved = this.drag?.moved;
+    if (this.drag?.id === pid) this.drag = null;
     const id = this.pressed;
     this.pressed = null;
+    if (moved) return;
     if (id?.startsWith('stop')) {
       const s = this.stopAt(x, y);
       if (s && `stop${s.day}` === id) this.select(s.day);
@@ -72,12 +123,6 @@ export class MapScene implements Scene {
     const b = this.btns.find((b) => b.id === id && hit(b.rect, x, y, 6));
     if (!b) return;
     const au = this.game.audio;
-    if (b.id === 'prev' || b.id === 'next') {
-      this.view = clamp(this.view + (b.id === 'next' ? 1 : -1), 0, CHAPTERS.length - 1);
-      this.sheetT = 0;
-      au.play('ui_confirm', { volume: 0.5 });
-      return;
-    }
     this.game.tm.log(b.id === 'go' ? 'map_go' : 'map_back', { sel: this.sel, sec: Math.round(this.t) });
     if (b.id === 'back') {
       au.play('ui_back');
@@ -111,30 +156,45 @@ export class MapScene implements Scene {
     const sheetH = 300;
     const sheetTop = H - this.game.safeB - 24 - sheetH;
 
-    // spring meadow: the painted one covers the screen, cropped a little at the sides on tall phones
+    // stops zigzag up the river, day 1 at the bottom; the whole river scrolls
+    const y0 = this.y0;
+    this.stops = DAYS.map((d, i) => ({ day: d.day, x: i % 2 ? 530 : 220, y: y0 - i * GAP + this.off }));
+    this.view = chapterOf(clamp(Math.round((y0 + this.off - H * 0.4) / GAP), 0, DAYS.length - 1) + 1);
+
+    // spring meadow, tiled (every other tile flipped so the seams vanish) and drifting with the river
     if (sp.has('map_meadow')) {
       const m = sp.get('map_meadow');
       const k = Math.max(750 / m.w, H / m.h);
-      sp.draw(ctx, 'map_meadow', 375 - (m.w * k) / 2, (H - m.h * k) / 2, k);
+      const th = m.h * k;
+      const par = this.off * 0.6;
+      const n0 = Math.floor(-par / th) - 1;
+      for (let n = n0; n <= n0 + Math.ceil(H / th) + 2; n++) {
+        const ty = n * th + par;
+        if (ty > H || ty + th < 0) continue;
+        ctx.save();
+        if (((n % 2) + 2) % 2) {
+          ctx.translate(0, ty + th);
+          ctx.scale(1, -1);
+          sp.draw(ctx, 'map_meadow', 375 - (m.w * k) / 2, 0, k);
+        } else sp.draw(ctx, 'map_meadow', 375 - (m.w * k) / 2, ty, k);
+        ctx.restore();
+      }
     } else {
       ctx.fillStyle = '#E3E6C0';
       ctx.fillRect(0, 0, 750, H);
       ctx.fillStyle = P.bankDeep;
       for (let i = 0; i < 70; i++) {
-        const x = (i * 263) % 750, y = (i * 409) % H;
+        const x = (i * 263) % 750, y = (((i * 409) % H) + this.off * 0.6 + H * 10) % H;
         ellipse(ctx, x, y, 5 + (i % 3) * 2, 3 + (i % 2) * 2);
         ctx.fill();
       }
     }
 
-    // stops zigzag up the river, day 1 at the bottom
-    const y0 = sheetTop - 120, y1 = top + 350;
-    this.stops = DAYS.filter((d) => chapterOf(d.day) === this.view).map((d, i) => ({ day: d.day, x: i % 2 ? 530 : 220, y: lerp(y0, y1, i / (DAYS_PER_CHAPTER - 1)) }));
-    const pts: [number, number][] = [[300, H + 80], ...this.stops.map((s): [number, number] => [s.x, s.y]), [400, top + 120], [375, -80]];
+    const pts: [number, number][] = [[300, this.stops[0].y + 330], ...this.stops.map((s): [number, number] => [s.x, s.y]), [375, this.stops[this.stops.length - 1].y - 330]];
     this.drawRiver(ctx, pts);
 
     // willows along the banks, it's spring in 柳湾
-    for (const [x, y, s] of [[66, y0 - 40, 1], [690, y0 - 170, 0.9], [60, lerp(y0, y1, 0.5) - 30, 0.85], [700, lerp(y0, y1, 0.75), 1], [80, y1 + 20, 0.8]] as const) this.willow(ctx, x, y, s);
+    for (let i = 0; i < DAYS.length; i += 2) this.willow(ctx, i % 4 ? 690 : 66, this.stops[i].y - 90, 0.85 + (i % 3) * 0.08);
 
     const tint = CHAPTERS[this.view].tint;
     if (tint) {
@@ -142,11 +202,19 @@ export class MapScene implements Scene {
       ctx.fillRect(0, 0, 750, H);
     }
 
-    // the next chapter waits in the mist
-    if (this.view < CHAPTERS.length - 1 && this.view + 1 > chapterOf(this.unlocked)) this.drawFog(ctx, top + 222, `第${'一二三四五六'[this.view + 1]}章 · ${CHAPTERS[this.view + 1].title}`);
+    // chapter banners between chapters; the first chapter still locked waits in the mist
+    const firstLocked = chapterOf(this.unlocked) + 1;
+    for (let c = 1; c < CHAPTERS.length; c++) {
+      const by = (this.stops[c * DAYS_PER_CHAPTER - 1].y + this.stops[c * DAYS_PER_CHAPTER].y) / 2;
+      if (by < -120 || by > H + 120) continue;
+      const title = `第${'一二三四五六'[c]}章 · ${CHAPTERS[c].title}`;
+      if (c === firstLocked) this.drawFog(ctx, by, title);
+      else if (c < firstLocked) text(ctx, title, 375, by, 28, { bold: true, color: P.inkSoft });
+    }
 
     const unlocked = this.unlocked;
     this.stops.forEach((s, i) => {
+      if (s.y < -140 || s.y > H + 140) return;
       const open = s.day <= unlocked;
       const bob = Math.sin(this.t * 1.6 + i) * 2;
       const down = this.pressed === `stop${s.day}`;
@@ -230,23 +298,6 @@ export class MapScene implements Scene {
     ctx.fill();
     ctx.stroke();
     ctx.restore();
-    for (const [id, bx, ch, off] of [['prev', 50, '‹', this.view === 0], ['next', 700, '›', this.view === CHAPTERS.length - 1]] as const) {
-      const rect = { x: bx - 32, y: ry - 32, w: 64, h: 64 };
-      if (!off) this.btns.push({ id, rect });
-      const d = this.pressed === id;
-      pressIn(ctx, rect, d);
-      ctx.save();
-      ctx.globalAlpha = off ? 0.3 : 1;
-      ellipse(ctx, bx, ry, 28, 28);
-      ctx.fillStyle = P.cream;
-      ctx.fill();
-      ctx.strokeStyle = INK;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      text(ctx, ch, bx, ry - 3, 40, { bold: true });
-      ctx.restore();
-      pressOut(ctx, d, () => ellipse(ctx, bx, ry, 28, 28));
-    }
     ctx.save();
     ctx.translate(375, ry);
     ctx.rotate(-0.015);

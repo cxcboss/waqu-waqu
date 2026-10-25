@@ -33,6 +33,8 @@ export interface Platform {
   screen(): ScreenInfo;
   onResize(cb: () => void): void;
   onTouch(cb: (kind: TouchKind, t: TouchPoint) => void): void;
+  /** Mouse wheel / trackpad scroll, in screen pixels (web only). */
+  onWheel?(cb: (dy: number) => void): void;
   onVisibility(cb: (visible: boolean) => void): void;
 
   createCanvas(w: number, h: number): Canvas;

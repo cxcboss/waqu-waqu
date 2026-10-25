@@ -18,6 +18,8 @@ export interface Scene {
   down?(x: number, y: number, id: number): void;
   move?(x: number, y: number, id: number): void;
   up?(x: number, y: number, id: number): void;
+  /** Wheel scroll in design pixels. */
+  wheelBy?(dy: number): void;
   /** Called when the app goes to the background. */
   blur?(): void;
 }
@@ -161,6 +163,9 @@ export class Game {
         this.scene?.down?.(x, y, t.id);
       } else if (kind === 'move') this.scene?.move?.(x, y, t.id);
       else this.scene?.up?.(x, y, t.id);
+    });
+    this.platform.onWheel?.((dy) => {
+      if (this.ready && !this.fade) this.scene?.wheelBy?.(dy * (this.W / this.cssW));
     });
     this.platform.onVisibility((v) => {
       if (v) this.audio.resume();
