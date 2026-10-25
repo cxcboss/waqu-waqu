@@ -272,13 +272,18 @@ for (const [name, b, s] of [
 // Background tile
 def('river', [0, 0, 1080, TILE_H], () => A.riverTile(TILE_H));
 
+/** Non-lazy art that has to be in before the first screen (the loading screen waits for it). */
+const CORE = /^(frog_stand|frog_happy|coin|hand|hat_|neck_)/;
+/** The art one day of play needs; the rest is only for the other screens. */
+const PLAY = /^(frog_|box\d|satchel|lily|log$|river$|hand$|coin$|bill$|letter$|splash$|willow$|truck_|hat_|neck_|gear_)/;
+
 export const SPRITE_NAMES = Object.keys(D);
 /** The definitions, for tools that render the placeholders (art reference sheets). */
 export const SPRITE_DEFS: Readonly<Record<string, SpriteDef>> = D;
 
 /**
  * Holds the game's art. Painted images listed in `art/manifest.json` are used where they exist
- * (a bare name is a PNG; backgrounds may be listed with their extension, e.g. "river.jpg");
+ * (every entry is a WebP named after its sprite; scripts/optimize_art.py makes them);
  * everything else is rasterized from the SVG placeholders once, at the current render scale.
  * A painting covers its sprite's bounds box exactly, so it lines up with the same anchor.
  */
@@ -295,8 +300,20 @@ export class SpriteBank {
   private loading = new Map<string, Promise<void>>();
   private isPainted = new Set<string>();
 
+  /** Sprites the loading screen leaves for later (see `load`): drawing one that hasn't arrived just skips it. */
+  private deferred = new Set<string>();
+  /** Deferred sprites whose load has finished, one way or another (some have no art at all). */
+  private settled = new Set<string>();
+  private backgroundRun: Promise<void> | null = null;
+
+  /**
+   * Loads what the first screen needs, then fetches the rest of the non-lazy art in the background:
+   * the day's gameplay art first, the other screens' art after it. `whenReady` says when a screen's art is in.
+   */
   async load(pxPerUnit: number, onProgress?: (done: number, total: number) => void, artBase = 'art/') {
-    const names = SPRITE_NAMES.filter((n) => !D[n].lazy);
+    const all = SPRITE_NAMES.filter((n) => !D[n].lazy);
+    const names = all.filter((n) => CORE.test(n));
+    for (const n of all) if (!CORE.test(n)) this.deferred.add(n);
     const painted = await this.paintedList(artBase);
     this.px = pxPerUnit;
     this.base = artBase;
@@ -322,8 +339,38 @@ export class SpriteBank {
     }
     for (const name of names) {
       const alias = D[name].alias;
-      if (!this.map.has(name) && alias) this.map.set(name, this.get(alias));
+      if (!this.map.has(name) && alias && this.map.has(alias)) this.map.set(name, this.get(alias));
     }
+  }
+
+  /** Resolves once every sprite requested so far has finished loading. */
+  async idle() {
+    while (this.loading.size && [...this.loading.keys()].some((n) => !this.settled.has(n))) {
+      await Promise.all([...this.loading.values()]);
+    }
+  }
+
+  /** Starts fetching the deferred art, gameplay first. Call once the first screen is up. */
+  startBackground() {
+    if (this.backgroundRun) return;
+    const order = [...this.deferred].sort((a, b) => Number(PLAY.test(b)) - Number(PLAY.test(a)));
+    this.backgroundRun = (async () => {
+      for (let i = 0; i < order.length; i += 4) await this.ensure(order.slice(i, i + 4));
+    })();
+  }
+
+  /** Resolves when the art for a day's play (or, without `playOnly`, for every screen) has arrived. */
+  whenReady(playOnly: boolean): Promise<void> {
+    this.startBackground();
+    const need = [...this.deferred].filter((n) => !playOnly || PLAY.test(n));
+    return this.ensure(need);
+  }
+
+  /** How many of the deferred sprites are still on their way (0 once everything is in). */
+  get waiting() {
+    let n = 0;
+    for (const name of this.deferred) if (!this.settled.has(name) && !this.map.has(name)) n++;
+    return n;
   }
 
   /**
@@ -363,6 +410,7 @@ export class SpriteBank {
           if (this.map.has(d.alias)) this.map.set(name, this.get(d.alias));
         }
       })();
+      p = p.finally(() => this.settled.add(name));
       this.loading.set(name, p);
     }
     return p;
@@ -382,7 +430,7 @@ export class SpriteBank {
       for (const n of Array.isArray(list) ? list : []) {
         if (typeof n !== 'string') continue;
         const name = n.replace(/\.(png|jpg|jpeg|webp)$/i, '');
-        if (name in D) out.set(name, name === n ? n + '.png' : n);
+        if (name in D) out.set(name, name + '.webp');
       }
     } catch {
       // no painted art yet
@@ -438,7 +486,7 @@ export class SpriteBank {
   draw(ctx: Ctx, name: string, x: number, y: number, sx = 1, sy = sx, rot = 0, alpha = 1) {
     const s = this.map.get(name);
     if (!s) {
-      if (D[name]?.lazy) void this.loadOne(name);
+      if (D[name]?.lazy || this.deferred.has(name)) void this.loadOne(name);
       else throw new Error('missing sprite ' + name);
       return;
     }

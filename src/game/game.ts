@@ -1,6 +1,6 @@
 import { P } from '../art/palette';
 import { SpriteBank } from '../art/sprites';
-import { ellipse, panel, text } from '../art/ui';
+import { ellipse, panel, roundRect, text } from '../art/ui';
 import { Audio } from '../engine/audio';
 import { Telemetry, type TelemetryOptions } from '../engine/telemetry';
 import type { Ctx, Platform } from '../platform/types';
@@ -189,10 +189,15 @@ export class Game {
       this.loadTotal = t;
     });
     await fonts;
-    void this.audio.load('audio/');
+    // building the first scene asks for its own art (the hub's background and buildings); wait for that so the player doesn't see placeholders
+    const scene = first();
+    this.firstScene = () => scene;
+    await this.sprites.idle();
     this.tm.log('loaded', { ms: Math.round(this.platform.now() - t0) });
-    this.firstScene = first;
     this.loader.finish();
+    // the first screen is ready to go; the rest of the art and the sound arrive while the player is on it (gameplay art first)
+    this.sprites.startBackground();
+    void this.audio.load('audio/');
   }
 
   private cssW = 375;
@@ -215,7 +220,22 @@ export class Game {
     this.safeB = s.safeBottom * (this.W / s.width);
   }
 
-  go(scene: Scene, fade = false) {
+  /** A scene waiting for its art: shown as a small "loading" card over what's on screen until it's in. */
+  private waiting: { scene: Scene; fade: boolean } | null = null;
+
+  go(scene: Scene, fade = false, ready = false) {
+    // the hub's art is loaded first; every other screen waits here if its art is still on the way
+    if (!ready && scene.id !== 'hub' && this.sprites.waiting > 0) {
+      const w = { scene, fade };
+      this.waiting = w;
+      void this.sprites.whenReady(scene.id === 'play').then(() => {
+        if (this.waiting !== w) return;
+        this.waiting = null;
+        this.go(scene, fade, true);
+      });
+      return;
+    }
+    this.waiting = null;
     // a photo laid over the game for long-press saving belongs to the screen being left
     this.platform.showImage(null);
     if (fade && this.scene) this.fade = { next: scene, t: 0 };
@@ -270,6 +290,7 @@ export class Game {
     if (this.ready && this.scene) this.scene.render(ctx);
     else this.loader.render(ctx);
     this.renderMedals(ctx);
+    if (this.waiting) this.renderWaiting(ctx);
     if (this.fade) {
       const k = Math.min(1, this.fade.t / FADE);
       ctx.fillStyle = `rgba(28,22,18,${this.fade.next ? k : 1 - k})`;
@@ -277,6 +298,19 @@ export class Game {
     }
     this.platform.requestFrame(this.frame);
   };
+
+  private renderWaiting(ctx: Ctx) {
+    ctx.fillStyle = 'rgba(28,22,18,0.35)';
+    ctx.fillRect(0, 0, this.W, this.H);
+    const w = 320, h = 120, x = (this.W - w) / 2, y = (this.H - h) / 2;
+    roundRect(ctx, x, y, w, h, 28);
+    ctx.fillStyle = '#F6EEDC';
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#4A3B30';
+    ctx.stroke();
+    text(ctx, '加载中' + '.'.repeat(1 + (Math.floor(this.platform.now() / 400) % 3)), this.W / 2, y + h / 2, 38, { color: '#4A3B30', align: 'center', baseline: 'middle', bold: true });
+  }
 
   readSave(): SaveData {
     const base = { day: 1, coins: 0, best: {}, sound: true, tips: {}, stamps: {} } as unknown as SaveData;

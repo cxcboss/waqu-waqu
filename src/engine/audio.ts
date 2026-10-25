@@ -58,7 +58,8 @@ export class Audio {
       return;
     }
     const ids = Object.keys(this.defs).filter((id) => !id.startsWith('bgm_'));
-    for (let i = 0; i < ids.length; i += 8) await Promise.all(ids.slice(i, i + 8).map((id) => this.buffer(id)));
+    // a few at a time, so the sounds don't crowd out the pictures the first screen is still fetching
+    for (let i = 0; i < ids.length; i += 3) await Promise.all(ids.slice(i, i + 3).map((id) => this.buffer(id)));
   }
 
   private buffer(id: string): Promise<AudioBuffer | null> {

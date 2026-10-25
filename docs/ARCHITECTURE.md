@@ -81,3 +81,9 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - 衣帽装备：8 顶帽子、3 件围巾/领结/相机、邮差包/弹力鞋/脚蹼 1 级图标（`gear_bag/shoe/fin`，`gearIcon` 在 1 级自动用它）。
 - 换图脚本：`wa-qu/art-pipeline/round6.py`（原图先在本机裁到非透明边并缩到 800px 再传，因为 Mac 文件夹直传 2–3MB 大图会超时；背景存 jpg）。
 - 换图脚本：项目文件 `wa-qu/art-pipeline/round5.py`（裁掉透明边、按 final_size 放进画框、256 色 PNG、勋章另出灰版）。
+
+## 首次加载优化（2026-10-25）
+- 美术全部是 WebP：`scripts/optimize_art.py` 把 `public/art/` 里的 png/jpg 转成 webp（普通图质量 72，整屏背景缩到 1.2 倍设计宽度，其余最多 2 倍）、删原图、重写 manifest.json（只列精灵名，扩展名固定 .webp）。**新图换进来先放 png/jpg 再跑这个脚本**，不要对已有 webp 重复压缩。`scripts/art_design_widths.json` 记各精灵的设计宽度。不支持 WebP 的老浏览器会回退到代码绘制的占位图。美术目录 19 → 约 5 MB。
+- 分阶段加载（`sprites.ts` 的 `CORE`/`PLAY`、`Game.go`）：加载屏只等字体、脚本、主页自己的图和几张必需的小图（`CORE`），约 1.1 MB；等加载屏结束后才后台拉剩下的非 lazy 美术，先拉一天玩法要用的（`PLAY`：青蛙各姿势、包裹、荷叶、河……），再拉总部/家/福利社等。没到的精灵 `draw` 会跳过并优先请求。除主页外的场景在 `go()` 里检查：美术没到齐就先显示「加载中…」小卡片，到齐才切换（`play` 只等 `PLAY` 那一组）。新加非 lazy 精灵不用改任何东西；主页要用的才加进 `CORE`。
+- `public/sw.js`：Service Worker，同源资源先用缓存、后台更新（二次打开几乎不用联网）。新版本要多开一次才生效。只在 https 且非 dev 时注册（`main.web.ts`）。
+- 埋点请求 8 秒超时，音效降码率且每次只并发 3 个，并且在加载屏结束后才开始拉。

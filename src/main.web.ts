@@ -16,3 +16,5 @@ void game.start(() => (day >= 1 ? new PlayScene(game, day) : new HubScene(game))
 (window as unknown as { __game: Game }).__game = game;
 // the page's own splash gives way to the game's loading screen once that has drawn
 requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('boot')?.remove()));
+// keep downloaded art and sound on the device: the second visit (and a bad connection) skips the network
+if ('serviceWorker' in navigator && location.protocol === 'https:' && !dev) window.addEventListener('load', () => void navigator.serviceWorker.register('sw.js').catch(() => undefined));
