@@ -278,7 +278,7 @@ export const SPRITE_DEFS: Readonly<Record<string, SpriteDef>> = D;
 
 /**
  * Holds the game's art. Painted images listed in `art/manifest.json` are used where they exist
- * (a bare name is a PNG; backgrounds may be listed with their extension, e.g. "river.jpg");
+ * (every entry is a WebP named after its sprite; scripts/optimize_art.py makes them);
  * everything else is rasterized from the SVG placeholders once, at the current render scale.
  * A painting covers its sprite's bounds box exactly, so it lines up with the same anchor.
  */
@@ -382,7 +382,7 @@ export class SpriteBank {
       for (const n of Array.isArray(list) ? list : []) {
         if (typeof n !== 'string') continue;
         const name = n.replace(/\.(png|jpg|jpeg|webp)$/i, '');
-        if (name in D) out.set(name, name === n ? n + '.png' : n);
+        if (name in D) out.set(name, name + '.webp');
       }
     } catch {
       // no painted art yet

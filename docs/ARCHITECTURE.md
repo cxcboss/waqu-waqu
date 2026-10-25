@@ -81,3 +81,9 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - 衣帽装备：8 顶帽子、3 件围巾/领结/相机、邮差包/弹力鞋/脚蹼 1 级图标（`gear_bag/shoe/fin`，`gearIcon` 在 1 级自动用它）。
 - 换图脚本：`wa-qu/art-pipeline/round6.py`（原图先在本机裁到非透明边并缩到 800px 再传，因为 Mac 文件夹直传 2–3MB 大图会超时；背景存 jpg）。
 - 换图脚本：项目文件 `wa-qu/art-pipeline/round5.py`（裁掉透明边、按 final_size 放进画框、256 色 PNG、勋章另出灰版）。
+
+## 首次加载优化（2026-10-25）
+- 美术全部是 WebP：`scripts/optimize_art.py` 把 `public/art/` 里的 png/jpg 转成 webp（质量 80，超过 2 倍设计宽度的缩小）、删原图、重写 manifest.json（只列精灵名，扩展名固定 .webp）。新图换进来后先放 png 再跑这个脚本。`scripts/art_design_widths.json` 记各精灵的设计宽度。不支持 WebP 的老浏览器会回退到代码绘制的占位图。
+- 首屏体积 7.8 MB / 153 请求 → 3.7 MB（美术 5.8 → 2.1 MB，音效 1.2 → 0.7 MB）；整个 art 目录 19 → 6 MB。
+- `public/sw.js`：Service Worker，同源资源先用缓存、后台更新（二次打开几乎不用联网）。新版本要多开一次才生效。只在 https 且非 dev 时注册（`main.web.ts`）。
+- 埋点请求 8 秒超时，音效每次只并发 3 个，避免挤占首屏图片。

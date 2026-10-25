@@ -300,11 +300,16 @@ export class WebPlatform implements Platform {
   }
 
   async postJson(url: string, body: string, headers: Record<string, string>, keepalive = false): Promise<number> {
+    // the stats server is often unreachable from mainland China: give up quickly instead of holding the connection (and the queue) open
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), 8000);
     try {
-      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body, keepalive });
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body, keepalive, signal: stop.signal });
       return r.status;
     } catch {
       return 0;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
