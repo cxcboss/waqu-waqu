@@ -23,6 +23,8 @@ export function earnedStamps(cfg: DayConfig, r: DayResult, grade: string): [bool
   else if (ch.kind === 'urgentFast') third = r.fastUrgent;
   else if (ch.kind === 'multi') third = r.bestTrip >= ch.n;
   else if (ch.kind === 'codAll') third = r.codTotal > 0 && r.codRight === r.codTotal;
+  else if (ch.kind === 'noWrong') third = r.wrong === 0;
+  else if (ch.kind === 'all') third = r.delivered === r.total;
   else third = r.wrong === 0 && r.wet === 0;
   // the extra stamps only count on a day that was finished properly
   return [ok, ok && (grade === 'S' || grade === 'A'), ok && third];
