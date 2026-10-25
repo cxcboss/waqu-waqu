@@ -2,7 +2,7 @@ import { INK, P } from '../art/palette';
 import { button, ellipse, hit, panel, pressIn, pressOut, roundRect, text, type Rect } from '../art/ui';
 import { clamp, easeOutBack, easeOutCubic, lerp } from '../engine/math';
 import type { Ctx } from '../platform/types';
-import { DAYS } from './config';
+import { CHAPTERS, DAYS, DAYS_PER_CHAPTER, chapterOf } from './config';
 import type { Game, Scene } from './game';
 import { PlayScene } from './play';
 import { STAMP_GLYPHS, STAMP_NAMES, stampRules } from './progress';
@@ -21,6 +21,8 @@ export class MapScene implements Scene {
   readonly id = 'map';
   private t = 0;
   private sel: number;
+  /** The chapter on show; arrows in the ribbon page through all six. */
+  private view: number;
   /** The frog hopping from one stop to another. */
   private hop: { from: number; t: number } | null = null;
   private stops: Stop[] = [];
@@ -31,6 +33,7 @@ export class MapScene implements Scene {
 
   constructor(private game: Game, day?: number) {
     this.sel = clamp(day ?? game.save.day, 1, this.unlocked);
+    this.view = chapterOf(this.sel);
     game.audio.setMusic('bgm_title');
     game.tm.day = null;
     game.tm.log('map', { sel: this.sel, unlocked: this.unlocked });
@@ -69,6 +72,12 @@ export class MapScene implements Scene {
     const b = this.btns.find((b) => b.id === id && hit(b.rect, x, y, 6));
     if (!b) return;
     const au = this.game.audio;
+    if (b.id === 'prev' || b.id === 'next') {
+      this.view = clamp(this.view + (b.id === 'next' ? 1 : -1), 0, CHAPTERS.length - 1);
+      this.sheetT = 0;
+      au.play('ui_confirm', { volume: 0.5 });
+      return;
+    }
     this.game.tm.log(b.id === 'go' ? 'map_go' : 'map_back', { sel: this.sel, sec: Math.round(this.t) });
     if (b.id === 'back') {
       au.play('ui_back');
@@ -120,15 +129,21 @@ export class MapScene implements Scene {
 
     // stops zigzag up the river, day 1 at the bottom
     const y0 = sheetTop - 120, y1 = top + 350;
-    this.stops = DAYS.map((d, i) => ({ day: d.day, x: i % 2 ? 530 : 220, y: lerp(y0, y1, i / (DAYS.length - 1)) }));
+    this.stops = DAYS.filter((d) => chapterOf(d.day) === this.view).map((d, i) => ({ day: d.day, x: i % 2 ? 530 : 220, y: lerp(y0, y1, i / (DAYS_PER_CHAPTER - 1)) }));
     const pts: [number, number][] = [[300, H + 80], ...this.stops.map((s): [number, number] => [s.x, s.y]), [400, top + 120], [375, -80]];
     this.drawRiver(ctx, pts);
 
     // willows along the banks, it's spring in 柳湾
     for (const [x, y, s] of [[66, y0 - 40, 1], [690, y0 - 170, 0.9], [60, lerp(y0, y1, 0.5) - 30, 0.85], [700, lerp(y0, y1, 0.75), 1], [80, y1 + 20, 0.8]] as const) this.willow(ctx, x, y, s);
 
-    // chapter two waits in the mist
-    this.drawFog(ctx, top + 222);
+    const tint = CHAPTERS[this.view].tint;
+    if (tint) {
+      ctx.fillStyle = tint;
+      ctx.fillRect(0, 0, 750, H);
+    }
+
+    // the next chapter waits in the mist
+    if (this.view < CHAPTERS.length - 1 && this.view + 1 > chapterOf(this.unlocked)) this.drawFog(ctx, top + 222, `第${'一二三四五六'[this.view + 1]}章 · ${CHAPTERS[this.view + 1].title}`);
 
     const unlocked = this.unlocked;
     this.stops.forEach((s, i) => {
@@ -155,10 +170,11 @@ export class MapScene implements Scene {
     });
 
     // the frog on the chosen stop, hopping over when another is picked
-    const to = this.stops[this.sel - 1];
+    const to = this.stops.find((s) => s.day === this.sel);
+    if (to) {
     let fx = to.x, fy = to.y - 8, z = 0, name = 'frog_happy';
     if (this.hop) {
-      const from = this.stops[this.hop.from - 1];
+      const from = this.stops.find((s) => s.day === this.hop!.from) ?? to;
       const k = easeOutCubic(this.hop.t / HOP_T);
       fx = lerp(from.x, to.x, k);
       fy = lerp(from.y, to.y, k) - 8;
@@ -172,6 +188,7 @@ export class MapScene implements Scene {
     ctx.fill();
     ctx.restore();
     sp.draw(ctx, name, fx, fy - z, 0.85, 0.85);
+    }
 
     // header
     this.btns = [];
@@ -187,7 +204,7 @@ export class MapScene implements Scene {
     ctx.stroke();
     text(ctx, '‹ 主页', 86, top + 49, 26, { bold: true });
     pressOut(ctx, this.pressed === 'back', () => roundRect(ctx, 26, top + 20, 120, 56, 28));
-    text(ctx, '河湾线 · 路线图', 375, top + 49, 34, { bold: true });
+    text(ctx, '路线图', 375, top + 49, 34, { bold: true });
     sp.draw(ctx, 'coin', 618, top + 48, 0.6);
     text(ctx, String(this.game.save.coins), 696, top + 49, 26, { bold: true, align: 'right' });
     // chapter ribbon
@@ -212,7 +229,28 @@ export class MapScene implements Scene {
     roundRect(ctx, -170, -24, 340, 48, 8);
     ctx.fill();
     ctx.stroke();
-    text(ctx, '第一章 · 春 · 柳湾', 0, 1, 28, { bold: true, color: P.white });
+    ctx.restore();
+    for (const [id, bx, ch, off] of [['prev', 50, '‹', this.view === 0], ['next', 700, '›', this.view === CHAPTERS.length - 1]] as const) {
+      const rect = { x: bx - 32, y: ry - 32, w: 64, h: 64 };
+      if (!off) this.btns.push({ id, rect });
+      const d = this.pressed === id;
+      pressIn(ctx, rect, d);
+      ctx.save();
+      ctx.globalAlpha = off ? 0.3 : 1;
+      ellipse(ctx, bx, ry, 28, 28);
+      ctx.fillStyle = P.cream;
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      text(ctx, ch, bx, ry - 3, 40, { bold: true });
+      ctx.restore();
+      pressOut(ctx, d, () => ellipse(ctx, bx, ry, 28, 28));
+    }
+    ctx.save();
+    ctx.translate(375, ry);
+    ctx.rotate(-0.015);
+    text(ctx, `第${'一二三四五六'[this.view]}章 · ${CHAPTERS[this.view].title}`, 0, 1, 26, { bold: true, color: P.white, maxWidth: 330 });
     ctx.restore();
 
     this.drawSheet(ctx, sheetTop, sheetH);
@@ -312,7 +350,7 @@ export class MapScene implements Scene {
   }
 
   /** Clouds over the river's top end, where the next chapter will be. */
-  private drawFog(ctx: Ctx, y: number) {
+  private drawFog(ctx: Ctx, y: number, title: string) {
     ctx.save();
     for (let i = 0; i < 9; i++) {
       const x = 40 + i * 84 + Math.sin(this.t * 0.4 + i) * 10;
@@ -321,7 +359,7 @@ export class MapScene implements Scene {
       ctx.fill();
     }
     ctx.restore();
-    text(ctx, '第二章 · 初夏 · 荷花塘', 375, y - 4, 26, { bold: true, color: P.inkSoft });
+    text(ctx, title, 375, y - 4, 26, { bold: true, color: P.inkSoft });
     text(ctx, '雾还没散，敬请期待', 375, y + 30, 22, { color: P.inkSoft });
   }
 

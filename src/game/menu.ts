@@ -285,6 +285,11 @@ const NECK: Record<string, [number, number]> = {
   frog_stand: [0, -86], frog_happy: [0, -86], frog_nervous: [0, -86], frog_shock: [0, -86], frog_crouch: [0, -84], frog_jump: [0, -88],
 };
 
+/** How far each hat rides above the head anchor so its brim clears the eyes (they bulge from the top of the head). */
+const HAT_LIFT: Record<string, number> = {
+  hat_straw: 22, hat_flower: 0, hat_beanie: 14, hat_beret: 12, hat_top: 14, hat_pilot: 26, hat_swim: 14, hat_gold: 14,
+};
+
 /**
  * The frog in what it's wearing. For now the clothes are laid over the painted frog; once the frog
  * is drawn in parts (body without cap, see the growth plan) they'll hang on the same anchor points.
@@ -294,7 +299,7 @@ export function drawDressedFrog(ctx: Ctx, sp: SpriteBank, wear: Wear, pose: stri
   const head = HEAD[pose] ?? HEAD.frog_stand;
   const neck = NECK[pose] ?? NECK.frog_stand;
   if (wear.neck && sp.has(wear.neck)) sp.draw(ctx, wear.neck, x + neck[0] * K * s, y + neck[1] * K * sy, s, sy);
-  if (wear.hat && sp.has(wear.hat)) sp.draw(ctx, wear.hat, x + head[0] * K * s, y + head[1] * K * sy, s, sy);
+  if (wear.hat && sp.has(wear.hat)) sp.draw(ctx, wear.hat, x + head[0] * K * s, y + (head[1] - (HAT_LIFT[wear.hat] ?? 0)) * K * sy, s, sy);
 }
 
 /** Short date like 10月22日. */

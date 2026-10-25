@@ -40,7 +40,9 @@ export type Challenge =
   | { kind: 'urgentFast'; label: string; sec: number }
   | { kind: 'multi'; label: string; n: number }
   | { kind: 'codAll'; label: string }
-  | { kind: 'clean'; label: string };
+  | { kind: 'clean'; label: string }
+  | { kind: 'noWrong'; label: string }
+  | { kind: 'all'; label: string };
 
 export const DAYS: DayConfig[] = [
   {
@@ -122,10 +124,85 @@ export const DAYS: DayConfig[] = [
   },
 ];
 
+/** The six chapters, five days each; a day's chapter is `chapterOf(day)`. */
+export const CHAPTERS = [
+  { title: '春 · 柳湾', tint: null },
+  { title: '初夏 · 荷花塘', tint: 'rgba(120,200,120,0.16)' },
+  { title: '雨季 · 急流峡', tint: 'rgba(70,100,140,0.28)' },
+  { title: '秋 · 枫叶溪', tint: 'rgba(230,140,50,0.24)' },
+  { title: '冬 · 冰河', tint: 'rgba(200,225,250,0.38)' },
+  { title: '年末 · 港口集市', tint: 'rgba(240,170,90,0.2)' },
+] as const;
+export const DAYS_PER_CHAPTER = 5;
+export const chapterOf = (day: number) => Math.floor((day - 1) / DAYS_PER_CHAPTER);
+
+/** The two storm days are allowed to be failed with half the parcels. */
+const HARD_DAYS = [15, 25];
+
+// Days 6–30: [name, speed, houses, orders, urgent, cod, codNote, sizes, predictDelay, challenge, intro].
+type Row = [string, number, number, number, number, number, 10 | 20, Size[], number, Challenge, string];
+const noFall: Challenge = { kind: 'noFall', label: '一次都不落水' };
+const noWet: Challenge = { kind: 'clean', label: '不错投，也不泡水' };
+const noWrong: Challenge = { kind: 'noWrong', label: '一个都不错投' };
+const allIn: Challenge = { kind: 'all', label: '包裹全部送达' };
+const codAll: Challenge = { kind: 'codAll', label: '到付件找零全部正确' };
+const multi = (n: number): Challenge => ({ kind: 'multi', label: `一趟送出 ${n} 个包裹`, n });
+const fast = (sec: number): Challenge => ({ kind: 'urgentFast', label: `加急件 ${sec} 秒内送到`, sec });
+const MIX: Size[] = [0, 1, 1, 2];
+const LATER: Row[] = [
+  // 初夏 · 荷花塘
+  ['荷花开了', 50, 8, 8, 1, 1, 10, [0, 0, 1, 1], 1.2, noFall, '进入荷花塘，房子更多了'],
+  ['乌龟爷爷', 52, 8, 8, 1, 1, 10, [0, 1, 1], 1.2, multi(3), '多背几件一起送，路线要规划'],
+  ['兔小妹的婚礼', 48, 8, 7, 1, 1, 20, [1, 1, 2], 1.2, noWrong, '婚礼用品都是中大件，看准码牌'],
+  ['冰棍要化了', 56, 9, 9, 2, 1, 20, [0, 0, 1], 1.2, fast(18), '加急件变多，倒计时不等人'],
+  ['盛夏考核', 58, 9, 10, 2, 2, 20, MIX, 1.2, noWet, '夏天的考核：什么都会遇到'],
+  // 雨季 · 急流峡
+  ['峡谷入口', 54, 9, 9, 1, 1, 20, MIX, 1.2, noFall, '河水变急了，车开得更快'],
+  ['河狸的水坝', 56, 9, 9, 1, 2, 20, MIX, 1.2, codAll, '到付件变多，算好找零'],
+  ['下雨了', 58, 9, 10, 2, 1, 20, MIX, 1.2, noWet, '雨天路滑，别泡了包裹'],
+  ['漩涡湾', 60, 10, 10, 2, 2, 20, MIX, 1.2, multi(3), '房子更密，一趟多送几件'],
+  ['暴雨夜班', 64, 10, 10, 3, 2, 20, [1, 2, 2, 1], 1.2, noFall, '超难关：大件多、车速快，送对五成就算过'],
+  // 秋 · 枫叶溪
+  ['枫叶飘落', 54, 9, 9, 1, 1, 20, MIX, 1.2, noWrong, '秋天来了，节奏稍缓，认真看码牌'],
+  ['起风了', 56, 9, 10, 1, 1, 20, MIX, 1.2, fast(18), '风起了，加急件要赶'],
+  ['猫头鹰跟车日', 54, 9, 9, 2, 2, 20, MIX, 1.2, codAll, '经理盯着，到付件别找错钱'],
+  ['萤火虫夜路', 56, 10, 10, 1, 1, 20, MIX, 1.2, noFall, '夜路难行，一步一步来'],
+  ['双十一爆仓', 50, 10, 10, 3, 2, 20, [0, 0, 0, 1], 1.2, allIn, '包裹堆成山，小件多，争取全送达'],
+  // 冬 · 冰河
+  ['初雪', 56, 9, 9, 1, 1, 20, MIX, 1.2, noFall, '下雪了，河面更安静'],
+  ['薄冰', 58, 9, 10, 1, 2, 20, MIX, 1.2, noWet, '别掉进冰冷的河里'],
+  ['熊宝宝在冬眠', 54, 9, 9, 1, 1, 20, MIX, 1.2, noWrong, '慢慢送，别送错'],
+  ['冰河急弯', 62, 10, 10, 2, 2, 20, MIX, 1.2, multi(3), '车速加快，一趟多送'],
+  ['暴风雪', 66, 10, 10, 3, 2, 20, [1, 2, 2, 1], 1.2, noWet, '超难关：风雪夜行，送对五成就算过'],
+  // 年末 · 港口集市
+  ['港口初到', 58, 10, 10, 1, 1, 20, MIX, 1.2, noFall, '到了港口，房子又多又密'],
+  ['起重机', 60, 10, 10, 2, 1, 20, [1, 1, 2, 2], 1.2, multi(3), '大件偏多，挑着背'],
+  ['海鸥来了', 62, 10, 10, 2, 2, 20, MIX, 1.2, noWrong, '动作要快，别磨蹭'],
+  ['年货大集', 64, 10, 10, 2, 3, 20, MIX, 1.2, codAll, '年货到付件特别多'],
+  ['除夕最后一单', 66, 10, 10, 3, 3, 20, [0, 1, 1, 2], 1.2, allIn, '最后一天：把所有包裹都送到'],
+];
+
+DAYS.push(
+  ...LATER.map(([name, speed, houses, orders, urgent, cod, codNote, sizes, predictDelay, challenge, intro], i): DayConfig => {
+    const day = 6 + i;
+    const rows: [string, string][] = [
+      ['code', `今天【${orders} 单】，共【${houses} 户】`],
+    ];
+    if (urgent) rows.push(['box0u', `【加急件 ${urgent} 个】有奖金`]);
+    if (cod) rows.push(['cod', `【到付 ${cod} 个】，给 ${codNote} 元`]);
+    rows.push(['lily1', `河水【更急】，别掉队！`]);
+    return {
+      day, length: houses * 970 + 100, speed, houses, orders, urgent, sizes, bagSlots: 4, predictDelay,
+      markTargets: false, tutorial: false, seed: day * 101, name, ordered: false, cod, codNote, challenge, intro,
+      brief: { title: `第${day}天 · ${name}`, rows },
+    };
+  }),
+);
+
 /** Share of parcels that have to reach the right house for the day to count as passed. */
 export const PASS_RATE = 0.6;
 /** The first day is a lesson: half the parcels is a pass. */
-export const passRate = (day: number) => (day <= 1 ? 0.5 : PASS_RATE);
+export const passRate = (day: number) => (day <= 1 || HARD_DAYS.includes(day) ? 0.5 : PASS_RATE);
 
 export const SIZE_INFO: { slots: number; weight: number; pay: number; label: string }[] = [
   { slots: 1, weight: 1, pay: 10, label: '小件' },
