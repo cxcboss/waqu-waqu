@@ -75,6 +75,8 @@ for (const [name, alias] of [
   ['frog_yawn', 'frog_happy'], ['frog_look', 'frog_stand'], ['frog_flip', 'frog_crouch'], ['frog_dragged', 'frog_nervous'],
   ['frog_flung', 'frog_shock'], ['frog_dizzy', 'frog_nervous'],
 ]) paintedOnly(name, FB, alias);
+// The frog without its postman cap, for wearing a hat of its own
+for (const k of ['stand', 'happy', 'nervous', 'shock', 'crouch', 'jump']) paintedOnly(`frog_${k}_nc`, FB, `frog_${k}`);
 paintedOnly('frog_kick', [-104, -116, 104, 44], 'frog_swim');
 def('satchel0', [-30, -12, 36, 40], () => A.satchel(0));
 def('satchel1', [-36, -12, 42, 48], () => A.satchel(1));
@@ -425,6 +427,11 @@ export class SpriteBank {
     const s = this.map.get(name);
     if (!s) throw new Error('missing sprite ' + name);
     return s;
+  }
+
+  /** Bounds of a sprite in concept units relative to its anchor. */
+  bounds(name: string): SpriteDef['b'] {
+    return D[name].b;
   }
 
   /** Draws a sprite with its anchor at (x, y), optionally scaled, rotated and faded. */

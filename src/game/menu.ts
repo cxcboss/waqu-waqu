@@ -277,29 +277,84 @@ export function dialog(ctx: Ctx, game: Game, taps: Taps, id: string, w: number, 
   return { x, y, w, h };
 }
 
-/** Where a hat or a scarf sits on each frog drawing (concept units from the frog's anchor). */
-const HEAD: Record<string, [number, number]> = {
-  frog_stand: [0, -150], frog_happy: [0, -150], frog_nervous: [0, -150], frog_shock: [0, -150], frog_crouch: [0, -146], frog_jump: [0, -150],
-};
-const NECK: Record<string, [number, number]> = {
-  frog_stand: [0, -86], frog_happy: [0, -86], frog_nervous: [0, -86], frog_shock: [0, -86], frog_crouch: [0, -84], frog_jump: [0, -88],
-};
-
-/** How far each hat rides above the head anchor so its brim clears the eyes (they bulge from the top of the head). */
-const HAT_LIFT: Record<string, number> = {
-  hat_straw: 22, hat_flower: 0, hat_beanie: 14, hat_beret: 12, hat_top: 14, hat_pilot: 26, hat_swim: 14, hat_gold: 14,
+/**
+ * Where the head and neck are on each painted frog (pixels of the 416x472 PNG; the frog's anchor is
+ * at (208, 392)). cx/top = middle and top of the eyes, w = head width, rot = head tilt in radians,
+ * cap = top of the frog's own postman cap, neck = [x, y] of the chin where scarves hang.
+ */
+interface FrogHead { cx: number; top: number; w: number; rot: number; cap: number; neck: [number, number]; }
+const HEADS: Record<string, FrogHead> = {
+  frog_stand: { cx: 209, top: 61, w: 236, rot: 0, cap: 29, neck: [209, 196] },
+  frog_happy: { cx: 209, top: 58, w: 248, rot: 0, cap: 23, neck: [209, 192] },
+  frog_nervous: { cx: 207, top: 60, w: 232, rot: 0, cap: 27, neck: [207, 196] },
+  frog_shock: { cx: 207, top: 55, w: 230, rot: 0, cap: 15, neck: [207, 202] },
+  frog_crouch: { cx: 228, top: 117, w: 245, rot: -0.07, cap: 84, neck: [226, 250] },
+  frog_jump: { cx: 211, top: 85, w: 222, rot: -0.014, cap: 55, neck: [210, 236] },
 };
 
 /**
- * The frog in what it's wearing. For now the clothes are laid over the painted frog; once the frog
- * is drawn in parts (body without cap, see the growth plan) they'll hang on the same anchor points.
+ * How each hat sits: width as a share of the head, and how far its lower edge dips below the top of
+ * the eyes (px at head width 236; scales with the head). `onCap` hats keep the frog's own cap on.
+ */
+const HATS: Record<string, { w: number; dip: number; dx?: number; onCap?: boolean }> = {
+  hat_straw: { w: 1.12, dip: 20 },
+  hat_beanie: { w: 0.88, dip: 8 },
+  hat_beret: { w: 0.98, dip: 6 },
+  hat_top: { w: 0.8, dip: 8 },
+  hat_pilot: { w: 0.95, dip: 28 },
+  hat_swim: { w: 0.74, dip: 20 },
+  hat_gold: { w: 0.66, dip: 40 },
+  hat_flower: { w: 0.3, dip: 0, dx: 34, onCap: true },
+};
+
+/** The painted part of each worn item as a share of its PNG [left, top, right, bottom] (the PNGs carry some empty margin). */
+const VIS: Record<string, [number, number, number, number]> = {
+  hat_beanie: [0.062, 0.007, 0.938, 0.993], hat_beret: [0.005, 0.02, 0.995, 0.971], hat_flower: [0.013, 0.229, 0.987, 0.762],
+  hat_gold: [0.007, 0.061, 0.993, 0.939], hat_pilot: [0.006, 0.02, 0.994, 0.974], hat_straw: [0.048, 0.008, 0.952, 0.992],
+  hat_swim: [0.007, 0.096, 0.993, 0.904], hat_top: [0.006, 0.161, 0.994, 0.833], neck_bow: [0.008, 0.083, 0.992, 0.917],
+  neck_camera: [0.136, 0.008, 0.856, 0.992], neck_scarf: [0.113, 0.008, 0.887, 0.992],
+};
+
+/** Scarf, bow and camera: [width share of the head, drop below the chin in px]. */
+const NECKS: Record<string, [number, number]> = { neck_scarf: [0.78, 12], neck_bow: [0.5, 6], neck_camera: [0.44, 8] };
+
+/**
+ * The frog in what it's wearing. The clothes are laid over the painted frog; a hat other than the
+ * flower swaps in the frog drawn without its own cap (`<pose>_nc`) so two hats never stack.
  */
 export function drawDressedFrog(ctx: Ctx, sp: SpriteBank, wear: Wear, pose: string, x: number, y: number, s = 1, sy = s) {
-  sp.draw(ctx, pose, x, y, s, sy);
-  const head = HEAD[pose] ?? HEAD.frog_stand;
-  const neck = NECK[pose] ?? NECK.frog_stand;
-  if (wear.neck && sp.has(wear.neck)) sp.draw(ctx, wear.neck, x + neck[0] * K * s, y + neck[1] * K * sy, s, sy);
-  if (wear.hat && sp.has(wear.hat)) sp.draw(ctx, wear.hat, x + head[0] * K * s, y + (head[1] - (HAT_LIFT[wear.hat] ?? 0)) * K * sy, s, sy);
+  const h = HEADS[pose] ?? HEADS.frog_stand;
+  const hat = wear.hat && sp.has(wear.hat) ? HATS[wear.hat] : undefined;
+  const bare = hat && !hat.onCap && sp.has(`${pose}_nc`);
+  sp.draw(ctx, bare ? `${pose}_nc` : pose, x, y, s, sy);
+  // PNG pixel -> screen: 2 px per concept unit, K screen units per concept unit
+  const px = K / 2;
+  const at = (u: number, v: number) => [x + (u - 208) * px * s, y + (v - 392) * px * sy] as const;
+  if (wear.neck && sp.has(wear.neck) && NECKS[wear.neck]) {
+    const [wf, drop] = NECKS[wear.neck];
+    const [nx, ny] = at(h.neck[0], h.neck[1] + drop * (h.w / 236));
+    putOn(ctx, sp, wear.neck, nx, ny, h.w * wf * px * s, 0, false);
+  }
+  if (hat && wear.hat) {
+    const k = h.w / 236;
+    const [hx, hy] = at(h.cx + (hat.dx ?? 0) * k, (hat.onCap ? h.cap + 34 * k : h.top + hat.dip * k));
+    putOn(ctx, sp, wear.hat, hx, hy, h.w * hat.w * px * s, h.rot, true);
+  }
+}
+
+/** Draws a worn item whose painted part is `width` screen units wide, its bottom edge (hats) or top edge (neckwear) at (x, y). */
+function putOn(ctx: Ctx, sp: SpriteBank, name: string, x: number, y: number, width: number, rot: number, bottom: boolean) {
+  const b = sp.bounds(name);
+  const v = VIS[name] ?? [0, 0, 1, 1];
+  const bw = (b[2] - b[0]) * K, bh = (b[3] - b[1]) * K;
+  const k = width / (bw * (v[2] - v[0]));
+  ctx.save();
+  ctx.translate(x, y);
+  if (rot) ctx.rotate(rot);
+  // sprite anchor (the origin of its bounds) relative to the contact point
+  const cx = (v[0] + v[2]) / 2, cy = bottom ? v[3] : v[1];
+  sp.draw(ctx, name, (-b[0] * K - bw * cx) * k, (-b[1] * K - bh * cy) * k, k);
+  ctx.restore();
 }
 
 /** Short date like 10月22日. */

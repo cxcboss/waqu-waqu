@@ -437,5 +437,11 @@
   "hub_hq_eve",
   "hub_shop_eve",
   "hub_home_eve",
-  "home_room.jpg"
+  "home_room.jpg",
+  "frog_stand_nc",
+  "frog_happy_nc",
+  "frog_nervous_nc",
+  "frog_shock_nc",
+  "frog_crouch_nc",
+  "frog_jump_nc"
 ]
