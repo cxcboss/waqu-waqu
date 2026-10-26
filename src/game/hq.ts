@@ -4,6 +4,7 @@ import { button, ellipse, hit, panel, pressIn, pressOut, roundRect, text, type R
 import { clamp, easeInCubic, easeOutBack, easeOutCubic } from '../engine/math';
 import type { Canvas, Ctx } from '../platform/types';
 import { rankOf, recordDay, type DayRecord } from './career';
+import { PASS_RATE, TUNING, passRate } from './config';
 import { dayConfig } from './level';
 import type { Game, Scene } from './game';
 import { HubScene } from './hub';
@@ -38,8 +39,12 @@ export interface DayResult {
   falls: number;
   wrongNames: string[];
   photos: Photo[];
-  /** Cash-on-delivery parcels, how many got the right change, and the tips and losses from it. */
+  /** Cash-on-delivery parcels handed over, how many got the right change, and the tips and losses from it. */
   codTotal: number;
+  /** All of the day's cash-on-delivery parcels, handed over or not (the 到付 challenge wants every one). */
+  codOrders: number;
+  /** Times the lifeline rope hauled the frog back (at most once a day). */
+  rope: number;
   codRight: number;
   codTips: number;
   codLoss: number;
@@ -68,18 +73,24 @@ const GRADES: Record<string, { name: string; line: string }> = {
   A: { name: '优 秀', line: '不错嘛，明天继续保持。' },
   B: { name: '良 好', line: '今天……还行吧。' },
   C: { name: '及 格', line: '这样下去，工资要扣光了。' },
-  D: { name: '待改进', line: '你是来送快递，还是来游泳的？' },
+  D: { name: '待改进', line: '勉强过关，明天用心点。' },
 };
+/** The rating stamp on a day that wasn't passed, whatever the score. */
+const FAILED = '未通过';
+const TENTHS = '零一二三四五六七八九十';
 const ORDER = 'SABCD';
 
 const ROW_GAP = 0.28;
+/** First row of the report and the distance between rows, on the sheet. */
+const ROW_Y = 154;
+const ROW_H = 42;
 const SHEET_H = 622;
 /** Share of the wide shot the polaroid shows. */
 const THUMB_CROP = 0.6;
 
 
 interface Row {
-  icon: 'ok' | 'wrong' | 'wet' | 'miss' | 'urgent' | 'cod' | 'stamp';
+  icon: 'ok' | 'wrong' | 'wet' | 'miss' | 'rope' | 'urgent' | 'cod' | 'stamp';
   label: string;
   value: string;
   money: string;
@@ -121,27 +132,28 @@ export class HqScene implements Scene {
 
   constructor(private game: Game, private r: DayResult) {
     const score = r.total ? (r.delivered + 0.3 * r.urgentOnTime - 0.5 * r.wrong - 0.5 * r.wet) / r.total : 0;
-    let grade = score >= 0.95 && r.wrong + r.wet === 0 ? 'S' : score >= 0.75 ? 'A' : score >= 0.5 ? 'B' : score >= 0.25 ? 'C' : 'D';
+    let grade = score >= 0.95 && r.wrong + r.wet === 0 && r.delivered === r.total ? 'S' : score >= 0.75 ? 'A' : score >= 0.5 ? 'B' : score >= 0.25 ? 'C' : 'D';
     if (r.thrown && ORDER.indexOf(grade) < 2) grade = 'B';
+    this.pass = passed(r);
+    // a day that has to be run again doesn't get a passing mark on its stamp
+    if (!this.pass) grade = 'D';
     this.grade = grade;
     this.income = r.pay + r.bonus + r.codTips - r.penalty - r.codLoss;
-    this.pass = passed(r);
     this.stamps = earnedStamps(dayConfig(r.day), r, grade);
     const had = game.save.stamps[r.day] ?? [];
     this.fresh = this.stamps.map((v, i) => v && !had[i]);
     // higher ranks get a share more of the base pay
     this.rankCoins = Math.round(r.pay * rankOf(game.save).pay);
-    this.owlLine = r.thrown ? '被甩出去了？明天坐稳点。' : !this.pass ? '送对的太少，这一天得重跑。' : GRADES[grade].line;
-    this.note = r.wet ? '“包裹泡了水，可不算送到哦。”'
-      : r.wrong ? `“${r.wrongNames[0]}说没买过这个……”`
-        : r.missed ? `“还有 ${r.missed} 个包裹没送出去。”`
-          : '“干净利落，我喜欢。”';
+    this.owlLine = this.owl(!!had[0]);
+    this.note = this.noteLine();
     const pay = r.pay + this.rankCoins;
+    const rope = r.rope || 0;
     this.left = [
       { icon: 'ok', label: '正确配送', value: `${r.delivered} 单`, money: pay ? `+${pay}` : '0' },
-      { icon: 'wrong', label: '错误配送', value: `${r.wrong} 单`, money: r.wrong ? `-${r.wrong * 5}` : '0' },
-      { icon: 'wet', label: '落水损坏', value: `${r.wet} 单`, money: r.wet ? `-${r.wet * 5}` : '0' },
+      { icon: 'wrong', label: '错误配送', value: `${r.wrong} 单`, money: r.wrong ? `-${r.wrong * TUNING.wrongPenalty}` : '0' },
+      { icon: 'wet', label: '落水损坏', value: `${r.wet} 单`, money: r.wet ? `-${r.wet * TUNING.wetPenalty}` : '0' },
       { icon: 'miss', label: '漏送', value: `${r.missed} 单`, money: '—' },
+      { icon: 'rope', label: '救命绳', value: `${rope} 次`, money: rope ? `-${rope * TUNING.ropePenalty}` : '0' },
     ];
     const cod = r.codTips - r.codLoss;
     this.right = [
@@ -149,13 +161,14 @@ export class HqScene implements Scene {
       { icon: 'cod', label: '到付找零', value: r.codTotal ? `${r.codRight} / ${r.codTotal}` : '—', money: cod > 0 ? `+${cod}` : cod < 0 ? `${cod}` : '' },
       { icon: 'stamp', label: '好评章', value: '', money: '' },
     ];
-    this.stampAt = 0.7 + (this.left.length + this.right.length + 1) * ROW_GAP + 0.35;
+    this.stampAt = 0.7 + (Math.max(this.left.length, this.right.length + 1) + 1) * ROW_GAP + 0.35;
     this.endAt = this.stampAt + 0.5 + r.photos.length * 0.28 + 0.2;
 
     // Save progress
     const s = game.save;
     // only a passed day opens the next one
     if (this.pass) s.day = Math.max(s.day, Math.min(r.day + 1, game.lastDay));
+    if (this.pass && r.day >= game.lastDay) s.cleared = true;
     s.stamps[r.day] = this.stamps.map((v, i) => v || !!had[i]);
     const prev = s.best[r.day];
     if (!prev || ORDER.indexOf(grade) < ORDER.indexOf(prev)) s.best[r.day] = grade;
@@ -178,6 +191,49 @@ export class HqScene implements Scene {
     return this.r.day < this.game.lastDay && this.game.save.day > this.r.day;
   }
 
+  /** The owl's line: it never says "tomorrow" about a day that has to be run again, or the other way round. */
+  private owl(passedBefore: boolean) {
+    const r = this.r;
+    // (the bubble holds about eleven characters)
+    if (r.thrown) return passedBefore ? '被甩出去了？坐稳点。' : '被甩出去了，得重跑！';
+    if (!this.pass) {
+      if (passedBefore) return '送少了，好在早就过了。';
+      if (r.day <= 1) return '送对一半就算过，再来！';
+      if (passRate(r.day) < PASS_RATE) return '五成就算过，再来一次！';
+      return '送对的太少，得重跑。';
+    }
+    if (r.day >= this.game.lastDay) return this.grade === 'S' ? '完美收官！辛苦啦。' : '最后一单送完，辛苦啦！';
+    if (this.grade !== 'S' && this.grade !== 'A' && r.falls >= 3) return '是来送快递，还是游泳？';
+    return GRADES[this.grade].line;
+  }
+
+  /** The note under the figures: about the day's biggest slip, if there was one. */
+  private noteLine() {
+    const r = this.r;
+    if (r.thrown) return '“跟紧运输车，可别掉到河湾外面去。”';
+    const slips: [number, string][] = [
+      [r.wet, '“包裹泡了水，可不算送到哦。”'],
+      [r.wrong, `“${r.wrongNames[0] ?? '有位邻居'}说没买过这个……”`],
+      [r.missed, `“还有 ${r.missed} 个包裹没送出去。”`],
+    ];
+    const worst = slips.reduce((a, b) => (b[0] > a[0] ? b : a));
+    if (worst[0] > 0) return worst[1];
+    if (r.rope) return '“救命绳是救急用的，可别天天拽。”';
+    return '“干净利落，我喜欢。”';
+  }
+
+  /** The rank-up and achievement ribbons, once the paperwork is done or on the way out. */
+  private cheer() {
+    if (this.cheered) return;
+    this.cheered = true;
+    this.game.celebrate(this.rec.unlocked, this.rec.rankUp);
+  }
+
+  /** The buttons work once they're fully shown; before that a tap skips the paperwork. */
+  private get live() {
+    return this.t >= this.stampAt + 0.3;
+  }
+
   private playStamp() {
     const au = this.game.audio;
     au.play('stamp');
@@ -188,17 +244,10 @@ export class HqScene implements Scene {
     this.t += dt;
     this.viewer?.update(dt);
     if (this.toast && (this.toast.t += dt) > 2.4) this.toast = null;
-    if (!this.cheered && this.t >= this.endAt + 0.3) {
-      // the paperwork is done: now the rank and achievements
-      this.cheered = true;
-      this.game.celebrate(this.rec.unlocked);
-      if (this.rec.rankUp) {
-        this.toast = { text: `升职啦！现在是「${this.rec.rankUp.name}」`, t: -0.2 };
-        this.game.audio.play('upgrade');
-      }
-    }
+    // the paperwork is done: now the rank and achievements
+    if (this.t >= this.endAt + 0.3) this.cheer();
     const rowsShown = Math.floor((this.t - 0.7) / ROW_GAP) + 1;
-    const nRows = this.left.length + this.right.length + 1;
+    const nRows = Math.max(this.left.length, this.right.length + 1) + 1;
     if (rowsShown > this.ticks && this.ticks < nRows && this.t >= 0.7) {
       this.ticks++;
       this.game.audio.play('ui_tick');
@@ -217,7 +266,7 @@ export class HqScene implements Scene {
 
   down(x: number, y: number) {
     if (this.viewer) return this.viewer.down(x, y);
-    for (const b of this.btns) if (hit(b.rect, x, y)) this.pressed = b.id;
+    if (this.live) for (const b of this.btns) if (hit(b.rect, x, y)) this.pressed = b.id;
     this.hearts.forEach((r, i) => {
       if (!this.pressed && hit(r, x, y, 4)) this.pressed = `keep${i}`;
     });
@@ -263,6 +312,8 @@ export class HqScene implements Scene {
     }
     const b = this.btns.find((b) => b.id === id);
     if (!b || !hit(b.rect, x, y)) return;
+    // leaving before the ribbons came up still shows them (on the next screen that isn't a day's run)
+    if (id !== 'next' || this.canNext) this.cheer();
     this.game.audio.play('ui_tap');
     this.game.platform.showImage(null);
     this.game.tm.log('hq_btn', { id, open: id !== 'next' || this.canNext, sec: Math.round(this.t) });
@@ -270,7 +321,10 @@ export class HqScene implements Scene {
     else if (id === 'home') this.game.go(new HubScene(this.game), true);
     else if (id === 'next') {
       if (this.canNext) this.game.go(new PlayScene(this.game, this.r.day + 1));
-      else this.toast = { text: `第${this.r.day}天送对六成以上才能解锁下一天`, t: 0 };
+      else {
+        const why = this.r.thrown ? '被甩出去了，这一天要重跑' : `第${this.r.day}天送对${TENTHS[Math.round(passRate(this.r.day) * 10)]}成以上`;
+        this.toast = { text: `${why}才能解锁下一天`, t: 0 };
+      }
     }
   }
 
@@ -407,8 +461,16 @@ export class HqScene implements Scene {
     // buttons
     const last = this.r.day >= this.game.lastDay;
     const show = clamp((this.t - this.stampAt) / 0.3, 0, 1);
+    if (show < 1) {
+      // still filling in the report: the buttons aren't there yet, a tap anywhere skips ahead
+      ctx.save();
+      ctx.globalAlpha = 1 - show;
+      panel(ctx, 375 - 150, btnTop + 14, 300, 56, { r: 28, fill: P.cream });
+      text(ctx, '轻点任意处跳过', 375, btnTop + 43, 26, { color: P.inkSoft });
+      ctx.restore();
+    }
     ctx.save();
-    ctx.globalAlpha = 0.3 + 0.7 * show;
+    ctx.globalAlpha = show;
     if (last) {
       this.btns = [
         { id: 'retry', rect: { x: 40, y: btnTop, w: 310, h: 84 } },
@@ -488,10 +550,11 @@ export class HqScene implements Scene {
     ctx.stroke();
 
     const shown = (i: number) => clamp((this.t - 0.7 - i * ROW_GAP) / 0.2, 0, 1);
-    this.left.forEach((row, i) => this.drawRow(ctx, row, 34, 160 + i * 50, 296, shown(i)));
-    this.right.forEach((row, i) => this.drawRow(ctx, row, 372, 160 + i * 50, 300, shown(this.left.length + i)));
+    // the two columns fill in side by side
+    this.left.forEach((row, i) => this.drawRow(ctx, row, 34, ROW_Y + i * ROW_H, 296, shown(i)));
+    this.right.forEach((row, i) => this.drawRow(ctx, row, 372, ROW_Y + i * ROW_H, 300, shown(i + 0.5)));
     // the day's three stamps, the new ones thumped down one after another
-    const sa = shown(this.left.length + 2);
+    const sa = shown(2.5);
     if (sa > 0) {
       ctx.save();
       ctx.globalAlpha = sa;
@@ -500,7 +563,7 @@ export class HqScene implements Scene {
         const k = clamp((this.t - this.stampAt - 0.2 - i * 0.15) / 0.15, 0, 1);
         const sc = fresh ? 1.6 - 0.6 * k : 1;
         ctx.save();
-        ctx.translate(518 + i * 35, 260);
+        ctx.translate(518 + i * 35, ROW_Y + 2 * ROW_H);
         ctx.scale(sc, sc);
         drawStamp(ctx, 0, 0, 15, this.stamps[i] && (!fresh || k > 0), i + 1);
         ctx.restore();
@@ -508,21 +571,23 @@ export class HqScene implements Scene {
       ctx.restore();
     }
     // income box
-    const ia = shown(this.left.length + this.right.length);
+    const nRows = Math.max(this.left.length, this.right.length + 1);
+    const ia = shown(nRows);
+    const iy = ROW_Y + 3 * ROW_H - 10;
     if (ia > 0) {
       ctx.save();
       ctx.globalAlpha = ia;
-      roundRect(ctx, 366, 292, 306, 54, 12);
+      roundRect(ctx, 366, iy, 306, 54, 12);
       ctx.fillStyle = '#F0E2C4';
       ctx.fill();
       ctx.strokeStyle = INK;
       ctx.lineWidth = 2;
       ctx.stroke();
-      text(ctx, '今日收入', 384, 320, 28, { align: 'left', bold: true });
-      sp.draw(ctx, 'coin', 548, 319, 0.75);
-      const k = clamp((this.t - 0.7 - (this.left.length + this.right.length) * ROW_GAP) / 0.6, 0, 1);
+      text(ctx, '今日收入', 384, iy + 28, 28, { align: 'left', bold: true });
+      sp.draw(ctx, 'coin', 548, iy + 27, 0.75);
+      const k = clamp((this.t - 0.7 - nRows * ROW_GAP) / 0.6, 0, 1);
       const v = Math.round(this.income * k);
-      text(ctx, `${v >= 0 ? '+' : ''}${v}`, 656, 321, 34, { align: 'right', bold: true, color: v >= 0 ? P.lilyDeep : P.red });
+      text(ctx, `${v >= 0 ? '+' : ''}${v}`, 656, iy + 29, 34, { align: 'right', bold: true, color: v >= 0 ? P.lilyDeep : P.red });
       ctx.restore();
     }
     // owl's note
@@ -618,7 +683,7 @@ export class HqScene implements Scene {
       ctx.stroke();
       text(ctx, '审 核', 0, -38, 15, { color: P.red, bold: true });
       text(ctx, this.grade, 0, 8, 64, { color: P.red, bold: true });
-      text(ctx, GRADES[this.grade].name, 0, 42, 16, { color: P.red, bold: true });
+      text(ctx, this.pass ? GRADES[this.grade].name : FAILED, 0, 42, 16, { color: P.red, bold: true });
       ctx.restore();
     }
   }
@@ -674,7 +739,7 @@ export class HqScene implements Scene {
   }
 
   private icon(ctx: Ctx, kind: Row['icon'], x: number, y: number) {
-    const bg = { ok: P.lily, wrong: P.gold, wet: P.blueLight, miss: P.paperShade, urgent: P.red, cod: P.lilyLight, stamp: P.pink }[kind];
+    const bg = { ok: P.lily, wrong: P.gold, wet: P.blueLight, miss: P.paperShade, rope: P.orange, urgent: P.red, cod: P.lilyLight, stamp: P.pink }[kind];
     ellipse(ctx, x, y, 15, 15);
     ctx.fillStyle = bg;
     ctx.fill();
@@ -700,6 +765,13 @@ export class HqScene implements Scene {
       ctx.fill();
     } else if (kind === 'miss') {
       text(ctx, '…', x, y - 2, 18, { bold: true });
+    } else if (kind === 'rope') {
+      // a coil of rope, as on the lifeline tag in the day
+      ctx.lineWidth = 2.2;
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.moveTo(x + 3.5, y);
+      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+      ctx.stroke();
     } else if (kind === 'urgent') {
       ctx.moveTo(x, y - 8);
       ctx.lineTo(x, y);
