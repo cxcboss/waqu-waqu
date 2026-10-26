@@ -119,6 +119,8 @@ export class PhotoViewer {
     this.pressed = null;
     const sw = this.swipe;
     this.swipe = null;
+    // a touch the system took away (see Scene.cancel): no flip, no close
+    if (!Number.isFinite(x)) return;
     if (id) {
       const b = this.btns.find((b) => b.id === id);
       if (!b || !hit(b.rect, x, y, 8)) return;

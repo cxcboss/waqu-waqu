@@ -2320,6 +2320,17 @@ export class PlayScene implements Scene {
     this.stopCharge();
   }
 
+  /** The system took the touch away: let go of whatever it held without jumping or tapping anything. */
+  cancel(id: number) {
+    if (this.stick && this.stick.id === id) this.stick = null;
+    if (this.aim && this.aim.id === id) {
+      this.aim = null;
+      this.stopCharge();
+    }
+    if (this.early && this.early.id === id) this.early = null;
+    this.pressed = null;
+  }
+
   /** Closes the briefing card; day 1 goes on into the hands-on tutorial. */
   private startDay() {
     const au = this.game.audio;

@@ -18,6 +18,11 @@ export interface Scene {
   down?(x: number, y: number, id: number): void;
   move?(x: number, y: number, id: number): void;
   up?(x: number, y: number, id: number): void;
+  /**
+   * The system took a touch away (a phone call, an OS gesture, the browser scrolling): drop whatever
+   * it was doing without acting on it. Scenes without one get `up` at a point that hits nothing.
+   */
+  cancel?(id: number): void;
   /** Wheel scroll in design pixels. */
   wheelBy?(dy: number): void;
   /** Called when the app goes to the background. */
@@ -154,15 +159,18 @@ export class Game {
           this.audio.unlock();
           this.loader.down(x, y, t.id);
         } else if (kind === 'move') this.loader.move(x, y, t.id);
-        else this.loader.up(x, y, t.id);
+        else if (kind === 'end') this.loader.up(x, y, t.id);
         return;
       }
+      const sc = this.scene;
       if (kind === 'start') {
         this.audio.unlock();
         this.audio.kick();
-        this.scene?.down?.(x, y, t.id);
-      } else if (kind === 'move') this.scene?.move?.(x, y, t.id);
-      else this.scene?.up?.(x, y, t.id);
+        sc?.down?.(x, y, t.id);
+      } else if (kind === 'move') sc?.move?.(x, y, t.id);
+      else if (kind === 'end') sc?.up?.(x, y, t.id);
+      else if (sc?.cancel) sc.cancel(t.id);
+      else sc?.up?.(NaN, NaN, t.id);
     });
     this.platform.onWheel?.((dy) => {
       if (this.ready && !this.fade) this.scene?.wheelBy?.(dy * (this.W / this.cssW));
