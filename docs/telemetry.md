@@ -39,7 +39,7 @@
 
 **打开和设备**
 
-- `open`：`os`、`browser`（wechat/qq/safari/chrome…）、`w`/`h`（CSS 像素）、`dpr`、`touch`、`standalone`、`visit`（这台设备第几次打开）、`unlocked`（已解锁到第几天）、`coins`、`sound`、`stamps`（好评章总数）、`jump`（用 `?day=` 直接进的）
+- `open`：`os`、`browser`（wechat/qq/safari/chrome…）、`w`/`h`（CSS 像素）、`dpr`、`touch`、`standalone`、`visit`（这台设备第几次打开）、`unlocked`（已解锁到第几天）、`coins`、`sound`、`stamps`（好评章总数）、`jump`（用 `?day=` 直接进的；10-26 起只有开发环境、`?tm=off` 或这台设备已解锁的天才会生效，大于 30 按第 30 天算）
 - `loaded`：`ms` 加载耗时
 - `hide` / `show`：切到后台 / 回来，`scene`（loading/hub/map/play/hq/hall/home/shop；10-22 前的版本还有 title）。`hide` 之后没有 `show` 通常就是关掉了
 - `error`：`msg`、`where`（文件:行:列 + 调用栈前几行，压缩后的代码，对照同版本 `vite build --sourcemap` 查）、`scene`

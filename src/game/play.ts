@@ -7,7 +7,7 @@ import type { Data } from '../engine/telemetry';
 import type { Canvas, Ctx } from '../platform/types';
 import { RESIDENT } from './cast';
 import { MAX_SLOTS, gearEffects, type GearEffects } from './catalog';
-import { SIZE_INFO, TUNING } from './config';
+import { DAYS, SIZE_INFO, TUNING } from './config';
 import type { Game, Scene } from './game';
 import { HqScene, type DayResult, type Photo } from './hq';
 import { buildLevel, dayConfig, type House, type Level, type Order, type Plat } from './level';
@@ -324,7 +324,11 @@ export class PlayScene implements Scene {
   /** For the career totals at HQ: farthest landed jump, the lost letter if picked up. */
   private extra = { far: 0, letter: null as string | null };
 
-  constructor(private game: Game, readonly day: number) {
+  readonly day: number;
+
+  constructor(private game: Game, day: number) {
+    // only real days: the result is saved under this number
+    this.day = day = clamp(Math.round(day) || 1, 1, DAYS.length);
     const cfg = dayConfig(day);
     this.lv = buildLevel(cfg, game.H);
     void game.sprites.ensure(houseSprites(this.lv.houses));

@@ -1,4 +1,5 @@
 // Web entry: browser platform adapter + the shared game.
+import { DAYS } from './game/config';
 import { Game } from './game/game';
 import { PlayScene } from './game/play';
 import { HubScene } from './game/hub';
@@ -10,8 +11,11 @@ const q = new URLSearchParams(location.search);
 const tm = q.get('tm');
 const dev = /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) || location.protocol === 'file:' || /\/preview[\w-]*\//.test(location.pathname);
 const game = new Game(new WebPlatform(), { toggle: tm === 'on' || tm === 'off' ? tm : null, dev });
-// ?day=N jumps straight into a day (handy for testing).
-const day = Number(q.get('day'));
+// ?day=N jumps straight into a day (handy for testing): any day on a dev host or with ?tm=off,
+// otherwise only one this device has already unlocked, so a link can't skip the route.
+const n = Math.floor(Number(q.get('day')));
+const asked = n >= 1 ? Math.min(n, DAYS.length) : 0;
+const day = asked && (dev || tm === 'off' || asked <= game.save.day) ? asked : 0;
 void game.start(() => (day >= 1 ? new PlayScene(game, day) : new HubScene(game)), day >= 1 ? { jump: day } : {});
 (window as unknown as { __game: Game }).__game = game;
 // the page's own splash gives way to the game's loading screen once that has drawn
