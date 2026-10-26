@@ -459,6 +459,7 @@ export class PlayScene implements Scene {
 
     this.updateFrog(dt);
     this.updateBuffer(dt);
+    if (!this.ended) this.repairStep();
     this.updateFloaters(dt);
     this.updateTongue(dt);
     this.tiredT = Math.max(0, this.tiredT - dt);
@@ -538,6 +539,49 @@ export class PlayScene implements Scene {
     if (step !== this.step) this.log('step', { from: this.step, to: step, sec: r1(this.stepT) });
     this.step = step;
     this.stepT = 0;
+  }
+
+  /**
+   * Each tutorial step waits for something that only makes sense in one spot: picking needs the frog
+   * on the truck with room in the bag, delivering needs it on a house with parcels, and so on. If the
+   * frog ends up somewhere else anyway, the tutorial moves on rather than holding the river still forever.
+   */
+  private repairStep() {
+    const s = this.step;
+    if (s !== 'pick' && s !== 'aim' && s !== 'deliver' && s !== 'refill') return;
+    const f = this.frog;
+    const on = f.state === 'stand' ? f.on : null;
+    const onTruck = on?.kind === 'truck';
+    const more = this.lv.orders.some((o) => o.state === 'pool');
+    // where the lesson goes on from: deliver what's in the bag, or head back for more
+    const next: Step = this.bag.length ? (this.refilled ? null : 'go') : more && !onTruck && !this.floaters.length && !this.tongue ? 'refill' : null;
+    let to: Step | undefined;
+    if (s === 'pick') {
+      if (!onTruck || !this.truckHasRoom()) to = next;
+    } else if (s === 'aim') {
+      if (!this.bag.length) to = onTruck && this.truckHasRoom() ? 'pick' : next;
+      else if (f.state !== 'stand') to = 'go';
+    } else if (s === 'deliver') {
+      if (!this.cod && (on?.kind !== 'house' || !this.bag.length)) to = next;
+    } else if (this.bag.length) to = next;
+    if (to === undefined || to === s) return;
+    this.log('step_fix', { from: s, to, state: f.state, on: on?.kind ?? null, bag: this.bag.length });
+    if (s === 'refill' && this.hint?.key === 'refill') this.hint = null;
+    this.setStep(to);
+  }
+
+  /** Whether any parcel on the truck's row of cards still goes in the bag. */
+  private truckHasRoom() {
+    const used = this.slotsUsed();
+    return this.cargo().slice(0, 6).some((o) => used + SIZE_INFO[o.size].slots <= this.cfg.bagSlots);
+  }
+
+  /** Lets go of a pull in progress, and of one pressed or released in mid-air, without jumping. */
+  private dropGesture() {
+    this.aim = null;
+    this.early = null;
+    this.queued = null;
+    this.stopCharge();
   }
 
   private placeTruck() {
@@ -882,9 +926,12 @@ export class PlayScene implements Scene {
       }
       this.doneHint('refill');
       if (this.step === 'refill') {
-        // back at the truck: pick the next parcels, as many as the bag takes
+        // back at the truck: pick the next parcels, as many as the bag takes (if any still go in)
         this.refilled = true;
-        this.setStep('pick');
+        const pick = this.truckHasRoom();
+        this.setStep(pick ? 'pick' : null);
+        // only the cards respond now: a pull carried over from the air would leave the truck behind
+        if (pick) this.dropGesture();
       }
     } else if (p.kind === 'house' && this.bag.length) {
       if (this.slowCd <= 0) {
@@ -895,6 +942,7 @@ export class PlayScene implements Scene {
       if (this.step === 'go' && this.bag.some((o) => o.house === h)) {
         this.setStep('deliver');
         this.hint = null;
+        this.dropGesture();
       } else if (this.cfg.tutorial && !this.bag.some((o) => o.house === h)) {
         const waits = this.lv.orders.filter((o) => o.house === h && (o.state === 'pool' || o.state === 'bag'));
         const line: Seg[] = waits.length ? ['这家等的是 ', ...waits.map(codeSeg), '，你的是 ', codeSeg(this.bag[0])] : ['这家没有包裹，你的是 ', codeSeg(this.bag[0])];
@@ -1448,6 +1496,8 @@ export class PlayScene implements Scene {
     const f = this.frog;
     const len = Math.hypot(dx, dy);
     if (f.state !== 'stand') return;
+    // while the tutorial wants a card tapped (or the till is open) the frog stays put
+    if (this.step === 'intro' || this.step === 'pick' || this.step === 'deliver' || this.step === 'rescue' || this.cod) return;
     if (len < TUNING.deadDrag) {
       // a tap (or a nudge) where a pull was wanted: what was under the finger says what the player was after
       const n = ++this.tally.taps;
@@ -1574,7 +1624,8 @@ export class PlayScene implements Scene {
       this.showHint('go', ['跳到挂着 ', codeSeg(goal), ' 的房子，送出包裹'], { dur: 5, sub: '河水一直在流，别落到红线下面' });
     }
     // day 1: with nothing in the bag and parcels still on the truck, the way back stays marked until the frog is there
-    if (this.cfg.tutorial && !this.bag.length && f.state === 'stand' && !onTruck && (this.step === 'go' || this.step === null) && this.lv.orders.some((o) => o.state === 'pool')) this.setStep('refill');
+    // (parcels still floating, or on the tongue, are on their way back to the bag: no refill yet)
+    if (this.cfg.tutorial && !this.bag.length && !this.floaters.length && !this.tongue && f.state === 'stand' && !onTruck && (this.step === 'go' || this.step === null) && this.lv.orders.some((o) => o.state === 'pool')) this.setStep('refill');
     if (this.step === 'refill' && f.state === 'stand') this.showHint('refill', '跳回【运输车】，取下一个包裹', { dur: 999, sub: '车上还有包裹等着送，别忘了' });
     if (onTruck && this.truckCards().some((c) => c.order.urgent)) this.showHint('urgent', '【红标签】是加急件，倒计时内送到有奖金', { dur: 5 });
     if (onTruck && this.truckCards().some((c) => c.order.size === 2)) this.showHint('heavy', '【大件】很重，背着它跳不远', { dur: 5 });
@@ -2239,7 +2290,7 @@ export class PlayScene implements Scene {
       if (!c || !hit(c.rect, x, y, 10) || this.ended) return;
       if (this.trayMode === 'pickup') {
         if (c.where === 'truck') this.pickup(c.order);
-        else if (this.step !== 'pick') this.putBack(c.order);
+        else this.putBack(c.order);
       } else if (this.trayMode === 'deliver' && this.frog.on?.house) this.deliver(c.order, this.frog.on.house);
       return;
     }

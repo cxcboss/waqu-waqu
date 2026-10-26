@@ -70,6 +70,7 @@
 
 - `run_start`：`attempt`（这台设备第几次玩这一天）、`unlocked`、`best`、`stamps`；10-22 起还有 `gear`（开局时商店装备等级，如 `{bag:1, shoes:0, fins:2}`）、`bag`（加上邮差包后今天背包几格）
 - `step`：新手步骤切换 `from` → `to`、`sec`（上一步停留秒数）。`from: intro` 的 `sec` 就是开工说明卡看了多久；第 1 天依次 pick（点包裹）→ aim（拉）→ go（跳去房子）→ deliver（点卡片交件）→ refill（回车）；`rescue` 是第一次落水的教学（第四轮起教方向轮盘，碰一下轮盘才继续）
+- `step_fix`：新手步骤等的前提不成立了（比如该点卡片时青蛙已经不在车上/房子上、回车时包里又有了包裹），自动跳到下一步，免得河水一直停着：`from`、`to`、`state`、`on`、`bag`（包里几个）。正常玩不该出现，出现就说明引导还有漏洞（10-26 起）
 - `jump`（落地时记一条）：`pow` 力度 0～1、`dx`/`dy` 手指拉的方向（青蛙往反方向跳；`dy<0` 是手指往上拉、青蛙往下跳）、`held` 按了几秒、`from` 起跳处、`w` 背包重量、`fy` 起跳时在屏幕的高度（0 顶 1 底）、`smog` 在尾气里、`step`、`dist`、`on` 落点（lily/log/house/truck/bank/water）；落水时还有 `near`（离最近落脚点的距离）、`to`（那是什么）、`short`（true 跳近了 / false 跳远了）；第 1 天引导那一跳有 `target`（是否跳中了引导的荷叶）
 - `tap`：按了一下没拉开（想跳却只是点），`len`、`held`、`under`（手指下面是什么）、`on`、`step`（每局最多记 20 条）
 - `tired`：按住超过 3 秒脚累了，`step`、`on`
@@ -110,7 +111,7 @@
 | `src/game/game.ts` | `this.tm.log(...)` | open、loaded、dpr_cap、hide/show、error、sound、ach |
 | `src/game/hub.ts`（主页小镇） | `game.tm.log(...)` | hub、hub_go、hub_locked、profile、rename |
 | `src/game/map.ts`（路线图） | 同上 | map、map_go、map_back、map_locked |
-| `src/game/play.ts`（一局） | `this.log(...)`，自动带 `day`、`t`、`d.p`（路线进度） | run_start、step、jump、tap、tired、miss、idle、fall、climb、swim_out、rescue、sunk、pickup、bag_full、put_back、deliver、cod、missed、urgent_late、warn、thrown、rush、road、exhaust、all_out、hurry、route_end、yank、haul_land、driver_say、kicked、egg、hint、pause、menu、run_end、run_snap |
+| `src/game/play.ts`（一局） | `this.log(...)`，自动带 `day`、`t`、`d.p`（路线进度） | run_start、step、step_fix、jump、tap、tired、miss、idle、fall、climb、swim_out、rescue、sunk、pickup、bag_full、put_back、deliver、cod、missed、urgent_late、warn、thrown、rush、road、exhaust、all_out、hurry、route_end、yank、haul_land、driver_say、kicked、egg、hint、pause、menu、run_end、run_snap |
 | `src/game/hq.ts`（下班结算） | `game.tm.log(...)` | hq、hq_btn、photo、photo_save、photo_keep |
 | `src/game/hall.ts`（总部大厅） | 同上 | hall、hall_tab、album_view、album_del |
 | `src/game/home.ts`（我的家） | 同上 | home、home_open、photo_hang、wear |

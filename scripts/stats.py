@@ -147,6 +147,8 @@ def report(rows):
     for k in ['intro', 'pick', 'aim', 'go', 'deliver', 'refill']:
         if steps.get(k):
             say(f'  {k}: 中位 {med(steps[k])} 秒 · 90% {p90(steps[k])} 秒 · {len(steps[k])} 次')
+    if by_ev['step_fix']:
+        say('  引导步骤被自动修正（不该出现）：' + top(Counter(f"{r['d']['from']}→{r['d']['to']}" for r in by_ev['step_fix'])))
     say('乱点（等着做别的事时点了没用的地方）：' + top(Counter((r['day'], r['d']['where']) for r in by_ev['miss'])))
     taps = by_ev['tap']
     say(f"点了一下没拉（想跳却只是点）：{len(taps)} 次，点在：" + top(Counter(r['d'].get('under') for r in taps)) + ' · 当时步骤：' + top(Counter(r['d'].get('step') for r in taps)))
