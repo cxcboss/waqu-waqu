@@ -12,7 +12,9 @@ const dev = /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) || loca
 const game = new Game(new WebPlatform(), { toggle: tm === 'on' || tm === 'off' ? tm : null, dev });
 // ?day=N jumps straight into a day (handy for testing).
 const day = Number(q.get('day'));
-void game.start(() => (day >= 1 ? new PlayScene(game, day) : new HubScene(game)), day >= 1 ? { jump: day } : {});
+// ?art=1 on a dev server opens the art board (every piece of the code-drawn kit; &tod=night picks the hour)
+if (dev && q.get('art') === '1') void import('./game/artboard').then((m) => game.start(() => new m.ArtboardScene(game, q.get('tod'))));
+else void game.start(() => (day >= 1 ? new PlayScene(game, day) : new HubScene(game)), day >= 1 ? { jump: day } : {});
 (window as unknown as { __game: Game }).__game = game;
 // the page's own splash gives way to the game's loading screen once that has drawn
 requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('boot')?.remove()));
