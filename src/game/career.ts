@@ -139,14 +139,19 @@ export interface Rank {
   pay: number;
 }
 
+/**
+ * Every rank has its own staff card (badge_rank0…6, shown in the hall). The pay share is the total
+ * for that rank, not on top of the last one, and the perk line says what changes. The top rank
+ * takes every stamp there is.
+ */
 export const RANKS: Rank[] = [
   { name: '实习快递员', need: 0, perk: '', pay: 0 },
-  { name: '正式快递员', need: 8, perk: '工牌换成正式的', pay: 0 },
+  { name: '正式快递员', need: 8, perk: '换上正式工牌', pay: 0 },
   { name: '熟练快递员', need: 20, perk: '底薪 +10%', pay: 0.1 },
-  { name: '优秀快递员', need: 35, perk: '底薪 +10%', pay: 0.1 },
+  { name: '优秀快递员', need: 35, perk: '底薪 +15%', pay: 0.15 },
   { name: '金牌快递员', need: 55, perk: '底薪 +20%，金色工牌', pay: 0.2 },
-  { name: '河湾传奇', need: 80, perk: '底薪 +20%', pay: 0.2 },
-  { name: '快递之王', need: 93, perk: '底薪 +20%', pay: 0.2 },
+  { name: '河湾传奇', need: 75, perk: '底薪 +25%', pay: 0.25 },
+  { name: '快递之王', need: DAYS.length * 3, perk: '底薪 +30%', pay: 0.3 },
 ];
 
 export const stampCount = (s: SaveData) => Object.values(s.stamps).flat().filter(Boolean).length;
