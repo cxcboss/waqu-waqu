@@ -450,6 +450,31 @@ function goldFrame(ctx: Ctx, w: number, h: number, b: number, lw: number) {
   ctx.strokeStyle = shade(P.gold, 0.4);
   ctx.lineWidth = lw * 0.6;
   ctx.strokeRect(b * 0.5, b * 0.5, w - b, h - b);
+  // a row of beads along the bevel, stopping short of the corner scrolls (only where there's room)
+  if (b >= 12) {
+    const r = b * 0.12, step = b * 0.62;
+    ctx.beginPath();
+    const side = (x0: number, y0: number, x1: number, y1: number) => {
+      const len = Math.hypot(x1 - x0, y1 - y0) - b * 3.6;
+      const n = Math.floor(len / step);
+      for (let i = 0; i <= n; i++) {
+        const t = (b * 1.8 + (len - n * step) / 2 + i * step) / (len + b * 3.6);
+        const px = x0 + (x1 - x0) * t, py = y0 + (y1 - y0) * t;
+        ctx.moveTo(px + r, py);
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+      }
+    };
+    const i0 = b * 0.5;
+    side(i0, i0, w - i0, i0);
+    side(i0, h - i0, w - i0, h - i0);
+    side(i0, i0, i0, h - i0);
+    side(w - i0, i0, w - i0, h - i0);
+    ctx.fillStyle = tint(P.gold, 0.55);
+    ctx.fill();
+    ctx.strokeStyle = shade(P.gold, 0.45);
+    ctx.lineWidth = lw * 0.4;
+    ctx.stroke();
+  }
   ctx.strokeStyle = P.ink;
   ctx.lineWidth = lw;
   ctx.beginPath();
