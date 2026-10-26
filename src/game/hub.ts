@@ -5,7 +5,7 @@ import { K } from '../art/sprites';
 import { button, ellipse, panel, pressIn, pressOut, roundRect, text } from '../art/ui';
 import { clamp, easeOutCubic, lerp } from '../engine/math';
 import type { Ctx } from '../platform/types';
-import { ACHIEVEMENTS, RANKS, rankIndex, stampCount, stampsPossible, unreadNotes } from './career';
+import { ACHIEVEMENTS, RANKS, daysWorked, firstDay, rankIndex, stampCount, stampsPossible, unreadNotes } from './career';
 import { GEAR, gearDef, gearMax, ITEMS, priceOf } from './catalog';
 import { DAYS } from './config';
 import type { Game, Scene } from './game';
@@ -19,6 +19,9 @@ import { ShopScene } from './shop';
 type Place = 'hq' | 'shop' | 'home' | 'work';
 
 const HOP_T = 0.42;
+
+/** What the locked places are called, for the newbie toast. */
+const PLACE_NAMES: Record<string, string> = { hq: '河湾总部', shop: '福利社', home: '我的家', map: '路线图' };
 
 export class HubScene implements Scene {
   readonly id = 'hub';
@@ -79,7 +82,7 @@ export class HubScene implements Scene {
     }
     if (this.newbie && (id === 'hq' || id === 'shop' || id === 'home' || id === 'map')) {
       au.play('ui_error', { volume: 0.6 });
-      this.toast.show('先去上班，通过第 1 天就开放这里啦');
+      this.toast.show(`先去上班，通过第 1 天就开放${PLACE_NAMES[id]}啦`);
       this.game.tm.log('hub_locked', { id });
       return;
     }
@@ -106,6 +109,16 @@ export class HubScene implements Scene {
     return this.game.save.day <= 1;
   }
 
+  /**
+   * The day the truck takes the frog to: the newest one open, or once the whole route is done, the
+   * first day still missing a stamp (the last day when every stamp is in).
+   */
+  private get workDay() {
+    const s = this.game.save;
+    if (!s.cleared) return clamp(s.day, 1, DAYS.length);
+    return DAYS.find((c) => !s.stamps[c.day] || s.stamps[c.day].some((got) => !got))?.day ?? DAYS.length;
+  }
+
   /** The frog hops over to the place first, then the screen changes. */
   private go(to: Place) {
     const s = this.spots[to];
@@ -120,7 +133,7 @@ export class HubScene implements Scene {
     if (to === 'hq') g.go(new HallScene(g), true);
     else if (to === 'shop') g.go(new ShopScene(g), true);
     else if (to === 'home') g.go(new HomeScene(g), true);
-    else g.go(new PlayScene(g, clamp(g.save.day, 1, DAYS.length)), true);
+    else g.go(new PlayScene(g, this.workDay), true);
   }
 
   private async rename() {
@@ -193,7 +206,7 @@ export class HubScene implements Scene {
       drawTruckBase(ctx, 0, 0, this.t * 60);
       sp.draw(ctx, 'truck_blue', 0, 0, 0.82);
       ctx.restore();
-      this.sign(ctx, 'work', truck.x - 105, truck.y + 62, '运输车', `去上班 · 第${clamp(s.day, 1, DAYS.length)}天`, false, 210);
+      this.sign(ctx, 'work', truck.x - 105, truck.y + 62, '运输车', `去上班 · 第${this.workDay}天`, false, 210);
       this.taps.add('work', { x: truck.x - 60, y: truck.y - 80, w: 120, h: 140 });
     } else {
       // paths from the square to every place
@@ -216,7 +229,7 @@ export class HubScene implements Scene {
       const ty = truck.y + Math.sin(this.t * 13) * 0.8;
       drawTruckBase(ctx, truck.x, ty, this.t * 60);
       sp.draw(ctx, 'truck_blue', truck.x, ty, 0.82);
-      this.sign(ctx, 'work', 750 - 20 - 210, truck.y + 118, '运输车', `去上班 · 第${clamp(s.day, 1, DAYS.length)}天`, false, 210);
+      this.sign(ctx, 'work', 750 - 20 - 210, truck.y + 118, '运输车', `去上班 · 第${this.workDay}天`, false, 210);
       const wr = { x: truck.x - 90, y: truck.y - 120, w: 180, h: 240 };
       this.taps.add('work', wr);
     }
@@ -225,9 +238,9 @@ export class HubScene implements Scene {
     this.drawHeader(ctx);
 
     // back to work
-    const day = clamp(s.day, 1, DAYS.length);
+    const day = this.workDay;
     const by = bot - 150;
-    const first = !s.log.length;
+    const first = firstDay(s);
     const workDown = this.taps.add('work', { x: 32, y: by, w: 456, h: 104 });
     if (this.newbie) {
       // the one thing to do: the button breathes and a hand taps it
@@ -240,7 +253,7 @@ export class HubScene implements Scene {
       ctx.restore();
       const cyc = (this.t % 1.2) / 1.2;
       sp.draw(ctx, 'hand', 420, by + 60 - Math.sin(cyc * Math.PI) * 12, 1.1);
-    } else button(ctx, 32, by, 456, 104, first ? '开始上班' : `继续上班 · 第${day}天`, { primary: true, pressed: workDown, size: 38 });
+    } else button(ctx, 32, by, 456, 104, first ? '开始上班' : s.cleared ? `全部完成 · 再玩一遍第${day}天` : `继续上班 · 第${day}天`, { primary: true, pressed: workDown, size: 38 });
     const mapDown = this.taps.add('map', { x: 504, y: by, w: 214, h: 104 });
     ctx.save();
     if (this.newbie) ctx.globalAlpha = 0.45;
@@ -254,7 +267,8 @@ export class HubScene implements Scene {
     text(ctx, `第${day}天 · ${DAYS[day - 1].intro}`, 375, by + 128, 22, { color: INK, alpha: 0.85, maxWidth: 650 });
 
     if (this.profile) this.drawProfile(ctx);
-    this.toast.render(ctx, top + 120);
+    // clear of the staff card's bottom edge
+    this.toast.render(ctx, top + 140);
     if (sp.painted === 0) text(ctx, '占位美术为代码绘制，正式美术制作中', 375, bot - 14, 18, { color: P.ink, alpha: 0.6 });
   }
 
@@ -546,7 +560,7 @@ export class HubScene implements Scene {
     roundRect(ctx, 432, top + 68, 290, 34, 17);
     ctx.fillStyle = 'rgba(255,250,238,0.85)';
     ctx.fill();
-    text(ctx, `入职 ${shortDate(s.since)} · ${s.log.length ? `已上班 ${s.career.runs} 天` : '今天第一天'}`, 577, top + 86, 20, { color: P.inkSoft });
+    text(ctx, `入职 ${shortDate(s.since)} · ${firstDay(s) ? '今天第一天' : `已上班 ${daysWorked(s)} 天`}`, 577, top + 86, 20, { color: P.inkSoft });
 
     // village ribbon (the painted village needs no title)
     if (sp.has(`hub_bg_${this.night ? 'eve' : 'day'}`)) return;
@@ -626,7 +640,7 @@ export class HubScene implements Scene {
     text(ctx, next ? `再拿 ${next.need - n} 枚好评章升为「${next.name}」` : '已经是最高职级了！', 375, py, 26, { bold: true, maxWidth: d.w - 60 });
     if (next?.perk) text(ctx, `升职奖励：${next.perk}`, 375, py + 36, 22, { color: P.inkSoft });
     const rows: [string, string][] = [
-      ['上班', `${s.career.runs} 天`], ['送达', `${s.career.delivered} 单`],
+      ['上班', `${daysWorked(s)} 天`], ['送达', `${s.career.delivered} 单`],
       ['好评章', `${n} / ${stampsPossible()}`], ['成就', `${Object.keys(s.ach).length} / ${ACHIEVEMENTS.length}`],
     ];
     rows.forEach(([k, v], i) => {

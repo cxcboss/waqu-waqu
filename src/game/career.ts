@@ -105,6 +105,12 @@ export const emptyCareer = (): Career => ({
   byResident: {},
 });
 
+/** Days the frog has worked: each day finished at least once (a retry of a day is not another day). */
+export const daysWorked = (s: SaveData) => Object.keys(s.best).length;
+
+/** Nothing played yet: no day finished, no stamp, nothing in the work log (old saves may only have some of these). */
+export const firstDay = (s: SaveData) => !s.log.length && !Object.keys(s.best).length && !Object.keys(s.stamps).length;
+
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -261,7 +267,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'thrown1', name: '坐稳了', desc: '被甩出屏幕一次（也算一种经历）', goal: 1, value: (s) => c(s).thrown, coins: 10 },
   { id: 'letter1', name: '拾信人', desc: '捡到一封遗失的信', goal: 1, value: (s) => s.letters.length, coins: 30 },
   { id: 'letter3', name: '信使', desc: '集齐 3 封不一样的遗失的信', goal: 3, value: (s) => s.letters.length, coins: 60 },
-  { id: 'runs10', name: '老员工', desc: '上班满 10 天', goal: 10, value: (s) => c(s).runs, coins: 50 },
+  { id: 'runs10', name: '老员工', desc: '上班满 10 天', goal: 10, value: (s) => daysWorked(s), coins: 50 },
   { id: 'album10', name: '摄影师', desc: '相册里收藏 10 张照片', goal: 10, value: (s) => s.album.length, coins: 50, reward: 'neck_camera' },
   { id: 'home1', name: '安家落户', desc: '家里摆上第一件家具', goal: 1, value: decos, coins: 20 },
   { id: 'hats3', name: '时髦青蛙', desc: '拥有 3 顶帽子', goal: 3, value: hats, coins: 40 },
