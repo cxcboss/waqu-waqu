@@ -2565,12 +2565,18 @@ export class PlayScene implements Scene {
     const on = f.state === 'stand' ? f.on : null;
     this.trayMode = this.ended || this.cod ? 'bag' : on?.kind === 'truck' ? 'pickup' : on?.kind === 'house' && this.bag.length ? 'deliver' : 'bag';
     const y = this.trayY();
+    const n = this.bag.length;
     if (this.trayMode === 'deliver') {
-      this.cards = this.bag.slice(0, 4).map((order, i) => ({ order, where: 'bag', rect: { x: 146 + i * 118, y: y - 62, w: 108, h: 124 } }));
+      // every parcel in the bag (up to six), smaller when there are many so they all fit beside the satchel
+      const w = Math.min(108, Math.floor((578 - (n - 1) * 10) / n)), h = Math.round((w * 124) / 108);
+      this.cards = this.bag.map((order, i) => ({ order, where: 'bag', rect: { x: 146 + i * (w + 10), y: y - h / 2, w, h } }));
       return;
     }
-    // the satchel's contents, small, beside the backpack button; on the truck, the cargo above
-    this.cards = this.bag.slice(0, 4).map((order, i) => ({ order, where: 'bag', rect: { x: 146 + i * 92, y: y - 49, w: 84, h: 98 } }));
+    // the satchel's contents, small, beside the backpack button (bunched up clear of the swim wheel
+    // while it's out); on the truck, the cargo above
+    const right = this.trayMode === 'bag' && this.wheelA > 0.01 ? 494 : 724;
+    const gap = n > 1 ? Math.min(92, (right - 146 - 84) / (n - 1)) : 92;
+    this.cards = this.bag.map((order, i) => ({ order, where: 'bag', rect: { x: 146 + i * gap, y: y - 49, w: 84, h: 98 } }));
     if (this.trayMode === 'pickup') {
       const ty = this.truckRowY();
       this.cargo().slice(0, 6).forEach((order, i) => this.cards.push({ order, where: 'truck', rect: { x: 34 + i * 114, y: ty - 60, w: 104, h: 120 } }));
@@ -4057,7 +4063,8 @@ export class PlayScene implements Scene {
     const cy = this.trayY();
     if (this.trayMode === 'deliver') {
       const first = this.cards[0]?.rect ?? { x: 146, y: cy - 62, w: 108, h: 124 };
-      const tw = Math.max(this.cards.length * 118 + 14, 330);
+      const last = this.cards[this.cards.length - 1]?.rect ?? first;
+      const tw = Math.max(last.x + last.w - first.x + 24, 330);
       panel(ctx, first.x - 12, first.y - 52, tw, first.h + 64, { r: 16, fill: '#EFE3C8' });
       text(ctx, `交给 ${this.frog.on!.house!.name}`, first.x + 2, first.y - 26, 24, { align: 'left', bold: true, maxWidth: tw - 30 });
     } else if (this.trayMode === 'pickup') {
