@@ -125,3 +125,19 @@ export function dealLine(pool: string[], used: Set<string>) {
   used.add(l);
   return l;
 }
+
+/**
+ * The lost letters on the road behind the truck. A save keeps a letter's id, never its words, so a
+ * letter can be reworded (or new ones added) without anyone losing the ones they found.
+ */
+export const LETTERS: { id: string; text: string }[] = [
+  { id: 'turtle', text: '“给河湾的快递员：谢谢你每天都来。——住在桥洞的老乌龟”' },
+  { id: 'owl', text: '“如果你捡到这封信，说明你很会偷懒。——猫头鹰经理”' },
+  { id: 'heron', text: '“明天的荷叶会更大一点。——一只路过的鹭”' },
+];
+
+/** A letter's words, or '' for an id that isn't a letter. */
+export const letterText = (id: string) => LETTERS.find((l) => l.id === id)?.text ?? '';
+
+/** A letter as a save holds it (its id, or its words in saves from before ids) to its id; null if it's no letter we know. */
+export const letterId = (v: string) => LETTERS.find((l) => l.id === v || l.text === v)?.id ?? null;

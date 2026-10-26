@@ -4,6 +4,7 @@ import { GEAR, STARTER_ITEMS, gearMax, item, type GearId } from './catalog';
 import { DAYS } from './config';
 import type { SaveData } from './game';
 import type { DayResult } from './hq';
+import { letterId, letterText } from './lines';
 import { mixupLine, openedLine, soakedLine } from './stories';
 import { rng, shuffle } from '../engine/math';
 
@@ -172,7 +173,8 @@ export function upgradeSave(raw: unknown): SaveData {
   s.ledger = list(o.ledger).filter((e): e is Entry => isObj(e) && isNum(e.at) && isStr(e.text) && isNum(e.amount)).slice(0, LEDGER_KEEP);
   const ach = isObj(o.ach) ? o.ach : {};
   s.ach = Object.fromEntries(Object.entries(ach).filter(([id, at]) => isNum(at) && ACHIEVEMENTS.some((a) => a.id === id))) as Record<string, number>;
-  s.letters = list(o.letters).filter(isStr);
+  // letters are kept by id; older saves kept their words, and anything that isn't a letter goes
+  s.letters = [...new Set(list(o.letters).filter(isStr).map(letterId).filter((id): id is string => !!id))];
   const seen = isObj(o.seen) ? o.seen : {};
   s.seen = { notes: int(seen.notes, 0), letters: int(seen.letters, 0), ach: int(seen.ach, 0) };
   // note and photo ids come from this counter: never hand out one that's already taken
@@ -350,7 +352,7 @@ export function recordDay(
       const e = (k.byResident[p.to] ??= { n: 0, species: p.species });
       e.n++;
     }
-    if (ex.letter && !s.letters.includes(ex.letter)) s.letters.push(ex.letter);
+    if (ex.letter && letterText(ex.letter) && !s.letters.includes(ex.letter)) s.letters.push(ex.letter);
   }
 
   const stampCoins = o.fresh.filter(Boolean).length * FIRST_STAMP_COINS;
@@ -379,7 +381,7 @@ export function recordDay(
     if (wrong) addNote(s, 'mixup', mixupLine(wrong.to, rand), r.day, now);
     const wet = ex.parcels.find((p) => p.state === 'wet');
     if (wet) addNote(s, 'soaked', soakedLine(wet.owner, rand), r.day, now);
-    if (ex.letter) addNote(s, 'letter', `在路边捡到一封遗失的信：${ex.letter}`, r.day, now);
+    if (ex.letter && letterText(ex.letter)) addNote(s, 'letter', `在路边捡到一封遗失的信：${letterText(ex.letter)}`, r.day, now);
   }
   const names = ['准时下班', '干得漂亮', '今日挑战'];
   const got = o.fresh.map((f, i) => (f ? names[i] : '')).filter(Boolean);

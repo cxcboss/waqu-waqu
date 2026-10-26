@@ -58,7 +58,7 @@ export interface SaveData {
   /** Achievements reached, with when. */
   ach: Record<string, number>;
   album: AlbumPhoto[];
-  /** Lost letters found, by their text. */
+  /** Lost letters found, by id (see LETTERS in lines.ts). */
   letters: string[];
   /** What's been looked at already, for the red dots. */
   seen: { notes: number; letters: number; ach: number };

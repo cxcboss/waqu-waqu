@@ -62,7 +62,7 @@ export interface DayExtra {
   longest: number;
   /** Parcels fished back out of the river. */
   rescued: number;
-  /** The lost letter picked up on the road, if any. */
+  /** The id of the lost letter picked up on the road, if any (see LETTERS in lines.ts). */
   letter: string | null;
   /** Every parcel: who got it (`to`), who it was for (`owner`), and how it ended. */
   parcels: { to: string; owner: string; species: string; state: 'delivered' | 'wrong' | 'wet' | 'missed'; urgent: boolean }[];

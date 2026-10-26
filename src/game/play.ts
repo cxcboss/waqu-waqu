@@ -11,7 +11,7 @@ import { DAYS, SIZE_INFO, TUNING } from './config';
 import type { Game, Scene } from './game';
 import { HqScene, type DayResult, type Photo } from './hq';
 import { buildLevel, dayConfig, type House, type Level, type Order, type Plat } from './level';
-import { HURRY_LINES, KICK_LINES, OFFWORK_LINES, dealLine } from './lines';
+import { HURRY_LINES, KICK_LINES, LETTERS, OFFWORK_LINES, dealLine } from './lines';
 import { drawHouse, houseSprites, updateResident, type ResidentView } from './resident';
 import { MapScene, drawStamp } from './map';
 
@@ -186,12 +186,6 @@ const HURRY_AT = 6;
 /** The leap gauge hangs on this long after the frog swims out of reach, so it doesn't flicker at the edge. */
 const GAUGE_GRACE = 0.35;
 
-const LETTERS = [
-  '“给河湾的快递员：谢谢你每天都来。——住在桥洞的老乌龟”',
-  '“如果你捡到这封信，说明你很会偷懒。——猫头鹰经理”',
-  '“明天的荷叶会更大一点。——一只路过的鹭”',
-];
-
 export class PlayScene implements Scene {
   readonly id = 'play';
   private lv: Level;
@@ -321,7 +315,7 @@ export class PlayScene implements Scene {
   private frogCue: { pose: string; from: number; until: number } | null = null;
   /** What the shop gear adds (bag slots, jump, swim). */
   private gear: GearEffects;
-  /** For the career totals at HQ: farthest landed jump, the lost letter if picked up. */
+  /** For the career totals at HQ: farthest landed jump, the lost letter's id if picked up. */
   private extra = { far: 0, letter: null as string | null };
 
   readonly day: number;
@@ -1708,8 +1702,12 @@ export class PlayScene implements Scene {
     e.got = true;
     this.log('egg');
     this.hint = null;
-    this.extra.letter = pick(LETTERS, Math.random);
-    this.showHint('egg', '捡到一封【遗失的信】！', { dur: 5, sub: this.extra.letter });
+    // one the frog hasn't found yet, while there are any
+    const found = this.game.save.letters;
+    const fresh = LETTERS.filter((l) => !found.includes(l.id));
+    const letter = pick(fresh.length ? fresh : LETTERS, Math.random);
+    this.extra.letter = letter.id;
+    this.showHint('egg', '捡到一封【遗失的信】！', { dur: 5, sub: letter.text });
     this.queueShot('egg', '捡到一封遗失的信！', 8, 0.1);
     this.popups.push({ text: '发现彩蛋！', x: e.x - 60, y: e.y - 60, t: 0, color: P.orangeDeep });
     this.game.audio.play('paper_flip');
