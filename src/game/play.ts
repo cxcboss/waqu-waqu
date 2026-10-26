@@ -1,6 +1,6 @@
 import { INK, P } from '../art/palette';
 import { K, TILE_H, boxSprite } from '../art/sprites';
-import { button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
+import { breakPieces, button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
 import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
 import type { Data } from '../engine/telemetry';
@@ -127,7 +127,7 @@ type HintKey = 'go' | 'refill' | 'call' | 'egg' | 'road' | 'swim' | 'rescue' | '
 type Step = 'intro' | 'pick' | 'aim' | 'go' | 'deliver' | 'refill' | 'rescue' | null;
 
 /** The drive home after everything is handed out: camera pans to the truck, it drives off. */
-interface Offwork { truck: Plat; t: number; line: string; baseY: number; drive: number; panX: number; panY: number; horn: boolean; card: boolean }
+interface Offwork { truck: Plat; t: number; line: string; baseY: number; drive: number; panX: number; panY: number; horn: boolean; card: boolean; lines?: string[] }
 
 const codeSeg = (o: Order): Seg => ({ code: o.code, color: o.house.color });
 const frac = (v: number) => v - Math.floor(v);
@@ -204,7 +204,10 @@ export class PlayScene implements Scene {
   private photos: Photo[] = [];
   private shots: Shot[] = [];
   private hintsDone = new Set<HintKey>();
-  private hint: { key: HintKey; line: Seg[]; sub?: string; t: number; dur: number; warn?: boolean } | null = null;
+  /** The hint caption; `low` once it's placed: just above the tray, or (false) under the top bar. */
+  private hint: { key: HintKey; line: Seg[]; sub?: string; t: number; dur: number; warn?: boolean; low?: boolean } | null = null;
+  /** Where the hint caption is drawn: it eases across when it has to make way for the frog. */
+  private capY = 0;
   private step: Step = 'intro';
   private stepT = 0;
   /** Lily the aim step points at. */
@@ -406,7 +409,7 @@ export class PlayScene implements Scene {
     this.dizzyT = Math.max(0, this.dizzyT - dt);
     if (this.driver && (this.driver.t += dt) > this.driver.dur) this.driver = null;
     // the swim wheel slides in while the frog is in the water
-    this.wheelA = approach(this.wheelA, this.frog.state === 'swim' ? 1 : 0, 10, dt);
+    this.wheelA = approach(this.wheelA, this.frog.state === 'swim' && !this.ended ? 1 : 0, 10, dt);
     for (const p of this.puffs) {
       p.t += dt;
       if (p.t < 0) continue;
@@ -495,6 +498,7 @@ export class PlayScene implements Scene {
     if (this.banner && (this.banner.t += dt) > this.banner.dur) this.banner = null;
     if (this.toast && (this.toast.t += dt) > 2.2) this.toast = null;
     if (this.hint && (this.hint.t += dt) > this.hint.dur) this.hint = null;
+    if (this.hint) this.placeHint(dt);
     if (this.shakeCard && (this.shakeCard.t += dt) > 0.4) this.shakeCard = null;
   }
 
@@ -619,7 +623,7 @@ export class PlayScene implements Scene {
         else this.land(j.x1, j.y1);
       }
     } else if (f.state === 'board') this.updateBoard(dt);
-    else if (f.state === 'swim' && this.step !== 'rescue' && !this.cod) this.updateSwim(dt);
+    else if (f.state === 'swim' && this.step !== 'rescue' && !this.cod && !this.ended) this.updateSwim(dt);
     f.give = Math.max(0, f.give - dt * 2.2);
     // satchel swing spring
     f.swingV += (-60 * f.swing - 6 * f.swingV) * dt;
@@ -1874,6 +1878,9 @@ export class PlayScene implements Scene {
     this.endT = 0;
     this.aim = null;
     this.stopCharge();
+    // nothing left to steer: the swim wheel and the leap gauge go with the hints
+    this.stick = null;
+    this.gauge = null;
     this.game.audio.setMusic(null);
     this.bubbles?.stop(0.3);
     this.bubbles = null;
@@ -2486,13 +2493,51 @@ export class PlayScene implements Scene {
   // ---------------------------------------------------------------- hints, photos
 
   private showHint(key: HintKey, line: string | Seg[], o: { dur?: number; sub?: string; warn?: boolean; again?: boolean } = {}) {
-    if (this.hintsDone.has(key) || this.hint?.key === key) return;
+    if (this.ended || this.hintsDone.has(key) || this.hint?.key === key) return;
     // a standing tutorial hint only gives way to emergencies
     if (this.hint && this.hint.dur > 50 && key !== 'swim' && key !== 'warn' && key !== 'wrongHouse') return;
     this.hint = { key, line: typeof line === 'string' ? segs(line) : line, sub: o.sub, t: 0, dur: o.dur ?? 5, warn: o.warn };
     if (!o.again) this.hintsDone.add(key);
     const n = (this.tally.hints[key] = (this.tally.hints[key] ?? 0) + 1);
     if (n <= 3) this.log('hint', { key });
+  }
+
+  /**
+   * The two places a hint caption can go: under the top bar (and under the urgent card when one is
+   * showing), or low, just above the tray and the red line, over river the frog has already left behind.
+   */
+  private hintSpots(sub: boolean) {
+    const h = sub ? 136 : 92;
+    const top = this.game.safeT + (this.bag.some((o) => o.urgent) ? 214 : 132);
+    const ty = this.trayY();
+    // clear of the tray, the swim wheel and the countdown pill, and above the red line
+    let floor = Math.min(this.trayMode === 'pickup' ? ty - 292 : this.trayMode === 'deliver' ? ty - 118 : ty - 66, this.H * TUNING.warnLine - 24);
+    if (this.wheelA > 0.01) floor = Math.min(floor, ty - 144);
+    if (this.callT !== null) floor = Math.min(floor, ty - 208);
+    return { h, top, low: floor - 14 - h };
+  }
+
+  /**
+   * Puts the hint caption where it won't hide what matters: low, unless the frog (or its leap gauge) is
+   * down there, in which case under the top bar. Once placed it only moves when the frog comes under it.
+   */
+  private placeHint(dt: number) {
+    const h = this.hint!;
+    const s = this.hintSpots(!!h.sub);
+    const f = this.frog;
+    const fy = (f.jump ? this.sy(f.jump.y1) : this.sy(f.y)) - f.z;
+    let top = fy - 130, bot = fy + 30;
+    const g = this.gaugeAt();
+    if (g) {
+      top = Math.min(top, g.y - 84);
+      bot = Math.max(bot, g.y + 46);
+    }
+    const covers = (y: number) => bot > y - 16 && top < y + s.h + 16;
+    if (h.low === undefined) {
+      h.low = !covers(s.low);
+      this.capY = h.low ? s.low : s.top;
+    } else if (covers(h.low ? s.low : s.top) && !covers(h.low ? s.top : s.low)) h.low = !h.low;
+    this.capY = approach(this.capY, h.low ? s.low : s.top, 14, dt);
   }
 
   private doneHint(key: HintKey) {
@@ -2581,6 +2626,9 @@ export class PlayScene implements Scene {
       this.drawWarn(ctx);
       this.drawHud(ctx);
       this.drawWheel(ctx);
+      // the leap gauge goes over everything: the frog's chance to get out depends on seeing it
+      ctx.translate(this.camX, this.panY);
+      this.drawGauge(ctx);
       ctx.restore();
     }
     if (this.cod && !this.paused) this.drawCod(ctx);
@@ -2696,16 +2744,19 @@ export class PlayScene implements Scene {
     if (f.board?.yank) this.drawRope(ctx, f.board.truck);
     this.drawTongue(ctx);
     for (const e of this.fx) if (e.t >= 0 && e.kind !== 'ripple' && e.kind !== 'floatBox' && e.kind !== 'sink') this.drawFx(ctx, e);
+    const g = this.gaugeAt();
     for (const p of this.popups) {
       if (p.t < 0) continue;
       const k = p.t / 1.2;
-      text(ctx, p.text, p.x, this.sy(p.y) - 40 * easeOutCubic(k), 34, { color: p.color, bold: true, alpha: 1 - k * k });
+      let y = this.sy(p.y) - 40 * easeOutCubic(k);
+      // lifted over the leap gauge instead of across it
+      if (g && Math.abs(p.x - g.x) < 84 + p.text.length * 17 && y > g.y - 104 && y < g.y + 64) y = g.y - 104;
+      text(ctx, p.text, p.x, y, 34, { color: p.color, bold: true, alpha: 1 - k * k });
     }
     this.drawPuffs(ctx);
     this.drawDizzy(ctx);
     this.drawDriver(ctx);
     this.drawLeapTarget(ctx);
-    this.drawGauge(ctx);
   }
 
   /** While parcels are adrift: the tongue's reach round the frog, with a notch pointing at each one out of it. */
@@ -2792,13 +2843,26 @@ export class PlayScene implements Scene {
     ctx.restore();
   }
 
-  /** The leap gauge over the swimming frog once tapped up: green in the middle, a needle swinging across. */
-  private drawGauge(ctx: Ctx) {
+  /**
+   * Where the leap gauge is (its middle): over the swimming frog, or under it when the frog is so high
+   * that the gauge would end up under the top bar, the lifeline tag or the urgent card.
+   */
+  private gaugeAt() {
     const f = this.frog;
+    if (!this.gauge || f.state !== 'swim') return null;
+    const x = clamp(f.x, 90, 660), fy = this.sy(f.y);
+    const t = this.game.safeT;
+    const ceil = x - 84 < 190 && this.bag.some((o) => o.urgent) ? t + 212 : x + 84 > 560 ? t + 130 : t + 88;
+    return fy - 118 - 84 >= ceil ? { x, y: fy - 118 } : { x, y: fy + 100 };
+  }
+
+  /** The leap gauge by the swimming frog once tapped up: green in the middle, a needle swinging across. */
+  private drawGauge(ctx: Ctx) {
     const g = this.gauge;
-    if (!g || f.state !== 'swim') return;
+    const at = this.gaugeAt();
+    if (!g || !at) return;
     const R = 62;
-    const x = clamp(f.x, 90, 660), y = Math.max(this.game.safeT + 170, this.sy(f.y) - 118);
+    const { x, y } = at;
     const zone = this.gaugeZone();
     const reach = !!this.leapTarget();
     const ang = (v: number) => Math.PI + v * Math.PI;
@@ -2835,7 +2899,17 @@ export class PlayScene implements Scene {
     ctx.strokeStyle = INK;
     ctx.lineWidth = 2;
     ctx.stroke();
-    text(ctx, !reach ? '够不着' : inside ? '点！' : '看准…', x, y + 28, 26, { bold: true, color: inside ? P.lilyDeep : P.white });
+    // the word on a little tag of its own, readable over water and lily pads alike
+    const label = !reach ? '够不着' : inside ? '点！' : '看准…';
+    ctx.font = font(26, true);
+    const lw = ctx.measureText(label).width + 24;
+    roundRect(ctx, x - lw / 2, y + 12, lw, 34, 17);
+    ctx.fillStyle = inside ? P.gold : P.cream;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    text(ctx, label, x, y + 30, 26, { bold: true, color: !reach ? P.inkSoft : INK });
     ctx.restore();
   }
 
@@ -3066,7 +3140,14 @@ export class PlayScene implements Scene {
     const x = t.x + honk, y = this.sy(t.y) + Math.sin(this.time * 13) * 0.8;
     drawTruckBase(ctx, x, y, -this.camY);
     sp.draw(ctx, 'truck_blue', x, y);
-    text(ctx, '蛙趣', x, y + 173 * K + 0.5, 11, { bold: true });
+    // the name plate on the tailgate, drawn over the painted one at a size that can be read
+    roundRect(ctx, x - 44, y + 173 * K - 13, 72, 26, 7);
+    ctx.fillStyle = P.cream;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    text(ctx, '蛙趣', x - 8, y + 173 * K + 1, 18, { bold: true, color: P.blue });
     // cargo = the shared pool of parcels still waiting
     const pool = this.lv.orders.filter((o) => o.state === 'pool' && !o.house.passed).slice(0, 5);
     // stacked on the inner half of the bed, the half that's on screen
@@ -3662,7 +3743,13 @@ export class PlayScene implements Scene {
         ctx.font = font(30, true);
         const w = ctx.measureText(e.label ?? '').width + 36;
         // kept on screen when the frog is near an edge
-        const bx = clamp(f.x + 54, w / 2 + 12, 738 - w / 2), by = Math.max(this.game.safeT + 130, this.sy(f.y) - f.z - 128);
+        let bx = clamp(f.x + 54, w / 2 + 12, 738 - w / 2), by = Math.max(this.game.safeT + 152, this.sy(f.y) - f.z - 128);
+        const g = this.gaugeAt();
+        if (g) {
+          // beside the leap gauge rather than across it
+          bx = g.x + 92 + w <= 738 ? g.x + 92 + w / 2 : g.x - 92 - w / 2;
+          by = g.y - 36;
+        }
         ctx.globalAlpha = a;
         ctx.translate(bx, by);
         ctx.scale(pop, pop);
@@ -3925,8 +4012,9 @@ export class PlayScene implements Scene {
     ctx.fillRect(43, ty + 27, 5, 18);
     ctx.fillRect(53, ty + 27, 5, 18);
     pressOut(ctx, this.pressed === 'pause', () => ellipse(ctx, 50, ty + 36, 23, 23));
-    text(ctx, `第${this.day}天`, 118, ty + 37, 30, { bold: true });
-    const x0 = 200, x1 = 532, ly = ty + 36;
+    text(ctx, `第${this.day}天`, 86, ty + 37, 30, { bold: true, align: 'left' });
+    // clear of a two-digit day, and the van stops short of the postmark at the end of the route
+    const x0 = 212, x1 = 520, ly = ty + 36;
     const prog = clamp(-this.camY / this.cfg.length, 0, 1);
     ctx.save();
     ctx.strokeStyle = 'rgba(74,59,48,0.35)';
@@ -3980,14 +4068,18 @@ export class PlayScene implements Scene {
     ctx.restore();
     // delivered count
     const handed = this.lv.orders.filter((o) => o.state === 'delivered' || o.state === 'wrong').length;
-    sp.draw(ctx, 'box0', 618, ly + 14, 0.95);
-    text(ctx, `${handed}/${this.lv.orders.length}`, 690, ly + 2, 30, { bold: true });
+    const count = `${handed}/${this.lv.orders.length}`;
+    ctx.font = font(30, true);
+    const cw = ctx.measureText(count).width;
+    sp.draw(ctx, 'box0', 716 - cw - 26, ly + 14, 0.95);
+    text(ctx, count, 716, ly + 2, 30, { bold: true, align: 'right' });
 
     this.drawUrgentCard(ctx, ty + 84);
 
     // Power gauge while aiming
     if (this.aim && this.frog.state === 'stand') {
-      const gx = 696, gy0 = H * 0.42, gh = H * 0.24;
+      // on the left edge when the frog is on the right (on the truck), so it never covers the frog
+      const gx = this.frog.x > 560 ? 14 : 696, gy0 = H * 0.42, gh = H * 0.24;
       panel(ctx, gx, gy0, 40, gh, { r: 18, shadow: false });
       const inner = { x: gx + 10, y: gy0 + 12, w: 20, h: gh - 24 };
       roundRect(ctx, inner.x, inner.y, inner.w, inner.h, 9);
@@ -4018,16 +4110,19 @@ export class PlayScene implements Scene {
     this.drawTray(ctx);
 
     if (this.callT !== null && !this.off && this.frog.state !== 'board') this.drawCall(ctx);
+    if (!this.off && !this.ended && this.step !== 'intro') this.drawLifeline(ctx);
     // hint bubble
     if (this.hint && !this.paused && (!this.step || this.step === 'go' || this.step === 'refill')) this.drawHint(ctx);
-    if (!this.off && !this.ended && this.step !== 'intro') this.drawLifeline(ctx);
     if (this.toast) {
       const a = Math.min(1, this.toast.t * 6) * (this.toast.t > 1.8 ? (2.2 - this.toast.t) / 0.4 : 1);
       ctx.save();
       ctx.globalAlpha = a;
       ctx.font = '26px WK';
       const w = Math.max(220, ctx.measureText(this.toast.text).width + 60);
-      const y = this.trayY() - (this.trayMode === 'pickup' ? 350 : this.callT !== null ? 270 : 190);
+      let y = this.trayY() - (this.trayMode === 'pickup' ? 372 : this.callT !== null ? 270 : 190);
+      // over a hint caption that's down here
+      const h = this.hint;
+      if (h?.low && y < this.capY + (h.sub ? 136 : 92) + 8 && y + 56 > this.capY - 8) y = this.capY - 70;
       panel(ctx, 375 - w / 2, y, w, 56, { r: 28, fill: P.cream });
       text(ctx, this.toast.text, 375, y + 29, 26);
       ctx.restore();
@@ -4201,16 +4296,18 @@ export class PlayScene implements Scene {
     codeTag(ctx, x + w * 0.76, y + 30 * k, o.code, o.house.color, 1.05 * k);
     sp.draw(ctx, boxSprite(o.size, o.urgent, o.cod), x + w / 2, y + h - 10 * k, (o.size === 0 ? 1.15 : o.size === 1 ? 1 : 0.9) * k);
     if (o.urgent || o.cod) {
+      // a label stuck on the parcel's lid, below the avatar and inside the card
       const label = o.urgent ? '急' : `到付¥${o.cod!.price}`;
       ctx.font = font(18 * k, true);
-      const bw = ctx.measureText(label).width + 12 * k;
-      roundRect(ctx, x - 6, y + h * 0.5 - 12 * k, bw, 24 * k, 6);
+      const bw = Math.min(w - 10, ctx.measureText(label).width + 14 * k);
+      const ly = y + 66 * k;
+      roundRect(ctx, x + w / 2 - bw / 2, ly - 12 * k, bw, 24 * k, 6);
       ctx.fillStyle = o.urgent ? P.red : P.gold;
       ctx.fill();
       ctx.strokeStyle = INK;
       ctx.lineWidth = 1.8;
       ctx.stroke();
-      text(ctx, label, x - 6 + bw / 2, y + h * 0.5 + 1, 18 * k, { color: o.urgent ? P.white : INK, bold: true });
+      text(ctx, label, x + w / 2, ly + 1, 18 * k, { color: o.urgent ? P.white : INK, bold: true, maxWidth: bw - 8 });
     }
     if (o.dunks) this.drawDunks(ctx, x + 8 * k, y + h - 16 * k, o.dunks, k);
     if (down) {
@@ -4239,10 +4336,10 @@ export class PlayScene implements Scene {
     ctx.restore();
   }
 
-  /** A small tag under the top bar: whether today's lifeline is still there. */
+  /** A small tag under the right end of the top bar: whether today's lifeline is still there. */
   private drawLifeline(ctx: Ctx) {
     const left = this.ropeUsed ? 0 : 1;
-    const x = 20, y = this.game.safeT + 88, w = 168, h = 36;
+    const w = 168, h = 36, x = 730 - w, y = this.game.safeT + 88;
     ctx.save();
     ctx.globalAlpha *= left ? 0.95 : 0.55;
     roundRect(ctx, x, y, w, h, 18);
@@ -4263,10 +4360,10 @@ export class PlayScene implements Scene {
 
   private drawHint(ctx: Ctx) {
     const h = this.hint!;
+    // shown since the last update (by a tap): placed now, so it doesn't flash up somewhere else first
+    if (h.low === undefined) this.placeHint(0);
     const a = Math.min(1, h.t * 5) * (h.t > h.dur - 0.3 ? Math.max(0, (h.dur - h.t) / 0.3) : 1);
-    // below the top bar, or below the urgent card when one is showing
-    const urgent = this.bag.some((o) => o.urgent);
-    this.drawCaption(ctx, h.line, h.sub, this.game.safeT + (urgent ? 214 : 98), a, h.warn);
+    this.drawCaption(ctx, h.line, h.sub, this.capY, a, h.warn);
   }
 
   /** Big caption card used by the tutorial and the hints: one line of rich text and an optional smaller line. */
@@ -4471,7 +4568,7 @@ export class PlayScene implements Scene {
         const [dx, dy, sc] = ICONS[icon] ?? [0, 0, 0.6];
         sp.draw(ctx, icon, 128 + dx, ry + dy, sc);
       }
-      rich(ctx, segs(line), 196, ry, 34, { left: true });
+      rich(ctx, segs(line), 196, ry, 34, { left: true, maxWidth: 486 });
     });
     // the day's third stamp, so it's known before setting off
     const cy = y0 + ch - 150;
@@ -4504,9 +4601,14 @@ export class PlayScene implements Scene {
     ctx.translate(-375, -(y0 + h / 2));
     panel(ctx, x0, y0, w, h, { r: 26 });
     text(ctx, '到付件 · 收款找零', 375, y0 + 58, 40, { bold: true });
-    sp.draw(ctx, `avatar_${c.h.species}`, x0 + 92, y0 + 150, 1.15);
-    text(ctx, `${c.h.name}付了`, x0 + 150, y0 + 150, 30, { align: 'left' });
-    this.drawBill(ctx, x0 + 420, y0 + 150, paid);
+    // avatar, who paid, and the banknote, as one row centred on the card with room between them
+    const who = `${c.h.name}付了`;
+    ctx.font = font(30);
+    const ww = ctx.measureText(who).width;
+    const rx = 375 - (76 + 18 + ww + 40 + 172) / 2;
+    sp.draw(ctx, `avatar_${c.h.species}`, rx + 38, y0 + 150, 1.15);
+    text(ctx, who, rx + 76 + 18, y0 + 150, 30, { align: 'left' });
+    this.drawBill(ctx, rx + 76 + 18 + ww + 40 + 86, y0 + 150, paid);
     rich(ctx, segs(`货款【¥${price}】，要找回多少？`), 375, y0 + 238, 34, { bold: true });
     if (this.cfg.tutorial && c.pick === null) text(ctx, '找零 = 付的钱 − 货款', 375, y0 + 284, 24, { color: P.inkSoft });
     c.btns = c.opts.map((v, i) => {
@@ -4517,8 +4619,8 @@ export class PlayScene implements Scene {
       const down = this.pressed === `chg${i}`;
       pressIn(ctx, r, down);
       panel(ctx, r.x, r.y, r.w, r.h, { r: 18, fill, stitch: done && isRight ? P.lilyDeep : done && chosen ? P.red : undefined });
-      // a little stack of coins beside the amount
-      for (let j = 0; j < Math.min(v, 6); j++) sp.draw(ctx, 'coin', r.x + 48, r.y + 96 - j * 10, 0.85, 0.6);
+      // a little stack of coins beside the amount, the same for every option (its height isn't the answer)
+      for (let j = 0; j < 3; j++) sp.draw(ctx, 'coin', r.x + 48, r.y + 96 - j * 10, 0.85, 0.6);
       text(ctx, `¥${v}`, r.x + 120, r.y + r.h / 2 + 2, 46, { bold: true, color: done && isRight ? P.lilyDeep : done && chosen ? P.red : INK });
       pressOut(ctx, down, () => roundRect(ctx, r.x, r.y, r.w, r.h, 18));
       return r;
@@ -4569,15 +4671,18 @@ export class PlayScene implements Scene {
     const o = this.off!;
     if (o.t < CARD_AT) return;
     const k = Math.min(1, (o.t - CARD_AT) / 0.45);
-    const lines = wrapText(ctx, o.line, 42, 500, true);
+    const lines = (o.lines ??= evenLines(ctx, o.line, 42, 470));
     const h = 150 + lines.length * 62 + 70;
     ctx.save();
     ctx.globalAlpha = k;
     ctx.translate(375, this.H * 0.42 + (1 - easeOutCubic(k)) * 70);
     ctx.rotate(-0.02);
-    panel(ctx, -295, -h / 2, 590, h, { r: 24 });
-    text(ctx, '“', -238, -h / 2 + 58, 96, { color: P.orange, bold: true });
-    text(ctx, '”', 238, -h / 2 + 140 + (lines.length - 1) * 62, 96, { color: P.orange, bold: true });
+    panel(ctx, -310, -h / 2, 620, h, { r: 24 });
+    // the quote marks hug the first and the last line, however long they are
+    ctx.font = font(42, true);
+    const w0 = ctx.measureText(lines[0]).width, w1 = ctx.measureText(lines[lines.length - 1]).width;
+    text(ctx, '“', -Math.min(266, w0 / 2 + 26), -h / 2 + 58, 96, { color: P.orange, bold: true });
+    text(ctx, '”', Math.min(266, w1 / 2 + 26), -h / 2 + 140 + (lines.length - 1) * 62, 96, { color: P.orange, bold: true });
     lines.forEach((l, i) => text(ctx, l, 0, -h / 2 + 110 + i * 62, 42, { bold: true }));
     // countdown ring with the seconds left, then the tap line
     const left = Math.max(0, OFF_END - o.t);
@@ -4674,4 +4779,50 @@ export function drawTruckBase(ctx: Ctx, x: number, y: number, odo: number) {
     }
     ctx.stroke();
   }
+}
+
+/**
+ * A sentence on as few lines as wrapText needs, but evened out: lines of about the same length, broken
+ * right after a comma or a stop where one is near enough, so a word isn't split to leave one or two
+ * characters on a line of their own.
+ */
+export function evenLines(ctx: Ctx, s: string, size: number, maxWidth: number): string[] {
+  const lines = wrapText(ctx, s, size, maxWidth, true);
+  const k = lines.length;
+  if (k < 2) return lines;
+  ctx.save();
+  ctx.font = font(size, true);
+  const pc = breakPieces(s);
+  const n = pc.length;
+  const target = ctx.measureText(s).width / k;
+  // cost[j][i]: the best way to set the first i pieces on j lines, and where its last line starts
+  const cost = Array.from({ length: k + 1 }, () => new Array<number>(n + 1).fill(Infinity));
+  const from = Array.from({ length: k + 1 }, () => new Array<number>(n + 1).fill(0));
+  cost[0][0] = 0;
+  for (let j = 1; j <= k; j++) {
+    for (let i = j; i <= n; i++) {
+      for (let p = j - 1; p < i; p++) {
+        if (cost[j - 1][p] === Infinity) continue;
+        const w = ctx.measureText(pc.slice(p, i).join('').trim()).width;
+        if (w > maxWidth) continue;
+        const stop = i < n && /[，。！？；：…）]$/.test(pc[i - 1]);
+        // a rough guard for words: a line shouldn't end on a counting word (一, 第…) waiting for what it counts
+        const split = i < n && /[一第每几这那]$/.test(pc[i - 1]);
+        const c = cost[j - 1][p] + (w - target) ** 2 - (stop ? (target * 0.8) ** 2 : 0) + (split ? (target * 0.5) ** 2 : 0);
+        if (c < cost[j][i]) {
+          cost[j][i] = c;
+          from[j][i] = p;
+        }
+      }
+    }
+  }
+  ctx.restore();
+  if (cost[k][n] === Infinity) return lines;
+  const out: string[] = [];
+  for (let j = k, i = n; j > 0; j--) {
+    const p = from[j][i];
+    out.unshift(pc.slice(p, i).join('').trim());
+    i = p;
+  }
+  return out;
 }
