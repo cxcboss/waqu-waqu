@@ -200,6 +200,8 @@ export class PlayScene implements Scene {
   private slowT = 0;
   private slowCd = 0;
   private time = 0;
+  /** Seconds the river has actually been running: urgent countdowns use it, so they stop while it does. */
+  private runT = 0;
   private frog: Frog;
   private bag: Order[] = [];
   private aim: { id: number; sx: number; sy: number; x: number; y: number; t: number } | null = null;
@@ -398,6 +400,7 @@ export class PlayScene implements Scene {
   update(dt: number) {
     if (this.paused || this.leaving) return;
     this.time += dt;
+    if (!this.frozen() && !this.ended && !this.off) this.runT += dt;
     this.stepT += dt;
     this.shakeT = Math.max(0, this.shakeT - dt);
     this.honkT = Math.max(0, this.honkT - dt);
@@ -1568,7 +1571,9 @@ export class PlayScene implements Scene {
 
   private checkUrgent() {
     for (const o of this.bag) {
-      if (o.urgent && !o.late && this.time > o.deadline) {
+      if (!o.urgent || o.late) continue;
+      if (!o.deadline) this.startUrgent(o);
+      else if (this.runT > o.deadline) {
         o.late = true;
         this.log('urgent_late', { code: o.code });
         this.showToast('加急件超时了，还是要送到哦');
@@ -1627,7 +1632,7 @@ export class PlayScene implements Scene {
     // (parcels still floating, or on the tongue, are on their way back to the bag: no refill yet)
     if (this.cfg.tutorial && !this.bag.length && !this.floaters.length && !this.tongue && f.state === 'stand' && !onTruck && (this.step === 'go' || this.step === null) && this.lv.orders.some((o) => o.state === 'pool')) this.setStep('refill');
     if (this.step === 'refill' && f.state === 'stand') this.showHint('refill', '跳回【运输车】，取下一个包裹', { dur: 999, sub: '车上还有包裹等着送，别忘了' });
-    if (onTruck && this.truckCards().some((c) => c.order.urgent)) this.showHint('urgent', '【红标签】是加急件，倒计时内送到有奖金', { dur: 5 });
+    if (onTruck && this.truckCards().some((c) => c.order.urgent)) this.showHint('urgent', '【红标签】是加急件，倒计时内送到有奖金', { dur: 5, sub: '它的房子出现在屏幕上，才开始倒计时' });
     if (onTruck && this.truckCards().some((c) => c.order.size === 2)) this.showHint('heavy', '【大件】很重，背着它跳不远', { dur: 5 });
   }
 
@@ -1969,12 +1974,8 @@ export class PlayScene implements Scene {
     this.fly(o);
     o.state = 'bag';
     if (!o.pickedAt) o.pickedAt = this.time;
-    if (o.urgent && !o.deadline) {
-      // Enough time for the house to come down to the frog, plus a margin. Kept if it's put back.
-      const ahead = Math.max(0, this.H * 0.45 - this.sy(o.house.plat.y));
-      o.deadline = this.time + Math.max(TUNING.urgentSeconds, ahead / this.cfg.speed + 16);
-    }
     this.bag.push(o);
+    if (o.urgent && !o.deadline) this.startUrgent(o);
     this.log('pickup', { code: o.code, size: o.size, urgent: o.urgent, cod: !!o.cod, used: this.slotsUsed() });
     if (o.urgent) this.game.audio.play('urgent_alert', { delay: 0.25 });
     // off the cargo stack and into the frog's satchel
@@ -1992,6 +1993,16 @@ export class PlayScene implements Scene {
         this.aimTarget = this.findAimTarget(o.house);
       }
     }
+  }
+
+  /**
+   * An urgent parcel's countdown starts once its house has come into view (right away if it already
+   * has), so one picked up early isn't timed while its house is still far up the river.
+   */
+  private startUrgent(o: Order) {
+    if (this.sy(o.house.plat.y) < this.game.safeT + 160) return;
+    o.urgentAt = this.runT;
+    o.deadline = this.runT + TUNING.urgentSeconds;
   }
 
   /** On the truck, a parcel tapped in the satchel goes back onto the cargo stack. */
@@ -2045,7 +2056,7 @@ export class PlayScene implements Scene {
       this.trip++;
       this.stats.bestTrip = Math.max(this.stats.bestTrip, this.trip);
       const ch = this.cfg.challenge;
-      if (o.urgent && this.time - o.pickedAt <= (ch.kind === 'urgentFast' ? ch.sec : 20)) this.stats.fastUrgent = true;
+      if (o.urgent && o.deadline && this.runT - o.urgentAt <= (ch.kind === 'urgentFast' ? ch.sec : 20)) this.stats.fastUrgent = true;
       const n = this.lv.orders.filter((x) => x.state === 'delivered').length;
       if (n === 1) this.queueShot('first', '第一单送达！', 4, T + 0.3);
       if (o.urgent && !o.late) this.queueShot('urgent', '加急件准时送达！', 5, T + 0.3);
@@ -2407,7 +2418,8 @@ export class PlayScene implements Scene {
       this.chargeMax = false;
       this.predicted = false;
     }
-    const soon = this.bag.some((o) => o.urgent && !o.late && o.deadline - this.time <= 10);
+    // the last ten seconds tick, but not while the river (and so the countdown) stands still
+    const soon = !this.frozen() && this.bag.some((o) => o.urgent && !o.late && o.deadline && o.deadline - this.runT <= 10);
     if (soon && !this.tick && !this.ended) this.tick = au.loop('urgent_tick_loop', { volume: 0.6 });
     if ((!soon || this.ended) && this.tick) {
       this.tick.stop(0.2);
@@ -4029,10 +4041,13 @@ export class PlayScene implements Scene {
   }
 
   private drawUrgentCard(ctx: Ctx, y: number) {
-    const urgent = this.bag.filter((o) => o.urgent).sort((a, b) => a.deadline - b.deadline)[0];
+    // the one running out first, then one whose house hasn't shown up yet (its clock still full), then a late one
+    const due = (o: Order) => (o.late ? 2e9 : o.deadline || 1e9);
+    const urgent = this.bag.filter((o) => o.urgent).sort((a, b) => due(a) - due(b))[0];
     if (!urgent) return;
     const sp = this.game.sprites;
-    const left = Math.ceil(urgent.deadline - this.time);
+    const started = urgent.deadline > 0;
+    const left = Math.max(0, started ? Math.ceil(urgent.deadline - this.runT) : TUNING.urgentSeconds);
     ctx.save();
     ctx.translate(26, y);
     ctx.rotate(-0.04);
@@ -4053,8 +4068,8 @@ export class PlayScene implements Scene {
     sp.draw(ctx, `avatar_${urgent.house.species}`, 38, 66, 0.82);
     codeTag(ctx, 100, 54, urgent.code, urgent.house.color, 0.85);
     const late = urgent.late;
-    const s = late ? '超时' : `0:${String(Math.max(0, left)).padStart(2, '0')}`;
-    text(ctx, s, 104, 88, 26, { color: late || left <= 10 ? P.red : INK, bold: true });
+    const s = late ? '超时' : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    text(ctx, s, 104, 88, 26, { color: late || (started && left <= 10) ? P.red : started ? INK : P.inkSoft, bold: true });
     ctx.restore();
   }
 

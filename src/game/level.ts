@@ -71,8 +71,13 @@ export interface Order {
   /** Times it has gone into the river; the third time it's ruined and washed away. */
   dunks: number;
   state: OrderState;
-  /** Set on the first pickup and kept, so putting an urgent parcel back doesn't restart its clock. */
+  /**
+   * An urgent parcel's countdown, on the play scene's river clock (which stands still while the
+   * river does): it starts once the parcel is in the bag and its house is on screen, and is kept
+   * if the parcel is put back. 0 until then; `urgentAt` is when it started.
+   */
   deadline: number;
+  urgentAt: number;
   pickedAt: number;
   late: boolean;
   deliveredTo: House | null;
@@ -226,7 +231,7 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
     const h = houses[houseOrder[i % houseOrder.length]];
     orders.push({
       id: i, code: 0, house: h, size: cfg.sizes[Math.floor(ro() * cfg.sizes.length)], urgent: false, cod: null, codOk: null, dunks: 0,
-      state: 'pool', deadline: 0, pickedAt: 0, late: false, deliveredTo: null,
+      state: 'pool', deadline: 0, urgentAt: 0, pickedAt: 0, late: false, deliveredTo: null,
     });
   }
   // Early days count up the river: the first house waits for 1, the next for 2, and so on.
