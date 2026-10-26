@@ -106,6 +106,9 @@ export class MapScene implements Scene {
   }
 
   private stopAt(x: number, y: number) {
+    // the header, the chapter ribbon under it and the day card at the bottom sit on top of the river
+    const H = this.game.H, top = this.game.safeT;
+    if (y < top + 146 || (y >= H - this.game.safeB - 24 - 300 && x >= 24 && x <= 726)) return undefined;
     return this.stops.find((s) => Math.hypot(x - s.x, (y - s.y) * 1.2) <= 90 || hit({ x: s.x - 115, y: s.y + 26, w: 230, h: 76 }, x, y));
   }
 
@@ -138,7 +141,8 @@ export class MapScene implements Scene {
     if (day > this.unlocked) {
       this.game.tm.log('map_locked', { day });
       au.play('ui_error');
-      this.toast = { text: `先通过第${day - 1}天，才能解锁这一站`, t: 0 };
+      // the one to pass is the furthest day open, whichever locked stop was tapped
+      this.toast = { text: `先通过第${this.unlocked}天，才能解锁这一站`, t: 0 };
       return;
     }
     if (day === this.sel) return;
@@ -208,7 +212,7 @@ export class MapScene implements Scene {
       const by = (this.stops[c * DAYS_PER_CHAPTER - 1].y + this.stops[c * DAYS_PER_CHAPTER].y) / 2;
       if (by < -120 || by > H + 120) continue;
       const title = `第${'一二三四五六'[c]}章 · ${CHAPTERS[c].title}`;
-      if (c === firstLocked) this.drawFog(ctx, by, title);
+      if (c === firstLocked) this.drawFog(ctx, by, title, c);
       else if (c < firstLocked) text(ctx, title, 375, by, 28, { bold: true, color: P.inkSoft });
     }
 
@@ -401,7 +405,7 @@ export class MapScene implements Scene {
   }
 
   /** Clouds over the river's top end, where the next chapter will be. */
-  private drawFog(ctx: Ctx, y: number, title: string) {
+  private drawFog(ctx: Ctx, y: number, title: string, c: number) {
     ctx.save();
     for (let i = 0; i < 9; i++) {
       const x = 40 + i * 84 + Math.sin(this.t * 0.4 + i) * 10;
@@ -411,7 +415,7 @@ export class MapScene implements Scene {
     }
     ctx.restore();
     text(ctx, title, 375, y - 4, 26, { bold: true, color: P.inkSoft });
-    text(ctx, '雾还没散，敬请期待', 375, y + 30, 22, { color: P.inkSoft });
+    text(ctx, `通过第${c * DAYS_PER_CHAPTER}天，解锁第${'一二三四五六'[c]}章`, 375, y + 30, 22, { color: P.inkSoft });
   }
 
   /** The signpost under a stop: day and name, best grade, and the three stamps (or a lock). */
