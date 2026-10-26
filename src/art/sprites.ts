@@ -6,9 +6,11 @@ import { placeholderHouse } from './houses';
 import * as A from './shapes';
 import * as H from './shapes-home';
 import { defs } from './svg';
+import { pxPerUnit, useCanvas } from './kit/canvas';
 
-/** Design units (750-wide canvas) per concept unit (1080-wide concept art). */
-export const K = 750 / 1080;
+/** Width of the design canvas, and design units per concept unit (1080-wide concept art). */
+export const DESIGN_W = 750;
+export const K = DESIGN_W / 1080;
 export const TILE_H = 2016; // background tile height in concept units (1400 design units)
 
 export interface Sprite {
@@ -272,6 +274,37 @@ for (const [name, b, s] of [
 // Background tile
 def('river', [0, 0, 1080, TILE_H], () => A.riverTile(TILE_H));
 
+// ---------------------------------------------------------------- code-drawn art
+
+interface CodeDef {
+  /** Bounds in design units around the anchor: [x0, y0, x1, y1]. */
+  b: [number, number, number, number];
+  draw: (ctx: Ctx, variant: string) => void;
+  /** Extra sharpness for sprites usually drawn scaled up. */
+  res: number;
+}
+const C: Record<string, CodeDef> = {};
+const banks: SpriteBank[] = [];
+/** The code art behind `name` or `name:variant`. */
+const codeDef = (name: string): CodeDef | undefined => {
+  const i = name.indexOf(':');
+  return C[i < 0 ? name : name.slice(0, i)];
+};
+
+/**
+ * Static art drawn in code (the 河湾手账 kit) rather than painted. `draw` paints it once into an offscreen
+ * canvas at the screen's sharpness, with the anchor at (0, 0) and design units as units; it's painted again
+ * only when the resolution changes. Ask for a variant with `name:variant` (for example `hub_hq:night`):
+ * each variant is baked on its own and `draw` gets the part after the colon ('' without one).
+ * After that it's an ordinary sprite: `sp.draw`, `sp.has`, `iconAt` work the same as for painted art, and a
+ * code sprite takes over from a painted or placeholder sprite of the same name. Pure Canvas 2D, no SVG.
+ * `bounds()` reports it in concept units like any other sprite (the design-unit bounds divided by K).
+ */
+export function codeSprite(name: string, b: [number, number, number, number], draw: (ctx: Ctx, variant: string) => void, o: { res?: number } = {}) {
+  C[name] = { b, draw, res: o.res ?? 1 };
+  for (const bank of banks) bank.dropCode(name);
+}
+
 /** Non-lazy art that has to be in before the first screen (the loading screen waits for it). */
 const CORE = /^(frog_stand|frog_happy|coin|hand|hat_|neck_)/;
 /** The art one day of play needs; the rest is only for the other screens. */
@@ -292,7 +325,43 @@ export class SpriteBank {
   /** How many sprites are painted art rather than placeholders. */
   painted = 0;
 
-  constructor(private platform: Platform) {}
+  /** Baked code sprites by full name (with variant), and the sharpness each was baked at. */
+  private code = new Map<string, { s: Sprite; px: number }>();
+
+  constructor(private platform: Platform) {
+    // the kit bakes icons, medals and frames into offscreen canvases at the main canvas' sharpness
+    useCanvas((w, h) => platform.createCanvas(w, h), () => platform.canvas.width / DESIGN_W);
+    banks.push(this);
+  }
+
+  /** Registers code-drawn art (see the `codeSprite` function). */
+  codeSprite(name: string, b: [number, number, number, number], draw: (ctx: Ctx, variant: string) => void, o: { res?: number } = {}) {
+    codeSprite(name, b, draw, o);
+  }
+
+  /** Forgets the bakes of a code sprite (all its variants), so it's drawn afresh next time. */
+  dropCode(name: string) {
+    for (const k of [...this.code.keys()]) if (k === name || k.startsWith(name + ':')) this.code.delete(k);
+  }
+
+  /** The baked code sprite for `name` (or `name:variant`), baking it now if needed; undefined if there's no such code art. */
+  private codeArt(name: string): Sprite | undefined {
+    const d = codeDef(name);
+    if (!d) return undefined;
+    const i = name.indexOf(':');
+    const [x0, y0, x1, y1] = d.b;
+    // big layers are capped like the placeholders, so they stay light on memory
+    const px = Math.min(pxPerUnit(), x1 - x0 > 600 ? 1.6 : 2.5) * d.res;
+    const e = this.code.get(name);
+    if (e && e.px === px) return e.s;
+    const c = this.platform.createCanvas((x1 - x0) * px, (y1 - y0) * px);
+    const g = c.getContext('2d')!;
+    g.setTransform(c.width / (x1 - x0), 0, 0, c.height / (y1 - y0), -x0 * (c.width / (x1 - x0)), -y0 * (c.height / (y1 - y0)));
+    d.draw(g, i < 0 ? '' : name.slice(i + 1));
+    const s: Sprite = { img: c, w: x1 - x0, h: y1 - y0, ax: -x0, ay: -y0 };
+    this.code.set(name, { s, px });
+    return s;
+  }
 
   private px = 1;
   private base = 'art/';
@@ -466,25 +535,26 @@ export class SpriteBank {
     return { img: c, w: (x1 - x0) * d.s, h: (y1 - y0) * d.s, ax: -x0 * d.s, ay: -y0 * d.s };
   }
 
-  /** Whether there's art for this sprite (painted-only sprites may be missing). */
+  /** Whether there's art for this sprite (painted-only sprites may be missing; code sprites are always there). */
   has(name: string) {
-    return this.map.has(name);
+    return this.map.has(name) || codeDef(name) !== undefined;
   }
 
   get(name: string): Sprite {
-    const s = this.map.get(name);
+    const s = this.codeArt(name) ?? this.map.get(name);
     if (!s) throw new Error('missing sprite ' + name);
     return s;
   }
 
-  /** Bounds of a sprite in concept units relative to its anchor. */
+  /** Bounds of a sprite in concept units relative to its anchor (a code sprite's design-unit bounds are converted). */
   bounds(name: string): SpriteDef['b'] {
-    return D[name].b;
+    const c = codeDef(name)?.b;
+    return c ? [c[0] / K, c[1] / K, c[2] / K, c[3] / K] : D[name].b;
   }
 
   /** Draws a sprite with its anchor at (x, y), optionally scaled, rotated and faded. */
   draw(ctx: Ctx, name: string, x: number, y: number, sx = 1, sy = sx, rot = 0, alpha = 1) {
-    const s = this.map.get(name);
+    const s = this.codeArt(name) ?? this.map.get(name);
     if (!s) {
       if (D[name]?.lazy || this.deferred.has(name)) void this.loadOne(name);
       else throw new Error('missing sprite ' + name);
