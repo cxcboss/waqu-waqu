@@ -4558,6 +4558,25 @@ export class PlayScene implements Scene {
       ctx.lineWidth = 2;
       ctx.stroke();
       if (icon === 'code') codeTag(ctx, 128, ry, 7, P.tealDeep, 1.4);
+      else if (icon === 'flag') {
+        // a pennant for a new chapter of the route
+        ctx.beginPath();
+        ctx.moveTo(116, ry + 26);
+        ctx.lineTo(116, ry - 26);
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(118, ry - 26);
+        ctx.lineTo(148, ry - 14);
+        ctx.lineTo(118, ry - 2);
+        ctx.closePath();
+        ctx.fillStyle = P.red;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
       else if (icon === 'cod') {
         ctx.save();
         ctx.translate(128, ry);

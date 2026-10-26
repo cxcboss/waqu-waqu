@@ -23,6 +23,12 @@ export interface DayConfig {
   intro: string;
   /** Briefing card before the day starts: a sprite name and a line per row, 【】 marks a highlight. */
   brief: { title: string; rows: [string, string][] };
+  /**
+   * More briefing rows for a day from 6 on (a chapter's new mechanic, say), in the same form as
+   * `brief.rows`. They go on the card after the rows made from the day's numbers, and come before
+   * the less important of those when the card runs out of room (see BRIEF_MAX).
+   */
+  briefExtra?: [string, string][];
   /** Name of the stop on the route map. */
   name: string;
   /** Pickup codes follow the order the houses come up (1, 2, 3…); off from day 4 on. */
@@ -56,7 +62,7 @@ export const DAYS: DayConfig[] = [
       rows: [
         ['box0', '从运输车上【取包裹】'],
         ['code', '送到挂着【相同取件码】的房子'],
-        ['hand', '【任意空白处】按住往下拉，松手就跳'],
+        ['hand', '【任意空白处】按住下拉，松手就跳'],
         ['frog_swim', '别掉进河里；每天有【一次救命绳】'],
         ['frog_nervous', '按住别太久，【5 秒】不松手脚会累'],
       ],
@@ -138,9 +144,15 @@ export const chapterOf = (day: number) => Math.floor((day - 1) / DAYS_PER_CHAPTE
 
 /** The two storm days are allowed to be failed with half the parcels. */
 const HARD_DAYS = [15, 25];
+/** Share of parcels that have to reach the right house for the day to count as passed. */
+export const PASS_RATE = 0.6;
+/** The first day is a lesson, and the storm days are hard: half the parcels is a pass. */
+export const passRate = (day: number) => (day <= 1 || HARD_DAYS.includes(day) ? 0.5 : PASS_RATE);
+/** The most rows a briefing card has room for on the smallest phones. */
+export const BRIEF_MAX = 5;
 
-// Days 6–30: [name, speed, houses, orders, urgent, cod, codNote, sizes, predictDelay, challenge, intro].
-type Row = [string, number, number, number, number, number, 10 | 20, Size[], number, Challenge, string];
+// Days 6–30: [name, speed, houses, orders, urgent, cod, codNote, sizes, predictDelay, challenge, intro, extra brief rows].
+type Row = [string, number, number, number, number, number, 10 | 20, Size[], number, Challenge, string, [string, string][]?];
 const noFall: Challenge = { kind: 'noFall', label: '一次都不落水' };
 const noWet: Challenge = { kind: 'clean', label: '不错投，也不泡水' };
 const noWrong: Challenge = { kind: 'noWrong', label: '一个都不错投' };
@@ -151,13 +163,13 @@ const fast = (sec: number): Challenge => ({ kind: 'urgentFast', label: `加急�
 const MIX: Size[] = [0, 1, 1, 2];
 const LATER: Row[] = [
   // 初夏 · 荷花塘
-  ['荷花开了', 50, 8, 8, 1, 1, 10, [0, 0, 1, 1], 1.2, noFall, '进入荷花塘，房子更多了'],
+  ['荷花开了', 50, 8, 8, 1, 1, 10, [0, 0, 1, 1], 1.2, noFall, '来到荷花塘，河水先缓一缓'],
   ['乌龟爷爷', 52, 8, 8, 1, 1, 10, [0, 0, 1], 1.2, multi(3), '小件多，背上几件一起送'],
   ['兔小妹的婚礼', 48, 8, 7, 1, 1, 20, [1, 1, 2], 1.2, noWrong, '婚礼用品都是中大件，看准码牌'],
   ['冰棍要化了', 56, 9, 9, 2, 1, 20, [0, 0, 1], 1.2, fast(18), '加急件变多，倒计时不等人'],
   ['盛夏考核', 58, 9, 10, 2, 2, 20, MIX, 1.2, noWet, '夏天的考核：什么都会遇到'],
   // 雨季 · 急流峡
-  ['峡谷入口', 54, 9, 9, 1, 1, 20, MIX, 1.2, noFall, '河水变急了，车开得更快'],
+  ['峡谷入口', 54, 9, 9, 1, 1, 20, MIX, 1.2, noFall, '进入急流峡，水一天比一天急'],
   ['河狸的水坝', 56, 9, 9, 1, 2, 20, MIX, 1.2, codAll, '到付件变多，算好找零'],
   ['下雨了', 58, 9, 10, 2, 1, 20, MIX, 1.2, noWet, '雨天路滑，别泡了包裹'],
   ['漩涡湾', 60, 10, 10, 2, 2, 20, MIX, 1.2, fast(20), '漩涡多，加急件要抄近路'],
@@ -175,34 +187,47 @@ const LATER: Row[] = [
   ['冰河急弯', 62, 10, 10, 2, 2, 20, MIX, 1.2, fast(18), '冰面急弯，加急件要抢时间'],
   ['暴风雪', 66, 10, 10, 3, 2, 20, [1, 2, 2, 1], 1.2, noWet, '超难关：风雪夜行，送对五成就算过'],
   // 年末 · 港口集市
-  ['港口初到', 58, 10, 10, 1, 1, 20, MIX, 1.2, noFall, '到了港口，房子又多又密'],
+  ['港口初到', 58, 10, 10, 1, 1, 20, MIX, 1.2, noFall, '到了港口，每天十户人家等着收件'],
   ['起重机', 60, 10, 10, 2, 1, 20, [1, 1, 2, 2], 1.2, multi(2), '大件偏多，挑着背'],
   ['海鸥来了', 62, 10, 10, 2, 2, 20, MIX, 1.2, noWrong, '动作要快，别磨蹭'],
   ['年货大集', 64, 10, 10, 2, 3, 20, MIX, 1.2, codAll, '年货到付件特别多'],
   ['除夕最后一单', 66, 10, 10, 3, 3, 20, [0, 1, 1, 2], 1.2, allIn, '最后一天：把所有包裹都送到'],
 ];
 
-DAYS.push(
-  ...LATER.map(([name, speed, houses, orders, urgent, cod, codNote, sizes, predictDelay, challenge, intro], i): DayConfig => {
-    const day = 6 + i;
-    const rows: [string, string][] = [
-      ['code', `今天【${orders} 单】，共【${houses} 户】`],
-    ];
-    if (urgent) rows.push(['box0u', `【加急件 ${urgent} 个】有奖金`]);
-    if (cod) rows.push(['cod', `【到付 ${cod} 个】，给 ${codNote} 元`]);
-    rows.push(['lily1', `河水【更急】，别掉队！`]);
-    return {
-      day, length: houses * 970 + 100, speed, houses, orders, urgent, sizes, bagSlots: 4, predictDelay,
-      markTargets: false, tutorial: false, seed: day * 101, name, ordered: false, cod, codNote, challenge, intro,
-      brief: { title: `第${day}天 · ${name}`, rows },
-    };
-  }),
-);
+for (const [i, [name, speed, houses, orders, urgent, cod, codNote, sizes, predictDelay, challenge, intro, briefExtra]] of LATER.entries()) {
+  const day = 6 + i;
+  const c: DayConfig = {
+    day, length: houses * 970 + 100, speed, houses, orders, urgent, sizes, bagSlots: 4, predictDelay,
+    markTargets: false, tutorial: false, seed: day * 101, name, ordered: false, cod, codNote, challenge, intro,
+    brief: { title: `第${day}天 · ${name}`, rows: [] }, briefExtra,
+  };
+  c.brief.rows = laterBrief(c, DAYS[DAYS.length - 1]);
+  DAYS.push(c);
+}
 
-/** Share of parcels that have to reach the right house for the day to count as passed. */
-export const PASS_RATE = 0.6;
-/** The first day is a lesson: half the parcels is a pass. */
-export const passRate = (day: number) => (day <= 1 || HARD_DAYS.includes(day) ? 0.5 : PASS_RATE);
+/**
+ * The briefing rows of a day from 6 on, made from the day's own numbers so they can't promise anything
+ * untrue: the parcels, a new chapter, the storm days' lower bar, urgent and cash-on-delivery parcels,
+ * the river against the day before, and what the parcels are like; then the day's extra rows. When
+ * that's more than the card holds, the least important rows are left out.
+ */
+function laterBrief(c: DayConfig, prev: DayConfig): [string, string][] {
+  const rows: { prio: number; row: [string, string] }[] = [];
+  const add = (prio: number, icon: string, line: string) => rows.push({ prio, row: [icon, line] });
+  add(0, 'code', `今天【${c.orders} 单】 · ${c.houses} 户人家`);
+  const ch = chapterOf(c.day);
+  if (ch !== chapterOf(prev.day)) add(1, 'flag', `新的一章：【${CHAPTERS[ch].title}】`);
+  if (HARD_DAYS.includes(c.day)) add(1, 'frog_nervous', `超难关！送对【${'零一二三四五六七八九十'[Math.round(passRate(c.day) * 10)]}成】就算过`);
+  if (c.urgent) add(2, 'box0u', `【加急件 ${c.urgent} 个】，准时送到有奖金`);
+  if (c.cod) add(3, 'cod', `【到付件 ${c.cod} 个】，住户付 ${c.codNote} 元`);
+  add(4, 'lily1', c.speed > prev.speed ? '河水比昨天【更急】，别掉队！' : c.speed < prev.speed ? '河水比昨天【缓一些】' : '河水和昨天【一样快】');
+  const small = c.sizes.filter((s) => s === 0).length / c.sizes.length;
+  if (!small) add(5, 'box2', '全是【中大件】，占背包又重');
+  else if (small >= 0.6) add(5, 'box0', '【小件】多，一趟能多背几个');
+  for (const [icon, line] of c.briefExtra ?? []) add(1, icon, line);
+  const keep = new Set([...rows].sort((a, b) => a.prio - b.prio).slice(0, BRIEF_MAX));
+  return rows.filter((r) => keep.has(r)).map((r) => r.row);
+}
 
 export const SIZE_INFO: { slots: number; weight: number; pay: number; label: string }[] = [
   { slots: 1, weight: 1, pay: 10, label: '小件' },
