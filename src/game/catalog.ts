@@ -20,8 +20,12 @@ export const GEAR: GearDef[] = [
     id: 'bag', name: '邮差包', sprite: 'gear_bag',
     looks: ['帆布小挎包', '双扣邮差包', '大号皮包', '反光条专业包', '金扣大邮包'],
     prices: [60, 150, 300, 500],
-    desc: '包越大，一趟能装越多，少跑几趟车',
-    effect: (lv) => (lv > 1 ? `背包多 ${lv - 1} 格（最多 ${MAX_SLOTS} 格）` : '背包格数和当天一样'),
+    desc: '包越大，一趟能装越多；最后两级背着更轻',
+    effect: (lv) => {
+      const more = bagSlots(lv), light = bagLight(lv);
+      if (!more) return '背包格数和当天一样';
+      return light ? `背包多 ${more} 格，负重影响 −${Math.round(light * 100)}%` : `背包多 ${more} 格（最多 ${MAX_SLOTS} 格）`;
+    },
   },
   {
     id: 'shoe', name: '弹力鞋', sprite: 'gear_shoe',
@@ -54,7 +58,19 @@ export interface GearEffects {
 
 export function gearEffects(gear: Partial<Record<GearId, number>> = {}): GearEffects {
   const lv = (id: GearId) => Math.max(1, Math.min(gearMax(id), gear[id] ?? 1)) - 1;
-  return { slots: lv('bag'), jump: 1 + 0.05 * lv('shoe'), weight: 1 - 0.1 * lv('shoe'), swim: 1 + 0.1 * lv('fin') };
+  const bag = lv('bag') + 1;
+  return { slots: bagSlots(bag), jump: 1 + 0.05 * lv('shoe'), weight: (1 - 0.1 * lv('shoe')) * (1 - bagLight(bag)), swim: 1 + 0.1 * lv('fin') };
+}
+
+/**
+ * The satchel: levels 2 and 3 add a slot each (the day's four plus two fill the six cards the
+ * satchel row holds), levels 4 and 5 make a full bag weigh on the jump less.
+ */
+function bagSlots(lv: number) {
+  return Math.min(2, lv - 1);
+}
+function bagLight(lv: number) {
+  return lv >= 5 ? 0.4 : lv >= 4 ? 0.2 : 0;
 }
 
 /** Bags top out here whatever the day starts with: six cards is all the satchel row on screen holds. */
