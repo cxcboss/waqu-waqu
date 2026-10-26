@@ -5,7 +5,7 @@ import { Audio } from '../engine/audio';
 import { Telemetry, type TelemetryOptions } from '../engine/telemetry';
 import type { Ctx, Platform } from '../platform/types';
 import { Album } from './album';
-import { upgradeSave, type Achievement, type AlbumPhoto, type Career, type DayLog, type Entry, type Note, type Rank, type Room, type Wear } from './career';
+import { stampCount, upgradeSave, type Achievement, type AlbumPhoto, type Career, type DayLog, type Entry, type Note, type Rank, type Room, type Wear } from './career';
 import { item, type GearId } from './catalog';
 import { DAYS } from './config';
 import { Loader } from './loading';
@@ -146,7 +146,7 @@ export class Game {
     const s = this.save;
     this.tm.log('open', {
       ...this.platform.deviceInfo(), ...entry, visit: this.tm.visits,
-      unlocked: s.day, coins: s.coins, sound: s.sound, stamps: Object.values(s.stamps).flat().filter(Boolean).length,
+      unlocked: s.day, coins: s.coins, sound: s.sound, stamps: stampCount(s),
     });
     this.platform.onError((msg, where) => {
       this.tm.log('error', { msg, where, scene: this.scene?.id ?? null });
@@ -326,14 +326,14 @@ export class Game {
   }
 
   readSave(): SaveData {
-    const base = { day: 1, coins: 0, best: {}, sound: true, tips: {}, stamps: {} } as unknown as SaveData;
     try {
       const raw = this.platform.storageGet(SAVE_KEY);
-      if (raw) return upgradeSave({ ...base, ...JSON.parse(raw) });
+      // upgradeSave fills in and repairs whatever it's given, even something that isn't a save
+      if (raw) return upgradeSave(JSON.parse(raw));
     } catch {
       /* corrupted save: start fresh */
     }
-    return upgradeSave(base);
+    return upgradeSave({});
   }
 
   writeSave() {

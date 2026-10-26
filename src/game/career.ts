@@ -104,28 +104,86 @@ export const emptyCareer = (): Career => ({
   byResident: {},
 });
 
-/** Fills in whatever an older save doesn't have yet (v1 saves only knew days, coins and stamps). */
-export function upgradeSave(s: SaveData): SaveData {
-  s.name = typeof s.name === 'string' && s.name ? s.name : '小呱';
-  s.since = s.since || Date.now();
-  s.gear = Object.assign({ bag: 1, shoe: 1, fin: 1 }, s.gear);
-  s.owned = Array.isArray(s.owned) ? s.owned.filter((id) => item(id)) : [];
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isStr = (v: unknown): v is string => typeof v === 'string';
+/** A whole number between lo and hi, or `d` for anything else. */
+const int = (v: unknown, d: number, lo = 0, hi = Number.MAX_SAFE_INTEGER) => (isNum(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : d);
+const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+/** Keys of a by-day record that are real days. */
+const dayKeys = (v: unknown) => (isObj(v) ? Object.keys(v).filter((k) => /^\d+$/.test(k) && +k >= 1 && +k <= DAYS.length) : []);
+const GRADE_LETTERS = 'SABCD';
+const NOTE_KINDS: NoteKind[] = ['story', 'mixup', 'soaked', 'letter', 'stamp', 'rank', 'ach'];
+
+/**
+ * Turns whatever was in storage into a save the game can trust: fills in what older saves don't have
+ * yet (v1 saves only knew days, coins and stamps) and repairs anything broken or out of range, so a
+ * bad value can't crash a screen or open days that don't exist.
+ */
+export function upgradeSave(raw: unknown): SaveData {
+  const o: Obj = isObj(raw) ? raw : {};
+  const s = o as unknown as SaveData;
+  s.day = int(o.day, 1, 1, DAYS.length);
+  s.coins = int(o.coins, 0);
+  s.sound = typeof o.sound === 'boolean' ? o.sound : true;
+  s.tips = Object.fromEntries(Object.entries(isObj(o.tips) ? o.tips : {}).filter(([, v]) => typeof v === 'boolean')) as Record<string, boolean>;
+  const oldBest = isObj(o.best) ? o.best : {};
+  s.best = Object.fromEntries(dayKeys(oldBest).filter((k) => isStr(oldBest[k]) && GRADE_LETTERS.includes(oldBest[k] as string) && (oldBest[k] as string).length === 1).map((k) => [+k, oldBest[k]])) as Record<number, string>;
+  const hadStamps = isObj(o.stamps);
+  const oldStamps = hadStamps ? (o.stamps as Obj) : {};
+  s.stamps = Object.fromEntries(dayKeys(oldStamps).filter((k) => Array.isArray(oldStamps[k])).map((k) => {
+    const a = oldStamps[k] as unknown[];
+    return [+k, [0, 1, 2].map((i) => a[i] === true)];
+  })) as Record<number, boolean[]>;
+
+  s.name = isStr(o.name) && o.name.trim() ? o.name.trim() : '小呱';
+  s.since = isNum(o.since) && o.since > 0 ? o.since : Date.now();
+  const gear = isObj(o.gear) ? o.gear : {};
+  s.gear = Object.fromEntries(GEAR.map((g) => [g.id, int(gear[g.id], 1, 1, gearMax(g.id))])) as Record<GearId, number>;
+  s.owned = [...new Set(list(o.owned).filter((id): id is string => isStr(id) && !!item(id)))];
   for (const id of STARTER_ITEMS) if (!s.owned.includes(id)) s.owned.push(id);
-  s.wear = Object.assign({ hat: null, neck: null }, s.wear);
-  const frames = Array.isArray(s.room?.frames) ? s.room.frames : [];
-  s.room = { frames: Array.from({ length: FRAME_HOOKS }, (_, i) => frames[i] ?? null), hidden: Array.isArray(s.room?.hidden) ? s.room.hidden : [] };
-  s.career = Object.assign(emptyCareer(), s.career);
-  s.log = Array.isArray(s.log) ? s.log : [];
-  s.notes = Array.isArray(s.notes) ? s.notes : [];
-  s.ledger = Array.isArray(s.ledger) ? s.ledger : [];
-  s.ach = s.ach && typeof s.ach === 'object' ? s.ach : {};
-  s.album = Array.isArray(s.album) ? s.album : [];
-  s.letters = Array.isArray(s.letters) ? s.letters : [];
-  s.seen = Object.assign({ notes: 0, letters: 0, ach: 0 }, s.seen);
-  s.seq = s.seq || 0;
-  s.cleared = s.cleared === true || !!s.stamps?.[DAYS.length]?.[0];
+  const wear = isObj(o.wear) ? o.wear : {};
+  const worn = (v: unknown, kind: string) => (isStr(v) && s.owned.includes(v) && item(v)?.kind === kind ? v : null);
+  s.wear = { hat: worn(wear.hat, 'hat'), neck: worn(wear.neck, 'neck') };
+
+  s.album = list(o.album).filter((a): a is AlbumPhoto => isObj(a) && isStr(a.id) && isStr(a.caption) && isNum(a.day) && isStr(a.kind) && isNum(a.at));
+  const photos = new Set(s.album.map((a) => a.id));
+  const room = isObj(o.room) ? o.room : {};
+  const frames = list(room.frames);
+  s.room = {
+    // a frame holds a photo still in the album, in a frame the frog owns
+    frames: Array.from({ length: FRAME_HOOKS }, (_, i) => {
+      const f = frames[i];
+      if (!isObj(f) || !isStr(f.photo) || !photos.has(f.photo)) return null;
+      return { photo: f.photo, frame: isStr(f.frame) && item(f.frame)?.kind === 'frame' && s.owned.includes(f.frame) ? f.frame : STARTER_ITEMS[0] };
+    }),
+    hidden: list(room.hidden).filter((id): id is string => isStr(id) && !!item(id)),
+  };
+
+  const career = isObj(o.career) ? o.career : {};
+  const k = emptyCareer();
+  for (const key of Object.keys(k) as (keyof Career)[]) if (key !== 'byResident') (k[key] as number) = isNum(career[key]) ? Math.max(0, career[key] as number) : 0;
+  const byRes = isObj(career.byResident) ? career.byResident : {};
+  for (const [name, e] of Object.entries(byRes)) if (isObj(e) && isNum(e.n) && isStr(e.species)) k.byResident[name] = { n: Math.max(0, e.n), species: e.species };
+  s.career = k;
+  s.log = list(o.log).filter((e): e is DayLog => isObj(e) && isNum(e.day) && isNum(e.n) && isNum(e.at) && isStr(e.grade) && Array.isArray(e.stamps)).slice(0, LOG_KEEP);
+  s.notes = list(o.notes).filter((n): n is Note => isObj(n) && isNum(n.id) && isNum(n.at) && isStr(n.text) && NOTE_KINDS.includes(n.kind as NoteKind)).slice(0, NOTES_KEEP);
+  s.ledger = list(o.ledger).filter((e): e is Entry => isObj(e) && isNum(e.at) && isStr(e.text) && isNum(e.amount)).slice(0, LEDGER_KEEP);
+  const ach = isObj(o.ach) ? o.ach : {};
+  s.ach = Object.fromEntries(Object.entries(ach).filter(([id, at]) => isNum(at) && ACHIEVEMENTS.some((a) => a.id === id))) as Record<string, number>;
+  s.letters = list(o.letters).filter(isStr);
+  const seen = isObj(o.seen) ? o.seen : {};
+  s.seen = { notes: int(seen.notes, 0), letters: int(seen.letters, 0), ach: int(seen.ach, 0) };
+  // note and photo ids come from this counter: never hand out one that's already taken
+  const used = [...s.notes.map((n) => n.id), ...s.album.map((a) => Number(a.id.replace(/^p/, '')) || 0)];
+  s.seq = Math.max(int(o.seq, 0), ...used, 0);
+
   // a day passed before later days existed (or before the unlock was saved) still opens the next one
-  for (let d = DAYS.length - 1; d >= 1; d--) if (s.stamps?.[d]?.[0]) { s.day = Math.max(s.day, d + 1); break; }
+  for (let d = DAYS.length - 1; d >= 1; d--) if (s.stamps[d]?.[0]) { s.day = Math.max(s.day, d + 1); break; }
+  // the very first saves had no stamps: a grade there meant the day was finished, which opened the next
+  if (!hadStamps) for (const d of Object.keys(s.best).map(Number)) s.day = Math.max(s.day, Math.min(d + 1, DAYS.length));
+  s.cleared = o.cleared === true || !!s.stamps[DAYS.length]?.[0];
   return s;
 }
 
