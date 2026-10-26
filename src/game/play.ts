@@ -838,6 +838,8 @@ export class PlayScene implements Scene {
   private standOn(p: Plat, x: number, y: number, how: How) {
     const f = this.frog;
     const dist = f.jump?.dist ?? 0;
+    // reeled in by the driver's rope: the hard landing on the bed (updateBoard adds the rest of it)
+    const hauled = !!f.board?.yank;
     // the road rules (wait for the truck, or exhaust) are sorted out once the frog has settled
     this.roadSpot = null;
     this.puffed = false;
@@ -908,7 +910,7 @@ export class PlayScene implements Scene {
     } else {
       p.press = impact * 0.5;
       this.fx.push({ kind: 'dust', x, y, t: 0, dur: 0.5, size: impact });
-      if (p.kind === 'truck') au.play('land_truck', { volume: 0.6 + impact * 0.4 });
+      if (p.kind === 'truck') au.play('land_truck', { volume: hauled ? 1 : 0.6 + impact * 0.4 });
       else au.play('land_house', { volume: 0.6 + impact * 0.4, rate: 1.1 - impact * 0.15 });
     }
     if (dist > 260) {
@@ -1055,7 +1057,7 @@ export class PlayScene implements Scene {
       this.fx.push({ kind: 'dust', x: tx, y: t.y + 40, t: 0, dur: 0.6, size: 1.1 });
       this.popups.push({ text: '咚！', x: tx - 110, y: t.y - 10, t: 0, color: P.orangeDeep });
       this.fx.push({ kind: 'say', x: 0, y: 0, t: -0.35, dur: 1.1, label: '晕乎乎…' });
-      au.play('land_truck', { volume: 1 });
+      // the thud itself already played in standOn, once
       au.play('frog_croak', { volume: 0.6, rate: 0.75, delay: 0.3 });
       this.game.platform.vibrate(60);
     }
