@@ -29,6 +29,9 @@ export interface SaveData {
   day: number;
   coins: number;
   best: Record<number, string>;
+  /** Music and sound effects (ambience included) switched on; `sound` is the old single switch, kept as "either is on". */
+  music: boolean;
+  sfx: boolean;
   sound: boolean;
   /** One-time lessons already shown, e.g. how to rescue parcels from the river. */
   tips: Record<string, boolean>;
@@ -62,6 +65,14 @@ export interface SaveData {
 }
 
 const SAVE_KEY = 'waqu.save.v1';
+
+/** Saves from before the separate music and effects switches take both from the old `sound`. */
+function audioPrefs(s: SaveData) {
+  const old = s.sound !== false;
+  if (typeof s.music !== 'boolean') s.music = old;
+  if (typeof s.sfx !== 'boolean') s.sfx = old;
+  s.sound = s.music || s.sfx;
+}
 const STEP = 1 / 60;
 const FADE = 0.5;
 const MEDAL_T = 3;
@@ -106,7 +117,8 @@ export class Game {
     this.audio = new Audio(platform);
     this.save = this.readSave();
     this.album = new Album(this);
-    this.audio.enabled = this.save.sound;
+    audioPrefs(this.save);
+    this.audio.configure({ music: this.save.music, sfx: this.save.sfx });
     this.tm = new Telemetry(platform, tm);
     this.loader = new Loader({
       get H() {
@@ -144,6 +156,9 @@ export class Game {
     });
     this.resize();
     this.platform.onResize(() => this.resize());
+    // the sound system exists from the start, so the first tap (even on the loading screen) unlocks it
+    this.audio.init();
+    this.platform.onGesture(() => this.audio.unlock());
     this.platform.onTouch((kind, t) => {
       const x = t.x * (this.W / this.cssW);
       const y = t.y * (this.W / this.cssW);
@@ -262,6 +277,7 @@ export class Game {
       if (dt > 0.05) this.perf.slow++;
     }
     this.tm.tick();
+    this.audio.update(dt > 0 && dt < 0.25 ? dt : STEP);
     // a device that stays under about 30 fps gets a smaller canvas, which is the cheapest way to win time back
     if (this.ready && dt > 0 && dt < 0.25) {
       this.frameMs += (dt - this.frameMs) * 0.04;
@@ -333,7 +349,14 @@ export class Game {
       this.medals.push({ a, t: this.medals.length ? -0.2 : 0, d: MEDAL_T });
       this.tm.log('ach', { id: a.id, scene: this.scene?.id ?? null });
     }
-    if (list.length) this.audio.play('upgrade', { delay: 0.1 });
+    if (list.length) this.medalSound(false);
+  }
+
+  /** The chime for an achievement ribbon (softer for the ones queued after the first); a promotion gets its own fanfare. */
+  medalSound(next: boolean, rankUp = false) {
+    if (rankUp) this.audio.play('rank_up');
+    else if (next) this.audio.play('achievement', { volume: 0.6 });
+    else this.audio.play('achievement', { delay: 0.1 });
   }
 
   private stepMedals(dt: number) {
@@ -342,7 +365,7 @@ export class Game {
     if (m && this.medals.length > 2) m.d = Math.min(m.d, 1.8);
     if (m && (m.t += dt) > m.d) {
       this.medals.shift();
-      if (this.medals.length) this.audio.play('rating_good', { volume: 0.7 });
+      if (this.medals.length) this.medalSound(true);
     }
   }
 
@@ -369,10 +392,21 @@ export class Game {
     ctx.restore();
   }
 
+  /** The old single sound switch: music and effects together. */
   setSound(on: boolean) {
-    this.tm.log('sound', { on, scene: this.scene?.id ?? null });
-    this.save.sound = on;
-    this.audio.setEnabled(on);
+    this.setAudio({ music: on, sfx: on });
+  }
+
+  /** Music and effects switches, each on its own (kept in the save). Switching effects on clicks, so it's heard. */
+  setAudio(o: { music?: boolean; sfx?: boolean }) {
+    const s = this.save;
+    const sfxWas = s.sfx;
+    if (o.music !== undefined) s.music = o.music;
+    if (o.sfx !== undefined) s.sfx = o.sfx;
+    s.sound = s.music || s.sfx;
+    this.tm.log('sound', { on: s.sound, scene: this.scene?.id ?? null });
+    this.audio.configure({ music: s.music, sfx: s.sfx });
+    if (s.sfx && !sfxWas) this.audio.play('ui_confirm', { volume: 0.7 });
     this.writeSave();
   }
 
