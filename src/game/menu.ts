@@ -451,7 +451,7 @@ const HATS: Record<string, { w: number; dip: number; dx?: number; onCap?: boolea
   hat_beanie: { w: 0.88, dip: 8 },
   hat_beret: { w: 0.98, dip: 6 },
   hat_top: { w: 0.8, dip: 8 },
-  hat_pilot: { w: 0.95, dip: 28 },
+  hat_pilot: { w: 1.14, dip: 62 },
   hat_swim: { w: 0.74, dip: 20 },
   hat_gold: { w: 0.66, dip: 40 },
   hat_flower: { w: 0.3, dip: 0, dx: 34, onCap: true },
