@@ -10,6 +10,7 @@ import type { Game, Scene } from './game';
 import { itemIcon } from './home';
 import { HubScene } from './hub';
 import { Scroller, Taps, Toast, dialog, drawDressedFrog, header, iconAt, pill, tabs } from './menu';
+import { SCENE_MUSIC } from './sound';
 
 const TABS = ['装备', '衣帽', '家居', '相框'];
 const TAB_ICONS = ['cat_gear', 'cat_hat', 'cat_deco', 'cat_frame'];
@@ -42,8 +43,10 @@ export class ShopScene implements Scene {
     this.tab = tab;
     const deal = item(dailyDeal())!;
     this.line = { text: Math.random() < 0.6 ? `今日特价：${deal.name}，打八折！` : HELLO[Math.floor(Math.random() * HELLO.length)], t: 0 };
-    game.audio.setMusic('bgm_hq');
+    game.audio.setMusic(SCENE_MUSIC.shop);
+    game.audio.setAmbience(null);
     game.audio.play('ui_open');
+    game.audio.play('hamster_hi', { delay: 0.45 });
     void game.sprites.ensure([...TAB_ICONS, ...HAMSTER, 'shop_counter', 'shop_dealboard', 'shop_gift', 'shop_shelf_jars', ...GEAR.flatMap((g) => [2, 3, 4, 5].map((l) => `gear_${g.id}_lv${l}`))]);
     game.tm.log('shop', { tab, coins: game.save.coins });
   }
@@ -93,7 +96,7 @@ export class ShopScene implements Scene {
     } else if (id.startsWith('tab')) {
       const i = Number(id.slice(3));
       if (i === this.tab) return;
-      au.play('paper_flip', { volume: 0.7 });
+      au.play('tab_switch');
       this.tab = i;
       this.scroll.reset();
       this.game.tm.log('shop_tab', { tab: TABS[i] });
@@ -128,6 +131,7 @@ export class ShopScene implements Scene {
     if (price === null) return;
     if (s.coins < price) {
       g.audio.play('ui_error');
+      g.audio.play('hamster_hmm', { delay: 0.2 });
       this.say(`还差 ${price - s.coins} 金币哦，多送几单再来！`);
       this.think = 2.2;
       return;
@@ -149,8 +153,8 @@ export class ShopScene implements Scene {
       } else if (it.kind === 'deco') this.toast.show('已经摆进你家了');
       else this.toast.show('回家挂照片时就能选这个相框');
     }
-    g.audio.play('cash_register');
-    g.audio.play('coins_change', { delay: 0.1, volume: 0.7 });
+    g.audio.play('purchase');
+    g.audio.play('hamster_thanks', { delay: 0.5 });
     g.tm.log('shop_buy', { what: 'gear' in p ? `${p.gear}${s.gear[p.gear]}` : p.item, price, coins: s.coins });
     this.flash = 1;
     this.cheer = 0.8;
@@ -170,7 +174,7 @@ export class ShopScene implements Scene {
     const s = this.game.save;
     s.wear[it.kind] = s.wear[it.kind] === it.id ? null : it.id;
     this.game.writeSave();
-    this.game.audio.play('bag_open', { volume: 0.7 });
+    this.game.audio.play('equip');
     this.cheer = 0.6;
   }
 

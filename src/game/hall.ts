@@ -13,6 +13,7 @@ import type { Game, Scene } from './game';
 import { HubScene } from './hub';
 import { drawStamp } from './map';
 import { Scroller, Taps, Toast, dot, header, iconAt, shortDate, tabs } from './menu';
+import { SCENE_MUSIC } from './sound';
 import { PhotoViewer, type ViewerPhoto } from './viewer';
 
 const TABS = ['送单', '日志', '相册', '荣誉', '动态'];
@@ -50,7 +51,8 @@ export class HallScene implements Scene {
     this.tab = tab;
     this.unread = unreadNotes(game.save);
     this.seen0 = game.save.seen.notes;
-    game.audio.setMusic('bgm_hq');
+    game.audio.setMusic(SCENE_MUSIC.hall);
+    game.audio.setAmbience(null);
     game.audio.play('owl_hoot', { delay: 0.3, volume: 0.6 });
     void game.sprites.ensure([...TAB_ICONS, ...new Set(OWL_POSE), 'owl_sleepy', ...RANKS.map((_, i) => `badge_rank${i}`), ...ACHIEVEMENTS.flatMap((a) => [`medal_${a.id}`, `medal_${a.id}_off`])]);
     game.tm.log('hall', { tab, notes: this.unread });
@@ -96,7 +98,7 @@ export class HallScene implements Scene {
     } else if (id.startsWith('tab')) {
       const i = Number(id.slice(3));
       if (i === this.tab) return;
-      au.play('paper_flip', { volume: 0.7 });
+      au.play('tab_switch');
       this.tab = i;
       this.tabT = 0;
       this.scroll.reset();

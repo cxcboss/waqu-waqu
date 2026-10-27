@@ -344,6 +344,8 @@ export class Audio {
 
   /** Moves a parameter smoothly to `to` (time constant `tc` seconds), with or without automation. */
   private ramp(param: AudioParam, to: number, tc: number) {
+    // a bad number would make the automation throw and switch every later fade to the fallback: ignore it
+    if (!Number.isFinite(to) || !Number.isFinite(tc)) return;
     if (this.auto && this.ctx) {
       const now = this.ctx.currentTime;
       try {
@@ -635,8 +637,8 @@ export class Audio {
     void this.buffer(id).then((buf) => {
       if (!buf || this.wantMusic !== id || this.music?.id === id || !this.live || !this.set.music) return;
       const old = this.music;
-      // a variant of the same file goes on from the same spot
-      const at = old && old.file === this.fileOf(id) ? this.position(old) : undefined;
+      // a variant of the same file goes on from the same spot (unless asked to start over)
+      const at = !o.restart && old && old.file === this.fileOf(id) ? this.position(old) : undefined;
       this.cutJingles(0.3);
       this.fadeOutMusic(o.fade ?? 0.8);
       this.startMusic(id, buf, at, o.fade ?? 0.8);

@@ -1,6 +1,7 @@
 # 蛙趣蛙趣 · 给 AI 的说明
 
 - 架构、目录、部署、分支状态：`docs/ARCHITECTURE.md`
+- 音效音乐（播放器、每个声音在哪里播、怎么重新生成）：`docs/audio.md`。
 - 试玩埋点（事件表、代码位置、怎么加、怎么读、Supabase 设置）：`docs/telemetry.md`。改埋点必须同步改这份文档和 `scripts/stats.py`。
 - 在线站点测试一律加 `?tm=off`，否则测试数据会混进真实玩家数据。
 - 不要把 Supabase 的 secret key 或数据库密码写进仓库；只有 publishable key 可以出现在代码里。

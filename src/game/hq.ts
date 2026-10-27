@@ -11,6 +11,7 @@ import { HubScene } from './hub';
 import { drawStamp } from './map';
 import { PlayScene } from './play';
 import { earnedStamps, passed } from './progress';
+import { SCENE_MUSIC } from './sound';
 import { PhotoViewer, type ViewerPhoto } from './viewer';
 
 export interface Photo {
@@ -181,7 +182,8 @@ export class HqScene implements Scene {
       grade, pass: this.pass, stamps: this.stamps, fresh: this.fresh, income: this.income, coins: s.coins, photos: r.photos.length,
       rankUp: this.rec.rankUp?.name ?? null, ach: this.rec.unlocked.map((a) => a.id), news: this.rec.notes.length,
     });
-    game.audio.setMusic('bgm_hq');
+    game.audio.setMusic(this.pass ? SCENE_MUSIC.hq : SCENE_MUSIC.hqLow);
+    game.audio.setAmbience(null);
     game.audio.play('paper_flip', { delay: 0.15 });
     game.audio.play('owl_hoot', { delay: 0.5, volume: 0.8 });
   }
@@ -237,7 +239,9 @@ export class HqScene implements Scene {
   private playStamp() {
     const au = this.game.audio;
     au.play('stamp');
-    au.play(ORDER.indexOf(this.grade) <= 2 ? 'rating_good' : 'rating_bad', { delay: 0.35 });
+    const good = ORDER.indexOf(this.grade) <= 2;
+    au.play(good ? 'rating_good' : 'rating_bad', { delay: 0.35 });
+    au.play(good ? 'owl_pleased' : 'owl_hmm', { delay: 1.5, volume: 0.8 });
   }
 
   update(dt: number) {

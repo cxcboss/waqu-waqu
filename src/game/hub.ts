@@ -15,6 +15,7 @@ import { MapScene } from './map';
 import { Taps, Toast, coinPill, dialog, dot, drawDressedFrog, pill, shortDate } from './menu';
 import { PlayScene, drawTruckBase } from './play';
 import { ShopScene } from './shop';
+import { SCENE_MUSIC, hubAmbience } from './sound';
 
 type Place = 'hq' | 'shop' | 'home' | 'work';
 
@@ -41,7 +42,8 @@ export class HubScene implements Scene {
   ];
 
   constructor(private game: Game) {
-    game.audio.setMusic('bgm_title');
+    game.audio.setMusic(SCENE_MUSIC.hub);
+    game.audio.setAmbience(hubAmbience(this.night));
     game.tm.day = null;
     void game.sprites.ensure([`hub_bg_${this.night ? 'eve' : 'day'}`, ...['hq', 'shop', 'home'].map((k) => `hub_${k}${this.night ? '_eve' : ''}`)]);
     game.tm.log('hub', { unlocked: game.save.day, coins: game.save.coins, notes: unreadNotes(game.save) });

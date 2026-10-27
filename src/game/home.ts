@@ -14,6 +14,7 @@ import { HubScene } from './hub';
 import { LETTERS, letterText } from './lines';
 import { Scroller, Taps, Toast, dialog, dot, drawDressedFrog, header, iconAt, pill, shortDate, tabs } from './menu';
 import { ShopScene } from './shop';
+import { SCENE_MUSIC } from './sound';
 
 type Modal =
   | { kind: 'hang'; slot: number; frame: string }
@@ -35,7 +36,8 @@ export class HomeScene implements Scene {
   private slots: Rect[] = [];
 
   constructor(private game: Game) {
-    game.audio.setMusic('bgm_hq');
+    game.audio.setMusic(SCENE_MUSIC.home);
+    game.audio.setAmbience(null);
     setFrameArt(game.sprites);
     void game.sprites.ensure(['home_window_day', 'home_window_night', 'home_mailbox', 'home_ledger', 'home_wardrobe_open', ...ITEMS.map((i) => i.id)]);
     game.tm.log('home', { frames: game.save.room.frames.filter(Boolean).length, decos: this.decos().length });
@@ -142,7 +144,7 @@ export class HomeScene implements Scene {
         s.room.frames[m.slot] = { photo, frame: m.frame };
         g.writeSave();
         g.tm.log('photo_hang', { slot: m.slot, frame: m.frame, hung: s.room.frames.filter(Boolean).length });
-        au.play('parcel_place');
+        au.play('frame_tap');
         this.toast.show('挂好啦！');
         this.modal = null;
       } else if (id === 'unhang') {
@@ -157,14 +159,14 @@ export class HomeScene implements Scene {
         s.wear[slot] = val === 'none' ? null : val;
         g.writeSave();
         g.tm.log('wear', { slot, id: s.wear[slot] });
-        au.play('bag_open', { volume: 0.7 });
+        au.play('equip');
         this.joy = 0.6;
       }
     } else if (m.kind === 'records') {
       if (id.startsWith('rt')) {
         m.tab = Number(id.slice(2));
         this.mScroll.reset();
-        au.play('paper_flip', { volume: 0.6 });
+        au.play('tab_switch');
       }
     } else if (m.kind === 'decor') {
       if (id.startsWith('dc_')) {

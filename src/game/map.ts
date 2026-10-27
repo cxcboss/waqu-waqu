@@ -7,6 +7,7 @@ import type { Game, Scene } from './game';
 import { PlayScene } from './play';
 import { STAMP_GLYPHS, STAMP_NAMES, stampRules } from './progress';
 import { HubScene } from './hub';
+import { SCENE_MUSIC, hubAmbience } from './sound';
 
 /** A stop on the route map: a big lily pad in the river, with a signpost underneath. */
 interface Stop { day: number; x: number; y: number }
@@ -44,7 +45,8 @@ export class MapScene implements Scene {
     this.sel = clamp(day ?? game.save.day, 1, this.unlocked);
     this.view = chapterOf(this.sel);
     this.off = this.centreOn(this.sel);
-    game.audio.setMusic('bgm_title');
+    game.audio.setMusic(SCENE_MUSIC.map);
+    game.audio.setAmbience(hubAmbience(new Date().getHours() >= 19 || new Date().getHours() < 6));
     game.tm.day = null;
     game.tm.log('map', { sel: this.sel, unlocked: this.unlocked });
   }

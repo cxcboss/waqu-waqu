@@ -14,7 +14,7 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 |---|---|
 | `src/main.web.ts` | 网页入口：建 `WebPlatform` 和 `Game`，处理 `?tm=` / `?day=`，把游戏挂到 `window.__game`（测试机器人用） |
 | `src/platform/` | `types.ts` 平台接口；`web.ts` 浏览器实现（触摸、音频、存储、`postJson` 发埋点、存图分享） |
-| `src/engine/` | `audio.ts` 音效音乐（manifest 驱动）、`math.ts`、`telemetry.ts` 匿名埋点队列 |
+| `src/engine/` | `audio.ts` 音效音乐（manifest 驱动，见 `docs/audio.md`）、`math.ts`、`telemetry.ts` 匿名埋点队列 |
 | `src/game/game.ts` | `Game`：主循环、存档 `save`（localStorage）、场景切换、成就发放 |
 | `src/game/hub.ts` | 主页小镇（启动后的第一个画面）：上班、总部、我的家、福利社、工牌 |
 | `src/game/map.ts` | 路线图：选第几天，好评章 |
@@ -29,7 +29,7 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 | `src/game/lines.ts` | 随机台词（下班、司机催促 HURRY_LINES、踢下车 KICK_LINES） |
 | `src/art/` | 代码绘制的 SVG 占位美术；`sprites.ts` 是精灵表（名字、包围盒、alias、paintedOnly） |
 | `public/art/` | AI 画的正式美术 PNG，名字写进 `manifest.json` 就替换同名占位图；没有的自动回退到占位图 |
-| `public/audio/` | 音效音乐，来源见 `CREDITS.md` |
+| `public/audio/` | 音效音乐，来源见 `CREDITS.md`；由 `tools/audio/` 生成，场景配乐在 `src/game/sound.ts`，说明见 `docs/audio.md` |
 | `scripts/` | `deploy.sh` 部署、`stats.py` 数据报告、`telemetry.sql` 建表、`subset_font.py` 裁字体 |
 | `docs/telemetry.md` | 埋点说明（事件、字段、位置、怎么加、怎么读） |
 

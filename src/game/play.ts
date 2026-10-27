@@ -14,6 +14,7 @@ import { buildLevel, dayConfig, type House, type Level, type Order, type Plat } 
 import { HURRY_LINES, KICK_LINES, LETTERS, OFFWORK_LINES, dealLine } from './lines';
 import { drawHouse, houseSprites, updateResident, type ResidentView } from './resident';
 import { MapScene, drawStamp } from './map';
+import { PLAY_SOUNDS, ambienceForDay, musicForDay, say } from './sound';
 
 const FROG_S = 0.92; // frog sprite scale on top of K, matching the concept art
 const TILE = TILE_H * K;
@@ -241,7 +242,6 @@ export class PlayScene implements Scene {
   private menuBtns: { id: string; rect: Rect }[] = [];
   private shakeCard: { id: number; t: number } | null = null;
   private pressed: string | null = null;
-  private amb: LoopHandle | null = null;
   private engine: LoopHandle | null = null;
   private bubbles: LoopHandle | null = null;
   private hum: { setPitch(hz: number): void; stop(): void } | null = null;
@@ -249,7 +249,8 @@ export class PlayScene implements Scene {
   private notch = 0;
   private chargeMax = false;
   private predicted = false;
-  private tick: LoopHandle | null = null;
+  /** Countdown to the next urgent-parcel tick (they speed up as the deadline nears); -1 when not ticking. */
+  private tickIn = -1;
   /** Parcels in the water that can still be saved, and the tongue fetching one of them. */
   private floaters: Floater[] = [];
   private tongue: { fl: Floater; t: number } | null = null;
@@ -341,7 +342,9 @@ export class PlayScene implements Scene {
     };
     this.slowT = TUNING.truckSlowSec;
     this.slowCd = TUNING.truckSlowSec + TUNING.slowCooldown;
-    game.audio.setMusic('bgm_work');
+    game.audio.setMusic(musicForDay(day));
+    game.audio.setAmbience(ambienceForDay(day));
+    game.audio.preload(PLAY_SOUNDS);
     const tm = game.tm;
     tm.day = day;
     tm.run++;
@@ -471,7 +474,7 @@ export class PlayScene implements Scene {
       this.aim.t += dt;
       if (this.aim.t >= FOOT_T && this.frog.state === 'stand') this.tired();
     }
-    this.updateSound();
+    this.updateSound(dt);
 
     if (!this.ended) {
       this.checkHouses();
@@ -981,7 +984,7 @@ export class PlayScene implements Scene {
     }
     au.play('truck_horn');
     if (lasso) {
-      au.play('jump_whoosh', { volume: 0.6, rate: 0.8 });
+      au.play('lasso_whirl', { volume: 0.8 });
       this.fx.push({ kind: 'say', x: 0, y: 0, t: 0, dur: LASSO_T, label: '！' });
     }
   }
@@ -1016,7 +1019,7 @@ export class PlayScene implements Scene {
         b.caught = true;
         this.fx.push({ kind: 'say', x: 0, y: 0, t: 0, dur: TUG_T + 0.1, label: '呱？！' });
         this.fx.push({ kind: b.wet ? 'splash' : 'dust', x: f.x, y: f.y, t: 0, dur: 0.45, size: 0.5 });
-        au.play('parcel_place', { volume: 0.8, rate: 0.7 });
+        au.play('rope_snap', { volume: 0.9 });
         au.play('frog_croak', { volume: 0.8, rate: 1.5, delay: 0.05 });
         this.game.platform.vibrate(25);
       }
@@ -1108,7 +1111,7 @@ export class PlayScene implements Scene {
     }
     this.smogT = SMOG_T;
     const au = this.game.audio;
-    au.play('truck_speedup', { volume: 0.9, rate: 0.8 });
+    au.play('exhaust_puff');
     au.play('frog_croak', { volume: 0.5, rate: 0.7, delay: 0.3 });
     this.game.platform.vibrate(40);
   }
@@ -1251,7 +1254,7 @@ export class PlayScene implements Scene {
     const au = this.game.audio;
     au.play('splash');
     if (n) au.play('bag_open', { volume: 0.6, delay: 0.15 });
-    au.duck(true);
+    au.underwater(true);
     this.bubbles?.stop();
     this.bubbles = au.loop('swim_bubbles', { volume: 0.5, fadeIn: 0.6 });
     this.game.platform.vibrate(70);
@@ -1342,6 +1345,7 @@ export class PlayScene implements Scene {
       f.swingV += 6;
       this.popups.push({ text: '捞回来了！', x: f.x, y: f.y - 70, t: 0, color: P.blue });
       au.play('parcel_pickup');
+      au.play('perfect_sparkle', { volume: 0.5, delay: 0.1 });
       if (o.dunks === DUNK_MAX - 1) this.showToast(`取件码 ${o.code} 泡过${o.dunks}次水，再掉一次就冲走了`);
     }
     if (!this.floaters.length) {
@@ -1400,7 +1404,7 @@ export class PlayScene implements Scene {
     }
     this.tongue = { fl, t: 0 };
     this.frog.giveDir = fl.x < this.frog.x ? -1 : 1;
-    this.game.audio.play('jump_release', { rate: 1.9, volume: 0.6 });
+    this.game.audio.play('tongue_thwip', { jitter: true });
   }
 
   private updateTongue(dt: number) {
@@ -1410,7 +1414,8 @@ export class PlayScene implements Scene {
     if (tg.t < TONGUE_OUT + TONGUE_IN) return;
     this.tongue = null;
     this.catchParcel(tg.fl, 'tongue');
-    this.game.audio.play('frog_croak', { volume: 0.4, rate: 1.3 });
+    this.game.audio.play('slurp', { volume: 0.8 });
+    this.game.audio.play('frog_croak', { volume: 0.4, rate: 1.3, delay: 0.2 });
     while (this.tongueQ.length) {
       const next = this.tongueQ.shift()!;
       if (this.floaters.includes(next)) {
@@ -1486,7 +1491,7 @@ export class PlayScene implements Scene {
     this.gauge = null;
     this.bubbles?.stop(0.2);
     this.bubbles = null;
-    this.game.audio.duck(false);
+    this.game.audio.underwater(false);
   }
 
   /** Out of the water (climbed out, or hauled in by the truck): how long it took. */
@@ -1561,6 +1566,7 @@ export class PlayScene implements Scene {
     for (const h of this.lv.houses) {
       if (h.passed || this.sy(h.plat.y) < this.H + 150) continue;
       h.passed = true;
+      let lost = false;
       for (const o of this.lv.orders) {
         if (o.house !== h || (o.state !== 'pool' && o.state !== 'bag')) continue;
         this.log('missed', { code: o.code, inBag: o.state === 'bag' });
@@ -1569,7 +1575,9 @@ export class PlayScene implements Scene {
           this.showToast(`取件码 ${o.code} 的包裹没赶上`);
         }
         o.state = 'missed';
+        lost = true;
       }
+      if (lost && !this.ended) this.game.audio.play('aww_missed', { volume: 0.8 });
     }
   }
 
@@ -1615,6 +1623,13 @@ export class PlayScene implements Scene {
       if (this.warnBuzz <= 0) {
         this.game.platform.vibrate(40);
         this.warnBuzz = 0.9;
+      }
+      if (this.warnSfx <= 0) {
+        // a pulse that comes faster the deeper the frog is in the red
+        const deep = clamp((s / this.H - TUNING.warnLine) / (1 - TUNING.warnLine), 0, 1);
+        this.game.audio.play('warn_pulse', { rate: 1 + deep * 0.15, volume: 0.6 + deep * 0.3 });
+        if (this.inWarnT <= dt) this.game.audio.play('warn_pop', { delay: 0.12, volume: 0.8 });
+        this.warnSfx = 0.75 - deep * 0.35;
       }
       if (f.state === 'stand') this.showHint('warn', '太靠下了！【快往上跳】', { dur: 3.5, sub: '或者跳回运输车', warn: true, again: true });
     } else {
@@ -1681,6 +1696,7 @@ export class PlayScene implements Scene {
     if (why === 'rope') {
       this.ropeUsed++;
       this.game.platform.vibrate(40);
+      this.game.audio.play('coin_loss', { delay: 0.6, volume: 0.8 });
     }
     this.log('yank', { state: f.state, on: f.on?.kind ?? null, why, warnSec: why === 'rope' ? r1(this.inWarnT) : undefined });
     this.yankAt = this.time;
@@ -1716,8 +1732,8 @@ export class PlayScene implements Scene {
     this.showHint('egg', '捡到一封【遗失的信】！', { dur: 5, sub: letter.text });
     this.queueShot('egg', '捡到一封遗失的信！', 8, 0.1);
     this.popups.push({ text: '发现彩蛋！', x: e.x - 60, y: e.y - 60, t: 0, color: P.orangeDeep });
-    this.game.audio.play('paper_flip');
-    this.game.audio.play('coin', { delay: 0.2, volume: 0.7 });
+    this.game.audio.play('letter_open');
+    this.game.audio.play('perfect_sparkle', { delay: 0.2, volume: 0.7 });
   }
 
   /** The driver shouts something from the cab, with a honk. */
@@ -1725,7 +1741,9 @@ export class PlayScene implements Scene {
     this.driver = { text, t: 0, dur };
     this.log('driver_say', { kind, text });
     this.honkT = 0.5;
-    this.game.audio.play('truck_horn', { volume: 0.7, rate: 1.1 });
+    const au = this.game.audio;
+    au.play('truck_horn', { volume: 0.7, rate: 1.1 });
+    au.play(kind === 'arrive' ? 'driver_cheer' : kind === 'kick' || kind === 'idle_warn' ? 'driver_grumble' : 'driver_call', { delay: 0.35 });
   }
 
   /** The last seconds of the route with the frog off the truck: the driver calls it back, then honks the count down. */
@@ -1818,7 +1836,7 @@ export class PlayScene implements Scene {
     const au = this.game.audio;
     au.play('parcel_place', { volume: 0.9, rate: 0.6 });
     au.play('jump_whoosh', { volume: 0.8, delay: 0.05 });
-    au.play('frog_croak', { volume: 0.8, rate: 1.5, delay: 0.1 });
+    au.play('warn_pop', { delay: 0.1 });
     this.game.platform.vibrate(50);
     this.showHint('kick', '在车上待太久，被司机【踢下车】了！', { dur: 4.5, sub: '拿好包裹就出发，别在车上发呆' });
     this.queueShot('kick', '被司机一脚踢下车！', 7, KICK_T * 0.45);
@@ -2066,6 +2084,7 @@ export class PlayScene implements Scene {
       this.fx.push({ kind: 'coins', x: rx, y: ry - 90, t: -T - 0.05, dur: 0.9, seed: Math.random() * 100 });
       au.play('deliver_happy', { delay: T + 0.1 });
       au.play('coin', { delay: T + 0.3, volume: 0.8 });
+      say(au, h.species, 'happy', { delay: T + 0.55, volume: 0.8 });
       this.trip++;
       this.stats.bestTrip = Math.max(this.stats.bestTrip, this.trip);
       const ch = this.cfg.challenge;
@@ -2079,6 +2098,7 @@ export class PlayScene implements Scene {
       o.state = 'wrong';
       h.react = { kind: 'confused', t: -T };
       au.play('deliver_confused', { delay: T + 0.15 });
+      say(au, h.species, 'huh', { delay: T + 0.6, volume: 0.8 });
       this.queueShot('wrong', `${h.name}：${RESIDENT[h.species]?.huh ?? '这是我的吗？'}`, 7, T + 0.5);
     }
     const more = this.lv.orders.some((x) => x.state === 'pool');
@@ -2119,6 +2139,7 @@ export class PlayScene implements Scene {
       this.stats.codLoss += TUNING.codPenalty;
       au.play('coins_change', { rate: 0.85 });
       au.play('deliver_unhappy', { delay: 0.3 });
+      say(au, c.h.species, 'sad', { delay: 0.75, volume: 0.8 });
       this.game.platform.vibrate(40);
     }
   }
@@ -2347,8 +2368,8 @@ export class PlayScene implements Scene {
   /** Closes the briefing card; day 1 goes on into the hands-on tutorial. */
   private startDay() {
     const au = this.game.audio;
-    au.play('ui_confirm');
-    au.play('truck_horn', { delay: 0.25 });
+    au.play('day_start');
+    au.play('truck_horn', { delay: 0.45 });
     if (this.cfg.tutorial) this.setStep('pick');
     else {
       this.setStep(null);
@@ -2404,23 +2425,21 @@ export class PlayScene implements Scene {
 
   private stopLoops() {
     this.stopCharge();
-    for (const h of [this.amb, this.engine, this.bubbles, this.tick]) h?.stop(0.4);
-    this.amb = this.engine = this.bubbles = this.tick = null;
-    this.game.audio.duck(false);
+    for (const h of [this.engine, this.bubbles]) h?.stop(0.4);
+    this.engine = this.bubbles = null;
+    this.tickIn = -1;
+    this.game.audio.underwater(false);
   }
 
   /** Keeps ambience, charge-up and countdown sounds in step with the game state. */
-  private updateSound() {
+  private updateSound(dt: number) {
     const au = this.game.audio;
-    if (!this.ended) {
-      if (!this.amb) this.amb = au.loop('amb_river', { fadeIn: 1.5 });
-      if (!this.engine) this.engine = au.loop('truck_engine_loop', { volume: 0.6, fadeIn: 2 });
-    }
+    if (!this.ended && !this.engine) this.engine = au.loop('truck_engine_loop', { volume: 0.6, fadeIn: 2 });
     this.engine?.setRate(this.off ? 0.85 + Math.min(1, this.off.drive / 500) * 0.7 : 0.8 + this.speedK * 0.2);
     if (this.frog.state === 'swim' && !this.bubbles && !this.ended) {
       // back from the pause menu while still in the water
       this.bubbles = au.loop('swim_bubbles', { volume: 0.5, fadeIn: 0.6 });
-      au.duck(true);
+      au.underwater(true);
     }
     if (this.aim && this.frog.state === 'stand') {
       // 跳一跳-style charge: a hum that rises with the pull, plus a click per notch
@@ -2442,12 +2461,15 @@ export class PlayScene implements Scene {
       this.chargeMax = false;
       this.predicted = false;
     }
-    // the last ten seconds tick, but not while the river (and so the countdown) stands still
-    const soon = !this.frozen() && this.bag.some((o) => o.urgent && !o.late && o.deadline && o.deadline - this.runT <= 10);
-    if (soon && !this.tick && !this.ended) this.tick = au.loop('urgent_tick_loop', { volume: 0.6 });
-    if ((!soon || this.ended) && this.tick) {
-      this.tick.stop(0.2);
-      this.tick = null;
+    // the last ten seconds tick, faster and higher as the deadline nears, but not while the river (and so the
+    // countdown) stands still
+    let left = Infinity;
+    if (!this.frozen() && !this.ended) for (const o of this.bag) if (o.urgent && !o.late && o.deadline) left = Math.min(left, o.deadline - this.runT);
+    if (left > 10 || left <= 0) this.tickIn = -1;
+    else if (this.tickIn < 0) this.tickIn = 0;
+    if (this.tickIn >= 0 && (this.tickIn -= dt) <= 0) {
+      au.play('urgent_tick', { rate: 1 + (10 - left) * 0.03, volume: 0.55 + (10 - left) * 0.03 });
+      this.tickIn += left > 5 ? 1 : left > 2.5 ? 0.5 : 0.25;
     }
   }
 
@@ -2497,6 +2519,7 @@ export class PlayScene implements Scene {
     // a standing tutorial hint only gives way to emergencies
     if (this.hint && this.hint.dur > 50 && key !== 'swim' && key !== 'warn' && key !== 'wrongHouse') return;
     this.hint = { key, line: typeof line === 'string' ? segs(line) : line, sub: o.sub, t: 0, dur: o.dur ?? 5, warn: o.warn };
+    if (!o.warn) this.game.audio.play('hint_pop', { volume: 0.7 });
     if (!o.again) this.hintsDone.add(key);
     const n = (this.tally.hints[key] = (this.tally.hints[key] ?? 0) + 1);
     if (n <= 3) this.log('hint', { key });
@@ -2547,6 +2570,7 @@ export class PlayScene implements Scene {
 
   private showToast(t: string) {
     this.toast = { text: t, t: 0 };
+    this.game.audio.play('toast_blip', { volume: 0.7 });
   }
 
   private queueShot(kind: string, caption: string, prio: number, delay: number, thrown = false) {
