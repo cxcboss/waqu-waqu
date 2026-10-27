@@ -269,6 +269,13 @@ export class MapScene implements Scene {
       sp.draw(ctx, name, fx, fy - z, 0.85, 0.85);
     }
 
+    // a paper mist under the header and the ribbon, so stops scrolling up behind them fade out instead of colliding
+    const mist = ctx.createLinearGradient(0, top, 0, top + 190);
+    mist.addColorStop(0, alpha(P.cream, 0.92));
+    mist.addColorStop(0.65, alpha(P.cream, 0.75));
+    mist.addColorStop(1, alpha(P.cream, 0));
+    ctx.fillStyle = mist;
+    ctx.fillRect(0, 0, 750, top + 190);
     header(ctx, this.game, this.taps, '路线图', { icon: 'map' });
     ribbon(ctx, 375, top + 128, 380, `第${CN[this.view]}章 · ${CHAPTERS[this.view].title}`, { h: 50, size: 26 });
 
