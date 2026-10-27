@@ -250,7 +250,7 @@ const LATER: Later[] = [
   L('河狸的水坝', 56, 9, 9, 1, 1, 20, MIX, { kind: 'returns', label: '退货件全部收回' }, '河狸修了水坝，还有退货要收', { dam: 2, return: 2, rapids: 1 }, ['dam', 'return']),
   L('下雨了', 58, 9, 10, 2, 1, 20, MIX, noWet, '雨天石头滑，别泡了包裹', { slip: 6, rain: 1, rapids: 1 }, ['slip']),
   L('漩涡湾', 58, 10, 10, 2, 2, 20, MIX, fast(20), '漩涡卷着荷叶转，看准再跳', { whirl: 2, slip: 2, rain: 1 }, ['whirl']),
-  L('暴雨夜班', 64, 10, 10, 3, 2, 20, [1, 2, 2, 1], noWrong, '超难关：暴雨夜，送对五成就算过', { storm: 1, rain: 1, slip: 3, whirl: 1 }, ['storm']),
+  L('暴雨夜班', 62, 10, 10, 3, 2, 20, [1, 2, 2, 1], noWrong, '超难关：暴雨夜，送对五成就算过', { storm: 1, rain: 1, slip: 2, whirl: 1 }, ['storm']),
   // 秋 · 枫叶溪
   L('枫叶飘落', 54, 9, 9, 1, 1, 20, MIX, noFall, '落叶只能踩一次', { leaf: 8 }, ['leaf']),
   L('起风了', 56, 9, 10, 1, 1, 20, MIX, fast(18), '起风了，风里跳会被吹偏', { gust: 1, leaf: 4 }, ['gust']),
