@@ -41,6 +41,8 @@ export class MapScene implements Scene {
   private lastY = 0;
   /** The frog hopping from one stop to another. */
   private hop: { from: number; t: number } | null = null;
+  /** The stop that opened since the map was last shown (0: none): it gets a chime, a note and a ring once. */
+  private fresh = 0;
   private stops: Stop[] = [];
   private line = new RiverLine(DAYS.map((_, i) => stopX(i)));
   private taps = new Taps();
@@ -56,6 +58,12 @@ export class MapScene implements Scene {
     game.audio.setAmbience(hubAmbience(new Date().getHours() >= 19 || new Date().getHours() < 6));
     game.tm.day = null;
     game.tm.log('map', { sel: this.sel, unlocked: this.unlocked });
+    const s = game.save;
+    if (s.day > s.seen.map) {
+      this.fresh = this.unlocked;
+      s.seen.map = s.day;
+      game.writeSave();
+    }
   }
 
   private get unlocked() {
@@ -103,6 +111,12 @@ export class MapScene implements Scene {
     this.sheetT += dt;
     if (this.hop && (this.hop.t += dt) >= HOP_T) this.hop = null;
     this.toast.update(dt);
+    if (this.fresh && this.t - dt < 0.5 && this.t >= 0.5) {
+      this.game.audio.play('map_unlock');
+      const c = chapterOf(this.fresh);
+      const first = (this.fresh - 1) % DAYS_PER_CHAPTER === 0;
+      this.toast.show(first ? `第${CN[c]}章「${CHAPTERS[c].title}」开放了` : `第${this.fresh}天开放了`, 'sparkle', 2.6);
+    }
   }
 
   down(x: number, y: number, id = 0) {
@@ -209,6 +223,17 @@ export class MapScene implements Scene {
       // every stop's pad is its own; a day with all three stamps has a lotus in flower
       drawBaked(ctx, `mappad:${i}:${done}`, s.x, s.y + bob, [-92, -72, 92, 54], (c) => lilyPad(c, 0, 0, 82, TOD.day, i + 3, done));
       ctx.restore();
+      // the stop that just opened sends out a few gold rings
+      if (s.day === this.fresh && this.t > 0.5 && this.t < 4.1) {
+        const k = ((this.t - 0.5) % 1.2) / 1.2;
+        ctx.save();
+        ctx.globalAlpha = 1 - k;
+        ctx.strokeStyle = P.gold;
+        ctx.lineWidth = 5;
+        ellipse(ctx, s.x, s.y + bob, 92 + k * 70, 50 + k * 38);
+        ctx.stroke();
+        ctx.restore();
+      }
       if (s.day === this.sel) {
         ctx.save();
         ctx.setLineDash([12, 8]);

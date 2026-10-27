@@ -1,3 +1,4 @@
+import '../art/codeart';
 import { P } from '../art/palette';
 import { SpriteBank } from '../art/sprites';
 import { ellipse, panel, roundRect, text } from '../art/ui';
@@ -64,7 +65,8 @@ export interface SaveData {
   /** Lost letters found, by id (see LETTERS in lines.ts). */
   letters: string[];
   /** What's been looked at already, for the red dots. */
-  seen: { notes: number; letters: number; ach: number };
+  /** What the player has already been shown: notes, letters and medals read, and the furthest stop seen opening on the map. */
+  seen: { notes: number; letters: number; ach: number; map: number };
   /** Counter for note and photo ids. */
   seq: number;
   /** The last day has been passed: every stop on the route is done. */

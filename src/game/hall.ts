@@ -1,7 +1,10 @@
 // The HQ hall (河湾总部), open between workdays: the frog's delivery record, the work log, the
 // photo album, the wall of honour (achievements) and the river news, with the owl behind the counter.
+import { todSprite } from '../art/codeart';
+import { emptyState, medal, todAt, type EmptyKind } from '../art/kit';
 import { INK, P } from '../art/palette';
-import { HQ_ROOM, K } from '../art/sprites';
+import { HQ_CLOCK, HQ_ROOM, clockHands } from '../art/room';
+import { K } from '../art/sprites';
 import { ellipse, roundRect, text, wrapText } from '../art/ui';
 import { clamp } from '../engine/math';
 import type { Ctx } from '../platform/types';
@@ -54,7 +57,7 @@ export class HallScene implements Scene {
     game.audio.setMusic(SCENE_MUSIC.hall);
     game.audio.setAmbience(null);
     game.audio.play('owl_hoot', { delay: 0.3, volume: 0.6 });
-    void game.sprites.ensure([...TAB_ICONS, ...new Set(OWL_POSE), 'owl_sleepy', ...RANKS.map((_, i) => `badge_rank${i}`), ...ACHIEVEMENTS.flatMap((a) => [`medal_${a.id}`, `medal_${a.id}_off`])]);
+    void game.sprites.ensure([...new Set(OWL_POSE), 'owl_sleepy']);
     game.tm.log('hall', { tab, notes: this.unread });
     if (tab === 4) this.markRead();
   }
@@ -163,11 +166,8 @@ export class HallScene implements Scene {
     const roomTop = counterY + 36 - HQ_ROOM.h;
     ctx.fillStyle = '#C9A37A';
     ctx.fillRect(0, 0, 750, H);
-    sp.draw(ctx, 'hq_room', 0, roomTop);
-    if (roomTop > 0) {
-      ctx.fillStyle = '#EEDFC0';
-      ctx.fillRect(0, 0, 750, roomTop + 1);
-    }
+    sp.draw(ctx, todSprite('hq_room', todAt()), 0, roomTop);
+    clockHands(ctx, HQ_CLOCK.x, roomTop + HQ_CLOCK.y, HQ_CLOCK.r, new Date());
     const ox = 640 * K, oy = counterY + 3;
     const bob = Math.sin(this.t * 2) * 2;
     // painted poses are whole owls; the old one is a body plus a flapping wing
@@ -232,10 +232,8 @@ export class HallScene implements Scene {
     ctx.setLineDash([]);
   }
 
-  private empty(ctx: Ctx, y: number, a: string, b: string) {
-    text(ctx, a, 375, y + 80, 28, { bold: true, color: P.inkSoft });
-    text(ctx, b, 375, y + 124, 22, { color: P.inkSoft, maxWidth: 620 });
-    return y + 180;
+  private empty(ctx: Ctx, y: number, kind: EmptyKind, a: string, b: string) {
+    return emptyState(ctx, 375, y + 40, kind, a, b, { size: 170 });
   }
 
   // 送单情况: rank, the numbers, best day by day, who gets the most parcels
@@ -339,7 +337,7 @@ export class HallScene implements Scene {
   // 工作日志: one page per day worked, newest first; tap a page to read all of it
   private drawLog(ctx: Ctx, y: number) {
     const s = this.game.save;
-    if (!s.log.length) return this.empty(ctx, y, '还没有工作日志', '每天下班回总部结算后，这里会自动记一页');
+    if (!s.log.length) return this.empty(ctx, y, 'log', '还没有工作日志', '每天下班回总部结算后，这里会自动记一页');
     this.heading(ctx, '工作日志', y, `最近 ${s.log.length} 天`);
     y += 50;
     for (const e of s.log) {
@@ -390,7 +388,7 @@ export class HallScene implements Scene {
   private drawAlbum(ctx: Ctx, y: number) {
     const al = this.game.album;
     const list = al.list;
-    if (!list.length) return this.empty(ctx, y, '相册还是空的', '下班结算时，点照片上的「收藏」就会放进相册');
+    if (!list.length) return this.empty(ctx, y, 'album', '相册还是空的', '下班结算时，点照片上的「收藏」就会放进相册');
     this.heading(ctx, '我的相册', y, `${list.length} / ${ALBUM_MAX} 张`);
     y += 50;
     const cw = 206, ch = 200;
@@ -456,15 +454,7 @@ export class HallScene implements Scene {
       ctx.strokeStyle = done ? P.gold : P.kraft;
       ctx.lineWidth = 2;
       ctx.stroke();
-      if (!iconAt(ctx, this.game.sprites, done ? `medal_${a.id}` : `medal_${a.id}_off`, 96, y + 56, 84)) {
-        ellipse(ctx, 96, y + 56, 34, 34);
-        ctx.fillStyle = done ? P.gold : P.paperShade;
-        ctx.fill();
-        ctx.strokeStyle = done ? INK : 'rgba(74,59,48,0.4)';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-        text(ctx, '★', 96, y + 58, 34, { color: done ? P.white : 'rgba(74,59,48,0.3)', bold: true });
-      }
+      medal(ctx, a.id, 96, y + 56, 92, done);
       text(ctx, a.name, 148, y + 32, 28, { align: 'left', bold: true, color: done ? INK : P.inkSoft });
       text(ctx, a.desc, 148, y + 66, 21, { align: 'left', color: P.inkSoft, maxWidth: 380 });
       const reward = `+${a.coins} 金币${a.reward ? ` · ${item(a.reward)?.name}` : ''}`;
@@ -490,7 +480,7 @@ export class HallScene implements Scene {
   // 河湾动态: news, newest first
   private drawNews(ctx: Ctx, y: number) {
     const s = this.game.save;
-    if (!s.notes.length) return this.empty(ctx, y, '河湾里还很安静', '送出包裹后，居民们的趣事会出现在这里');
+    if (!s.notes.length) return this.empty(ctx, y, 'news', '河湾里还很安静', '送出包裹后，居民们的趣事会出现在这里');
     this.heading(ctx, '河湾动态', y, `${s.notes.length} 条`);
     y += 50;
     for (const n of s.notes) {

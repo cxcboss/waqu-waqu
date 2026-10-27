@@ -35,7 +35,7 @@ interface Bake {
 }
 
 const baked = new Map<string, Bake>();
-/** Canvas pixels held by the cache; the oldest bakes go first past the budget (about 24 MB). */
+/** Canvas pixels held by the cache; past the budget (about 24 MB) the least recently drawn bakes go first. */
 let area = 0;
 const AREA_MAX = 6e6;
 
@@ -74,6 +74,11 @@ export function drawBaked(ctx: Ctx, key: string, x: number, y: number, b: Bounds
       baked.delete(n);
       area -= old.c.width * old.c.height;
     }
+  }
+  else {
+    // most recently used last, so the budget lets go of what hasn't been drawn for longest
+    baked.delete(key);
+    baked.set(key, e);
   }
   ctx.drawImage(e.c, x + b[0] * k, y + b[1] * k, (b[2] - b[0]) * k, (b[3] - b[1]) * k);
 }

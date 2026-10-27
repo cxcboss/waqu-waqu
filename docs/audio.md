@@ -53,7 +53,7 @@ venv/bin/python tools/audio/build.py build/dl build/synth build/amb <旧版母�
 
 | id | 用途 | 在哪里播 |
 |---|---|---|
-| `map_unlock` | 路线图上解锁新的一天/新的一章 | 待接：map.ts 新的一天/新一章解锁的动画 |
+| `map_unlock` | 路线图上解锁新的一天/新的一章 | map.ts：上次看地图以后开放了新的一站，进地图 0.5 秒时响一次（存档 `seen.map` 记已经看过的最远一站），那一站同时冒金圈、出提示 |
 | `jump_charge_max` | 蓄力满 | play |
 | `aim_predict` | 瞄准约 2 秒后出现预测虚线 | play |
 | `jump_release` | 松手起跳（弹弓 '嗖-boing'） | hub, map, play |
@@ -93,7 +93,7 @@ venv/bin/python tools/audio/build.py build/dl build/synth build/amb <旧版母�
 | `photo_shutter` | 照片定格 | hq, viewer |
 | `purchase` | 福利社买东西 | shop |
 | `equip` | 换上衣服/帽子 | home, shop |
-| `gift_open` | 拆礼物/领奖励 | 待接：领章节奖励、结局礼物 |
+| `gift_open` | 拆礼物/领奖励 | shop.ts：买下东西后礼物盒落到青蛙手里时；待接：结局礼物 |
 | `letter_open` | 拆信 | play |
 | `gust` | 一阵风 | 环境声随机插入（amb_wind、amb_winter、amb_blizzard） |
 | `thunder` | 远处的雷 | 环境声随机插入（amb_rain、amb_storm） |
@@ -144,7 +144,7 @@ venv/bin/python tools/audio/build.py build/dl build/synth build/amb <旧版母�
 | `day_start` | 开工小乐句 | play, sound |
 | `day_complete` | 完成当天路线（胜利小乐句，和白天音乐同一作者） | play, sound |
 | `day_fail` | 当天提前结束（卡通失败长号） | play, sound |
-| `chapter_clear` | 一章全部通过 | 待接：hq.ts 一章最后一天过关时代替 rating_good |
+| `chapter_clear` | 一章全部通过 | hq.ts `playStamp`：第一次通过一章的最后一天，盖章 0.9 秒后响，同时提示「第 N 章完成！新河段开放了」 |
 | `rating_good` | 评级揭晓（好） | hq |
 | `rating_bad` | 评级揭晓（差） | hq |
 | `achievement` | 成就达成 | game |

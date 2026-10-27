@@ -114,149 +114,29 @@ def('hand', [-44, -6, 64, 120], A.hand);
 paintedOnly('letter', [-42, -28, 42, 28]);
 paintedOnly('bill', [-135.4, -74.9, 135.4, 74.9]);
 
-// Route map
-paintedOnly('willow', [-89.3, -132.5, 89.3, 92.2]);
-paintedOnly('map_meadow', [0, 0, 1080, 1620]);
-
-// HQ
-const HQ_ROOM_H = 1296;
-export const HQ_ROOM = { h: HQ_ROOM_H * K, contentH: 800 * K };
-def('hq_room', [0, 0, 1080, HQ_ROOM_H], () => A.hqRoom(HQ_ROOM_H));
-def('hq_counter', [-20, -68, 1100, 236], A.hqCounter);
+// HQ (the room and the counter are code art: room.ts)
 def('owl', [-150, -320, 150, 6], A.owl);
 def('owl_wing', [-10, -190, 210, 20], A.owlWing);
 
-// Outside work: home page buildings, the frog's room, the shop, hats and gear (shapes-home.ts)
-def('hub_hq', [-226, -380, 226, 30], H.hubHq);
-def('hub_shop', [-182, -340, 182, 26], H.hubShop);
-def('hub_home', [-182, -314, 190, 28], H.hubHome);
+// Outside work: the shopkeeper, hats and gear (shapes-home.ts). The buildings, rooms and furniture are
+// code art (village.ts, room.ts, furniture.ts, registered in hub.ts and codeart.ts).
 def('shop_hamster', [-74, -176, 74, 14], H.hamster);
-def('home_bed', [-176, -226, 170, 20], H.bed);
-def('home_wardrobe', [-118, -418, 118, 18], H.wardrobe);
-def('home_desk', [-160, -228, 160, 18], H.desk);
-def('deco_rug', [-200, -72, 200, 72], H.rug);
-def('deco_plant', [-64, -142, 64, 6], H.plant);
-def('deco_clock', [-62, -146, 62, 54], H.cuckoo);
-def('deco_lights', [-256, -6, 256, 54], H.lights);
-def('deco_lamp', [-72, -154, 72, 8], H.lamp);
-def('deco_fish', [-56, -108, 56, 8], H.fishbowl);
-def('deco_shelf', [-132, -120, 132, 28], H.shelf);
-def('deco_record', [-86, -194, 86, 16], H.recordPlayer);
 for (const [k, b] of [
   ['straw', [-84, -60, 84, 22]], ['flower', [-6, -50, 46, 20]], ['beanie', [-54, -88, 54, 14]], ['beret', [-58, -56, 66, 12]],
   ['top', [-58, -106, 58, 18]], ['pilot', [-60, -64, 60, 38]], ['swim', [-50, -62, 50, 14]], ['gold', [-44, -52, 50, 14]],
 ] as const) def(`hat_${k}`, [...b], () => H.hat(k));
 for (const [k, b] of [['scarf', [-68, -14, 68, 70]], ['bow', [-40, -24, 40, 24]], ['camera', [-44, -12, 44, 68]]] as const) def(`neck_${k}`, [...b], () => H.neck(k));
 for (const k of ['bag', 'shoe', 'fin']) def(`gear_${k}`, [-62, -64, 62, 64], () => H.gearIcon(k));
-/** Optional painted backgrounds; without them the screens draw their own. */
-paintedOnly('home_room', [0, 0, 1080, 1620]);
-paintedOnly('shop_room', [0, 0, 1080, 1620]);
-
-// Scene art (round 5), painted only: home page scenery, HQ owl poses / tabs / badges / medals / frames,
-// the room's window and new furniture, the shop's hamster poses / counter / gear levels. Loaded when a scene asks.
+// Scene art (round 5), painted only: HQ owl poses, the shop's hamster poses, gear levels. Loaded when a scene asks.
 for (const [name, b, s] of [
-  ['hub_signpost', [-95, -260, 95, 0], K],
-  ['hub_bridge', [-100, -130, 100, 130], K],
-  ['hub_tree_a', [-110, -300, 110, 0], K],
-  ['hub_tree_b', [-100, -320, 100, 0], K],
-  ['hub_flowers_a', [-80, -100, 80, 0], K],
-  ['hub_flowers_b', [-70, -110, 70, 0], K],
-  ['hub_lamp', [-45, -240, 45, 0], K],
-  ['hub_bg_day', [0, 0, 1080, 1620], K],
-  ['hub_bg_eve', [0, 0, 1080, 1620], K],
-  ['hub_hq_eve', [-226, -380, 226, 30], K],
-  ['hub_shop_eve', [-182, -340, 182, 26], K],
-  ['hub_home_eve', [-182, -314, 190, 28], K],
   ['owl_read', [-150, -320, 150, 6], K],
   ['owl_stamp', [-150, -320, 150, 6], K],
   ['owl_cheer', [-150, -320, 150, 6], K],
   ['owl_sleepy', [-150, -320, 150, 6], K],
-  ['tab_record', [-48, -48, 48, 48], K],
-  ['tab_log', [-48, -48, 48, 48], K],
-  ['tab_album', [-48, -48, 48, 48], K],
-  ['tab_honour', [-48, -48, 48, 48], K],
-  ['tab_news', [-48, -48, 48, 48], K],
-  ['badge_rank0', [-180, -115, 180, 115], K],
-  ['badge_rank1', [-180, -115, 180, 115], K],
-  ['badge_rank2', [-180, -115, 180, 115], K],
-  ['badge_rank3', [-180, -115, 180, 115], K],
-  ['badge_rank4', [-180, -115, 180, 115], K],
-  ['badge_rank5', [-180, -115, 180, 115], K],
-  ['badge_rank6', [-180, -115, 180, 115], K],
-  ['frame_wood', [-180, -220, 180, 220], K],
-  ['frame_lily', [-180, -220, 180, 220], K],
-  ['frame_shell', [-180, -220, 180, 220], K],
-  ['frame_gold', [-180, -220, 180, 220], K],
-  ['medal_first', [-64, -64, 64, 64], K],
-  ['medal_first_off', [-64, -64, 64, 64], K],
-  ['medal_deliver30', [-64, -64, 64, 64], K],
-  ['medal_deliver30_off', [-64, -64, 64, 64], K],
-  ['medal_deliver100', [-64, -64, 64, 64], K],
-  ['medal_deliver100_off', [-64, -64, 64, 64], K],
-  ['medal_urgent10', [-64, -64, 64, 64], K],
-  ['medal_urgent10_off', [-64, -64, 64, 64], K],
-  ['medal_cod10', [-64, -64, 64, 64], K],
-  ['medal_cod10_off', [-64, -64, 64, 64], K],
-  ['medal_trip3', [-64, -64, 64, 64], K],
-  ['medal_trip3_off', [-64, -64, 64, 64], K],
-  ['medal_sgrade', [-64, -64, 64, 64], K],
-  ['medal_sgrade_off', [-64, -64, 64, 64], K],
-  ['medal_clean5', [-64, -64, 64, 64], K],
-  ['medal_clean5_off', [-64, -64, 64, 64], K],
-  ['medal_spring', [-64, -64, 64, 64], K],
-  ['medal_spring_off', [-64, -64, 64, 64], K],
-  ['medal_longjump', [-64, -64, 64, 64], K],
-  ['medal_longjump_off', [-64, -64, 64, 64], K],
-  ['medal_fall1', [-64, -64, 64, 64], K],
-  ['medal_fall1_off', [-64, -64, 64, 64], K],
-  ['medal_fall50', [-64, -64, 64, 64], K],
-  ['medal_fall50_off', [-64, -64, 64, 64], K],
-  ['medal_rescue1', [-64, -64, 64, 64], K],
-  ['medal_rescue1_off', [-64, -64, 64, 64], K],
-  ['medal_rescue30', [-64, -64, 64, 64], K],
-  ['medal_rescue30_off', [-64, -64, 64, 64], K],
-  ['medal_thrown1', [-64, -64, 64, 64], K],
-  ['medal_thrown1_off', [-64, -64, 64, 64], K],
-  ['medal_letter1', [-64, -64, 64, 64], K],
-  ['medal_letter1_off', [-64, -64, 64, 64], K],
-  ['medal_letter3', [-64, -64, 64, 64], K],
-  ['medal_letter3_off', [-64, -64, 64, 64], K],
-  ['medal_runs10', [-64, -64, 64, 64], K],
-  ['medal_runs10_off', [-64, -64, 64, 64], K],
-  ['medal_album10', [-64, -64, 64, 64], K],
-  ['medal_album10_off', [-64, -64, 64, 64], K],
-  ['medal_home1', [-64, -64, 64, 64], K],
-  ['medal_home1_off', [-64, -64, 64, 64], K],
-  ['medal_hats3', [-64, -64, 64, 64], K],
-  ['medal_hats3_off', [-64, -64, 64, 64], K],
-  ['medal_gearmax', [-64, -64, 64, 64], K],
-  ['medal_gearmax_off', [-64, -64, 64, 64], K],
-  ['home_window_day', [-150, -180, 150, 180], K],
-  ['home_window_night', [-150, -180, 150, 180], K],
-  ['home_mailbox', [-75, -210, 75, 0], K],
-  ['home_ledger', [-100, -150, 100, 0], K],
-  ['home_wardrobe_open', [-118, -436, 118, 0], K],
-  ['deco_cushion', [-75, -120, 75, 0], K],
-  ['deco_teatable', [-115, -200, 115, 0], K],
-  ['deco_painting', [-85, -200, 85, 0], K],
-  ['deco_hammock', [-170, -200, 170, 0], K],
-  ['deco_globe', [-75, -200, 75, 0], K],
-  ['deco_trophy', [-100, -240, 100, 0], K],
-  ['deco_curtain', [-150, -380, 150, 0], K],
-  ['deco_flag', [-65, -230, 65, 0], K],
   ['shop_hamster_happy', [-74, -176, 74, 14], K],
   ['shop_hamster_give', [-74, -176, 74, 14], K],
   ['shop_hamster_think', [-74, -176, 74, 14], K],
   ['shop_hamster_bow', [-74, -176, 74, 14], K],
-  ['shop_counter', [0, 0, 750, 260], 1],
-  ['shop_dealboard', [-150, -100, 150, 100], K],
-  ['shop_gift', [-80, -160, 80, 0], K],
-  ['shop_shelf_jars', [0, 0, 620, 220], 1],
-  ['cat_gear', [-48, -48, 48, 48], K],
-  ['cat_hat', [-48, -48, 48, 48], K],
-  ['cat_neck', [-48, -48, 48, 48], K],
-  ['cat_deco', [-48, -48, 48, 48], K],
-  ['cat_frame', [-48, -48, 48, 48], K],
   ['gear_bag_lv2', [-62, -64, 62, 64], K],
   ['gear_bag_lv3', [-62, -64, 62, 64], K],
   ['gear_bag_lv4', [-62, -64, 62, 64], K],
@@ -308,7 +188,7 @@ export function codeSprite(name: string, b: [number, number, number, number], dr
 /** Non-lazy art that has to be in before the first screen (the loading screen waits for it). */
 const CORE = /^(frog_stand|frog_happy|coin|hand|hat_|neck_)/;
 /** The art one day of play needs; the rest is only for the other screens. */
-const PLAY = /^(frog_|box\d|satchel|lily|log$|river$|hand$|coin$|bill$|letter$|splash$|willow$|truck_|hat_|neck_|gear_)/;
+const PLAY = /^(frog_|box\d|satchel|lily|log$|river$|hand$|coin$|bill$|letter$|splash$|truck_|hat_|neck_|gear_)/;
 
 export const SPRITE_NAMES = Object.keys(D);
 /** The definitions, for tools that render the placeholders (art reference sheets). */

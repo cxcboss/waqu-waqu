@@ -70,17 +70,25 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - 房子门位置（cast.ts 的 door）按画面量过（门扇内框）；开门图按已上线的关门房子对位后裁出门洞。
 - 换图脚本在项目文件 wa-qu/art-pipeline/（round4.py 居民/房子，round4b.py 开门图/青蛙，compress.py 压缩）。
 
-## 美术状态（2026-10-24，第五轮场景新增）
+## 美术状态（2026-10-24，第五轮场景新增；场景部分已被 10-27 的代码绘制取代）
 - 已换进：主页河湾整图、猫头鹰 4 个姿势（总部按标签换）、总部 5 个标签图标、7 张职级工牌、22 枚成就勋章（`medal_<id>`，没拿到的用 `_off` 灰版）、4 个相框（竖版，挂墙时横着转 90°，见 `drawFrame`）、家的日夜窗户、信箱、账本、开门衣柜、8 件新家具（已进 `catalog.ts`）、福利社仓鼠 4 个表情、柜台、货架、特价牌、礼物盒、分类图标、装备 2–5 级图标 `gear_<id>_lv<n>`。
 - 都是 lazy 精灵（`sprites.ts` 里「Scene art」那一段），场景构造时 `ensure()`，没图自动回退到原来的代码绘制。
 - 第五轮已入库但暂未使用：`hub_tree_*`、`hub_flowers_*`、`hub_bridge`、`hub_lamp`、`hub_signpost`（第六轮底图自带这些）。
 
-## 美术状态（2026-10-24，第六轮补全缺失）
+## 美术状态（2026-10-24，第六轮补全缺失；主页和家已被 10-27 的代码绘制取代）
 - 主页：`hub_bg_day.jpg` / `hub_bg_eve.jpg`（1024×1536，三块空地）+ 三栋建筑 `hub_hq/hub_shop/hub_home` 和 `_eve` 夜景版。`HubScene.night`（19:00–6:00，与家里窗户同一规则）选日夜；建筑用 `place()` 叠在空地上（位置是底图比例 `at(u,v)`，改底图要重量），运输车由代码画（`drawTruckBase` + `truck_blue`，缩放 0.62）。旧的 `hub_bg.jpg` 和 `hub_*_dusk` 已删除。
 - 我的家：`home_room.jpg` 房间底图，`home_bed/wardrobe/desk` 和原 8 件家具 `deco_*` 换成画好的。
 - 衣帽装备：8 顶帽子、3 件围巾/领结/相机、邮差包/弹力鞋/脚蹼 1 级图标（`gear_bag/shoe/fin`，`gearIcon` 在 1 级自动用它）。
 - 换图脚本：`wa-qu/art-pipeline/round6.py`（原图先在本机裁到非透明边并缩到 800px 再传，因为 Mac 文件夹直传 2–3MB 大图会超时；背景存 jpg）。
 - 换图脚本：项目文件 `wa-qu/art-pipeline/round5.py`（裁掉透明边、按 final_size 放进画框、256 色 PNG、勋章另出灰版）。
+
+## 美术状态（2026-10-27，场景改代码绘制）
+- 主页、路线图、总部、我的家、福利社的场景和道具都改成代码绘制（河湾手账 kit，`src/art/kit/`），网页和小游戏通用：
+  - 主页小镇 `village.ts`（hub.ts 注册 `hub_hq/hub_shop/hub_home/hub_van`，清晨/白天/黄昏/夜晚四套，名字写成 `name:<tod>`）；路线图 `mapart.ts`（每章一个季节，河道分块烘焙）。
+  - 室内 `room.ts`（家的墙纸、护墙板、地板和窗光，总部办公室和柜台、实时走的挂钟，福利社货架和柜台，礼物盒，7 张工牌）和 `furniture.ts`（床、书桌、衣柜、信箱、窗户和 16 件家具）。`codeart.ts` 用原来画好的图的名字和边界把它们注册成代码精灵，所以各场景的摆放代码基本没变。按时段变化的几件（家的窗户、总部房间、地毯、盆栽、坐垫、河湾旗）用 `todSprite(name, tod)` 取名字。
+  - 成就勋章、相框、标签和分类图标用 kit 的 `medal()`、`frame()`、`icon()`；特价牌用 `chalkboard()`，总部招牌用 `woodSign()`。
+- 删掉了被替换的 113 张 WebP（约 2.4 MB）和 sprites.ts 里对应的定义、shapes 里的旧占位图。还在用画好的：居民、房子、开门图、青蛙、猫头鹰、仓鼠、包裹、荷叶、河、帽子围巾和装备图标。
+- `drawBaked`（kit/canvas.ts）的烘焙缓存按最近使用淘汰，总预算约 600 万像素；整屏背景（主页、家）各占一份。
 
 ## 首次加载优化（2026-10-25）
 - 美术全部是 WebP：`scripts/optimize_art.py` 把 `public/art/` 里的 png/jpg 转成 webp（普通图质量 72，整屏背景缩到 1.2 倍设计宽度，其余最多 2 倍）、删原图、重写 manifest.json（只列精灵名，扩展名固定 .webp）。**新图换进来先放 png/jpg 再跑这个脚本**，不要对已有 webp 重复压缩。`scripts/art_design_widths.json` 记各精灵的设计宽度。不支持 WebP 的老浏览器会回退到代码绘制的占位图。美术目录 19 → 约 5 MB。

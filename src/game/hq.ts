@@ -1,10 +1,13 @@
+import { todSprite } from '../art/codeart';
+import { emptyState, todAt, woodSign } from '../art/kit';
 import { INK, P } from '../art/palette';
-import { HQ_ROOM, K } from '../art/sprites';
+import { HQ_CLOCK, HQ_ROOM, clockHands } from '../art/room';
+import { K } from '../art/sprites';
 import { button, ellipse, hit, panel, pressIn, pressOut, roundRect, text, type Rect } from '../art/ui';
 import { clamp, easeInCubic, easeOutBack, easeOutCubic } from '../engine/math';
 import type { Canvas, Ctx } from '../platform/types';
 import { rankOf, recordDay, type DayRecord } from './career';
-import { PASS_RATE, TUNING, passRate } from './config';
+import { DAYS_PER_CHAPTER, PASS_RATE, TUNING, chapterOf, passRate } from './config';
 import { dayConfig } from './level';
 import type { Game, Scene } from './game';
 import { HubScene } from './hub';
@@ -107,6 +110,8 @@ export class HqScene implements Scene {
   /** Stamps earned for the first time today. */
   private fresh: boolean[];
   private pass: boolean;
+  /** This run passed a chapter's last day for the first time: the next chapter opens. */
+  private chapterDone = false;
   private note: string;
   private owlLine: string;
   private left: Row[];
@@ -167,6 +172,7 @@ export class HqScene implements Scene {
 
     // Save progress
     const s = game.save;
+    this.chapterDone = this.pass && s.day <= r.day && r.day % DAYS_PER_CHAPTER === 0 && r.day < game.lastDay;
     // only a passed day opens the next one
     if (this.pass) s.day = Math.max(s.day, Math.min(r.day + 1, game.lastDay));
     if (this.pass && r.day >= game.lastDay) s.cleared = true;
@@ -242,6 +248,11 @@ export class HqScene implements Scene {
     const good = ORDER.indexOf(this.grade) <= 2;
     au.play(good ? 'rating_good' : 'rating_bad', { delay: 0.35 });
     au.play(good ? 'owl_pleased' : 'owl_hmm', { delay: 1.5, volume: 0.8 });
+    if (this.chapterDone) {
+      au.play('chapter_clear', { delay: 0.9 });
+      const c = chapterOf(this.r.day);
+      this.toast = { text: `第${'一二三四五六七'[c]}章完成！新河段开放了`, t: -0.9 };
+    }
   }
 
   update(dt: number) {
@@ -410,12 +421,10 @@ export class HqScene implements Scene {
       ctx.lineTo(750, y);
       ctx.stroke();
     }
-    sp.draw(ctx, 'hq_room', 0, roomTop);
-    if (roomTop > 0) {
-      ctx.fillStyle = '#EEDFC0';
-      ctx.fillRect(0, 0, 750, roomTop + 1);
-    }
-    text(ctx, '蛙趣快递 · 河湾总部', 375, contentTop + 54, 30, { color: P.cream, bold: true });
+    sp.draw(ctx, todSprite('hq_room', todAt()), 0, roomTop);
+    clockHands(ctx, HQ_CLOCK.x, roomTop + HQ_CLOCK.y, HQ_CLOCK.r, new Date());
+    // the HQ sign, hanging from the picture rail
+    woodSign(ctx, 375, contentTop + 54, 420, 84, '蛙趣快递 · 河湾总部', undefined, { wood: P.woodDeep, hang: contentTop + 54 - 42 - (roomTop + 126), size: 32 });
 
     // owl behind the counter, stamping wing
     const ox = 640 * K, oy = counterY + 3;
@@ -661,7 +670,7 @@ export class HqScene implements Scene {
       ctx.restore();
       this.hearts[i] = { x: 24 + cx + 76 - 32, y: sheetTop + 522 - 70 - 32, w: 64, h: 64 };
     });
-    if (!n) text(ctx, '今天风平浪静，没拍到照片', 351, 510, 24, { color: P.inkSoft });
+    if (!n) emptyState(ctx, 351, 436, 'boat', '今天风平浪静，没拍到照片', undefined, { size: 112 });
     else if (this.t > this.endAt && !photos.some((p) => this.game.album.keptId(p))) text(ctx, '点 ♥ 收藏进相册', 40, 400, 19, { align: 'left', color: P.inkSoft });
 
     // rating stamp

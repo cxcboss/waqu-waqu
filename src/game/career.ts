@@ -182,7 +182,7 @@ export function upgradeSave(raw: unknown): SaveData {
   // letters are kept by id; older saves kept their words, and anything that isn't a letter goes
   s.letters = [...new Set(list(o.letters).filter(isStr).map(letterId).filter((id): id is string => !!id))];
   const seen = isObj(o.seen) ? o.seen : {};
-  s.seen = { notes: int(seen.notes, 0), letters: int(seen.letters, 0), ach: int(seen.ach, 0) };
+  s.seen = { notes: int(seen.notes, 0), letters: int(seen.letters, 0), ach: int(seen.ach, 0), map: 1 };
   // note and photo ids come from this counter: never hand out one that's already taken
   const used = [...s.notes.map((n) => n.id), ...s.album.map((a) => Number(a.id.replace(/^p/, '')) || 0)];
   s.seq = Math.max(int(o.seq, 0), ...used, 0);
@@ -192,6 +192,8 @@ export function upgradeSave(raw: unknown): SaveData {
   // the very first saves had no stamps: a grade there meant the day was finished, which opened the next
   if (!hadStamps) for (const d of Object.keys(s.best).map(Number)) s.day = Math.max(s.day, Math.min(d + 1, DAYS.length));
   s.cleared = o.cleared === true || !!s.stamps[DAYS.length]?.[0];
+  // the furthest stop the route map has shown opening; older saves have seen what they have
+  s.seen.map = int(seen.map, s.day, 1, s.day);
   return s;
 }
 
