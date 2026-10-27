@@ -1,8 +1,10 @@
 // The wait for the first load: a progress bar, and a tiny snake game with a frog to pass the time.
 // Everything here is drawn with plain shapes, since none of the art has arrived yet. It is made
 // to look unlike the real game (dashed board, "loading" ribbon) so nobody takes it for the day's work.
+import { TOD, drawBaked, grainRect } from '../art/kit';
 import { P, INK } from '../art/palette';
 import { button, ellipse, panel, roundRect, text } from '../art/ui';
+import { lilyPad, reeds } from '../art/village';
 import type { Ctx } from '../platform/types';
 
 const CELL = 54;
@@ -195,6 +197,7 @@ export class Loader {
     const top = this.host.safeT;
     ctx.fillStyle = P.paper;
     ctx.fillRect(0, 0, 750, H);
+    grainRect(ctx, 0, 0, 750, H, 0.5);
     // how many rows fit under the header
     const room = H - this.host.safeB - (top + BOARD_TOP) - 150;
     const rows = Math.max(7, Math.min(13, Math.floor(room / CELL)));
@@ -252,6 +255,9 @@ export class Loader {
     text(ctx, `得分 ${this.score}${this.best ? `　最高 ${this.best}` : ''}`, 375, ty + 130, 26, { color: P.inkSoft });
 
     this.drawBoard(ctx);
+    // a strip of the river along the bottom, if there's room under the board
+    const foot = H - 156;
+    if (foot > this.board().y + this.rows * CELL + 40) drawBaked(ctx, 'loadfoot', 0, foot, [0, -60, 750, 260], (c) => river(c));
 
     // done: say so, loudly
     if (this.finished && this.touched) {
@@ -343,4 +349,36 @@ export class Loader {
     if (this.dead > 0) text(ctx, '咕！撞到了，马上重来', 375, b.y + h / 2, 34, { bold: true, color: P.red });
     ctx.restore();
   }
+}
+
+/** The river along the bottom of the loading screen: water with a wavy bank, lily pads and reeds. */
+function river(ctx: Ctx) {
+  const tod = TOD.day;
+  ctx.beginPath();
+  ctx.moveTo(0, 260);
+  ctx.lineTo(0, 10);
+  for (let x = 0; x <= 750; x += 75) ctx.quadraticCurveTo(x + 37, x % 150 ? 0 : 20, x + 75, 10);
+  ctx.lineTo(750, 260);
+  ctx.closePath();
+  ctx.fillStyle = tod.water;
+  ctx.fill();
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 2.4;
+  ctx.stroke();
+  ctx.fillStyle = tod.waterDeep;
+  ctx.fillRect(0, 128, 750, 140);
+  ctx.strokeStyle = tod.glint;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (const [x, y] of [[90, 70], [300, 104], [560, 64], [660, 150], [200, 170]]) {
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 34, y);
+  }
+  ctx.stroke();
+  lilyPad(ctx, 150, 92, 52, tod, 3, true);
+  lilyPad(ctx, 430, 104, 40, tod, 5);
+  lilyPad(ctx, 610, 96, 36, tod, 7);
+  reeds(ctx, 30, 30, 1, tod, 2);
+  reeds(ctx, 718, 26, 0.9, tod, 4);
 }

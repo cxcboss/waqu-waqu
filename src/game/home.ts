@@ -1,27 +1,33 @@
 // The frog's home (我的家): its room with a photo wall for pictures kept from HQ, furniture bought at
 // the shop, the wardrobe, a desk with personal records and the money book, and the letters found.
+import { todSprite } from '../art/codeart';
+import { alpha, drawBaked, frame, frameOpening, FRAME_KINDS, lampGlow, todAt, type FrameKind } from '../art/kit';
 import { INK, P } from '../art/palette';
-import type { SpriteBank } from '../art/sprites';
-import { ellipse, roundRect, text, wrapText, type Rect } from '../art/ui';
+import { homeRoom } from '../art/room';
+import { button, ellipse, roundRect, text, wrapText, type Rect } from '../art/ui';
 import { clamp } from '../engine/math';
 import type { Ctx, ImageSource } from '../platform/types';
-import { RANKS, rankIndex, stampCount, stampsPossible } from './career';
+import { RANKS, newMail, rankIndex, stampCount, stampsPossible } from './career';
 import { ITEMS, item, type ItemKind } from './catalog';
-import { DAYS } from './config';
+import { DAYS, YEAR_END } from './config';
 import type { Game, Scene } from './game';
 import { HallScene } from './hall';
 import { HubScene } from './hub';
+import { FIRST_LETTER, LETTERS, STORY, letterText } from './lines';
 import { Scroller, Taps, Toast, dialog, dot, drawDressedFrog, header, iconAt, pill, shortDate, tabs } from './menu';
+import { PlayScene } from './play';
 import { ShopScene } from './shop';
+import { SCENE_MUSIC } from './sound';
 
 type Modal =
   | { kind: 'hang'; slot: number; frame: string }
   | { kind: 'wardrobe' }
   | { kind: 'records'; tab: number }
-  | { kind: 'letters' }
+  /** `open`: the old turtle's letter being read (its day, 0 for the first one), or -1. */
+  | { kind: 'letters'; tab: number; open: number }
   | { kind: 'decor' };
 
-export const ALL_LETTERS = 3;
+export const ALL_LETTERS = LETTERS.length;
 
 export class HomeScene implements Scene {
   readonly id = 'home';
@@ -34,9 +40,9 @@ export class HomeScene implements Scene {
   private slots: Rect[] = [];
 
   constructor(private game: Game) {
-    game.audio.setMusic('bgm_hq');
-    setFrameArt(game.sprites);
-    void game.sprites.ensure(['home_window_day', 'home_window_night', 'home_mailbox', 'home_ledger', 'home_wardrobe_open', ...ITEMS.map((i) => i.id)]);
+    game.audio.setMusic(SCENE_MUSIC.home);
+    game.audio.setAmbience(null);
+    void game.sprites.ensure(ITEMS.map((i) => i.id));
     game.tm.log('home', { frames: game.save.room.frames.filter(Boolean).length, decos: this.decos().length });
   }
 
@@ -82,9 +88,12 @@ export class HomeScene implements Scene {
     } else if (id === 'wardrobe') this.openModal({ kind: 'wardrobe' });
     else if (id === 'records') this.openModal({ kind: 'records', tab: 0 });
     else if (id === 'letters') {
-      this.openModal({ kind: 'letters' });
-      if (s.letters.length > s.seen.letters) {
+      // opens on whichever has something new; the turtle's letters first
+      const road = s.letters.length > s.seen.letters && s.story.length <= s.seen.story;
+      this.openModal({ kind: 'letters', tab: road ? 1 : 0, open: -1 });
+      if (newMail(s)) {
         s.seen.letters = s.letters.length;
+        s.seen.story = s.story.length;
         g.writeSave();
       }
     } else if (id === 'decor') this.openModal({ kind: 'decor' });
@@ -141,7 +150,7 @@ export class HomeScene implements Scene {
         s.room.frames[m.slot] = { photo, frame: m.frame };
         g.writeSave();
         g.tm.log('photo_hang', { slot: m.slot, frame: m.frame, hung: s.room.frames.filter(Boolean).length });
-        au.play('parcel_place');
+        au.play('frame_tap');
         this.toast.show('挂好啦！');
         this.modal = null;
       } else if (id === 'unhang') {
@@ -156,14 +165,39 @@ export class HomeScene implements Scene {
         s.wear[slot] = val === 'none' ? null : val;
         g.writeSave();
         g.tm.log('wear', { slot, id: s.wear[slot] });
-        au.play('bag_open', { volume: 0.7 });
+        au.play('equip');
         this.joy = 0.6;
+      }
+    } else if (m.kind === 'letters') {
+      if (id.startsWith('lt')) {
+        m.tab = Number(id.slice(2));
+        m.open = -1;
+        this.mScroll.reset();
+        au.play('tab_switch');
+      } else if (id.startsWith('st_')) {
+        m.open = Number(id.slice(3));
+        au.play('letter_open', { volume: 0.8 });
+        g.tm.log('story_read', { n: m.open });
+      } else if (id === 'stBack') {
+        m.open = -1;
+        au.play('paper_flip', { volume: 0.7 });
+      } else if (id === 'stPrev' || id === 'stNext') {
+        const have = this.storyShelf();
+        const i = have.indexOf(m.open) + (id === 'stPrev' ? -1 : 1);
+        if (i >= 0 && i < have.length) {
+          m.open = have[i];
+          au.play('paper_flip', { volume: 0.7 });
+        }
+      } else if (id === 'secret' && s.secret === 1) {
+        au.play('ui_confirm');
+        g.tm.log('secret_start', {});
+        g.go(new PlayScene(g, 0), true);
       }
     } else if (m.kind === 'records') {
       if (id.startsWith('rt')) {
         m.tab = Number(id.slice(2));
         this.mScroll.reset();
-        au.play('paper_flip', { volume: 0.6 });
+        au.play('tab_switch');
       }
     } else if (m.kind === 'decor') {
       if (id.startsWith('dc_')) {
@@ -188,28 +222,16 @@ export class HomeScene implements Scene {
     const roomTop = top + 96, roomBot = bot - 130;
     // the wall is just tall enough for two rows of photos; the floor takes the rest
     const floorY = roomTop + clamp((roomBot - roomTop) * 0.46, 560, 640);
-    if (sp.has('home_room')) {
-      const bg = sp.get('home_room');
-      const k = Math.max(1, (roomBot - roomTop + 140) / bg.h);
-      ctx.fillStyle = '#8A6748';
-      ctx.fillRect(0, 0, 750, H);
-      sp.draw(ctx, 'home_room', 375 - (750 * k) / 2, roomTop - 40, k);
-    } else this.drawRoom(ctx, roomTop, floorY, H);
+    const tod = todAt();
+    const at = (name: string) => todSprite(name, tod);
 
     // wall things: window, photo wall, shelf, clock, lights (hung down from the wainscot)
     const row2 = floorY - 230, row1 = row2 - 170;
     const wy = row1 - 80;
-    const night = new Date().getHours() >= 19 || new Date().getHours() < 6;
-    const win = night ? 'home_window_night' : 'home_window_day';
-    if (sp.has(win)) {
-      // painted window with its shutters; the sill is the bottom edge of the picture
-      sp.draw(ctx, win, 630, wy + 122, 1.0);
-      if (this.shown('deco_curtain')) iconAt(ctx, sp, 'deco_curtain', 630, wy + 118, 250, 0.96);
-      if (this.shown('deco_fish')) sp.draw(ctx, 'deco_fish', 630, wy + 236);
-    } else {
-      this.drawWindow(ctx, 545, wy, 170, 220);
-      if (this.shown('deco_fish')) sp.draw(ctx, 'deco_fish', 630, wy + 226);
-    }
+    drawBaked(ctx, `homeroom:${tod.name}:${Math.round(floorY)}:${Math.round(H)}`, 0, 0, [0, 0, 750, H], (c) => homeRoom(c, tod, floorY, H, 630, wy + 230));
+    sp.draw(ctx, at('home_window'), 630, wy + 122);
+    if (this.shown('deco_curtain')) sp.draw(ctx, 'deco_curtain', 630, wy + 252);
+    if (this.shown('deco_fish')) sp.draw(ctx, 'deco_fish', 630, wy + 216);
     this.slots = [];
     for (let i = 0; i < 6; i++) {
       const cx = [100, 236, 372][i % 3], cy = i < 3 ? row1 : row2;
@@ -221,12 +243,15 @@ export class HomeScene implements Scene {
       sp.draw(ctx, 'deco_clock', 487, row1 + 20, 1, 1, sw * 0.1);
     }
     if (this.shown('deco_shelf')) sp.draw(ctx, 'deco_shelf', 470, floorY - 80);
-    if (this.shown('deco_painting')) iconAt(ctx, sp, 'deco_painting', 487, row2 - 42, 124);
-    if (this.shown('deco_flag')) iconAt(ctx, sp, 'deco_flag', 70, floorY - 120, 116);
+    if (this.shown('deco_painting')) sp.draw(ctx, 'deco_painting', 487, row2 + 28);
+    if (this.shown('deco_flag')) sp.draw(ctx, at('deco_flag'), 46, floorY + 40);
 
-    // floor things, back to front
-    const bedY = Math.min(roomBot - 30, floorY + 470);
-    if (this.shown('deco_rug')) sp.draw(ctx, 'deco_rug', 375, floorY + 200);
+    // floor things, back to front; on a tall screen they spread out over the deeper floor
+    const fs = clamp((roomBot - 40 - floorY) / 520, 1, 1.4);
+    const fy = (d: number) => floorY + d * fs;
+    const bedY = Math.min(roomBot - 30, fy(470));
+    if (this.shown('deco_rug')) sp.draw(ctx, at('deco_rug'), 375, fy(200));
+    else sp.draw(ctx, 'home_rug', 375, fy(210));
     if (this.shown('deco_record')) {
       sp.draw(ctx, 'deco_record', 140, floorY + 70);
       // notes floating up from the horn
@@ -235,121 +260,35 @@ export class HomeScene implements Scene {
         text(ctx, '♪', 114 - k * 30, floorY - 54 - k * 60, 26, { color: P.orangeDeep, alpha: 1 - k });
       }
     }
-    if (this.shown('deco_trophy')) iconAt(ctx, sp, 'deco_trophy', 142, floorY + 215, 150);
-    if (this.shown('deco_globe')) iconAt(ctx, sp, 'deco_globe', 548, floorY + 300, 124);
-    if (this.shown('deco_cushion')) iconAt(ctx, sp, 'deco_cushion', 255, floorY + 345, 104);
-    if (this.shown('deco_hammock')) iconAt(ctx, sp, 'deco_hammock', 470, bedY - 62, 220);
-    if (this.shown('deco_teatable')) iconAt(ctx, sp, 'deco_teatable', 345, floorY + 405, 120);
+    if (this.shown('deco_trophy')) sp.draw(ctx, 'deco_trophy', 142, fy(290));
+    if (this.shown('deco_globe')) sp.draw(ctx, 'deco_globe', 548, fy(362));
+    if (this.shown('deco_cushion')) sp.draw(ctx, at('deco_cushion'), 255, fy(397));
+    if (this.shown('deco_hammock')) sp.draw(ctx, 'deco_hammock', 470, bedY + 8);
+    if (this.shown('deco_teatable')) sp.draw(ctx, 'deco_teatable', 345, fy(475));
     const desk = { x: 420, y: floorY + 110 };
     sp.draw(ctx, 'home_desk', desk.x, desk.y);
-    if (this.shown('deco_lamp')) sp.draw(ctx, 'deco_lamp', desk.x - 96, desk.y - 118);
+    if (this.shown('deco_lamp')) {
+      sp.draw(ctx, 'deco_lamp', desk.x - 96, desk.y - 118);
+      lampGlow(ctx, desk.x - 96, desk.y - 190, 150, tod, this.t);
+    }
     this.taps.add('records', { x: desk.x - 111, y: desk.y - 160, w: 150, h: 160 });
     this.taps.add('letters', { x: desk.x + 10, y: desk.y - 160, w: 100, h: 160 });
-    if (s.letters.length > s.seen.letters) dot(ctx, desk.x + 82, desk.y - 156);
+    if (newMail(s)) dot(ctx, desk.x + 82, desk.y - 156);
     // the mailbox by the door: the same letters as the desk, with a flag that waves when something new came
-    if (sp.has('home_mailbox')) {
-      const mx = 690, my = floorY + 335;
-      iconAt(ctx, sp, 'home_mailbox', mx, my - 56, 118);
-      this.taps.add('letters', { x: mx - 46, y: my - 126, w: 92, h: 130 });
-      if (s.letters.length > s.seen.letters) dot(ctx, mx + 30, my - 118);
-    }
+    const mx = 690, my = fy(335);
+    sp.draw(ctx, 'home_mailbox', mx, my);
+    this.taps.add('letters', { x: mx - 46, y: my - 146, w: 92, h: 150 });
+    if (newMail(s)) dot(ctx, mx + 30, my - 140);
     sp.draw(ctx, 'home_wardrobe', 646, floorY + 96);
     this.taps.add('wardrobe', { x: 566, y: floorY + 96 - 290, w: 160, h: 290 });
-    this.drawFrog(ctx, 375, floorY + 210);
+    this.drawFrog(ctx, 375, fy(210));
     sp.draw(ctx, 'home_bed', 140, bedY);
-    if (this.shown('deco_plant')) sp.draw(ctx, 'deco_plant', 650, bedY - 6);
+    if (this.shown('deco_plant')) sp.draw(ctx, at('deco_plant'), 650, bedY - 6);
 
     header(ctx, g, this.taps, `${s.name}的家`);
     this.toolbar(ctx, bot - 118);
     if (this.modal) this.drawModal(ctx);
     this.toast.render(ctx, top + 110);
-  }
-
-  private drawRoom(ctx: Ctx, roomTop: number, floorY: number, H: number) {
-    // wallpaper with soft stripes and little leaves
-    ctx.fillStyle = '#F3E7CB';
-    ctx.fillRect(0, 0, 750, floorY);
-    ctx.fillStyle = 'rgba(214,177,132,0.16)';
-    for (let x = 0; x < 750; x += 60) ctx.fillRect(x, 0, 28, floorY);
-    ctx.fillStyle = 'rgba(127,176,105,0.35)';
-    for (let i = 0; i < 40; i++) {
-      const x = 44 + (i % 8) * 92 + (Math.floor(i / 8) % 2) * 46, y = roomTop + 30 + Math.floor(i / 8) * 120;
-      if (y > floorY - 80) continue;
-      ellipse(ctx, x, y, 7, 4);
-      ctx.fill();
-    }
-    // wainscot and floor boards
-    ctx.fillStyle = P.woodLight;
-    ctx.fillRect(0, floorY - 70, 750, 70);
-    ctx.strokeStyle = 'rgba(148,104,63,0.5)';
-    ctx.lineWidth = 2;
-    for (let x = 30; x < 750; x += 75) {
-      ctx.strokeRect(x, floorY - 58, 52, 46);
-    }
-    ctx.fillStyle = '#D2A77A';
-    ctx.fillRect(0, floorY, 750, H - floorY);
-    ctx.strokeStyle = 'rgba(148,104,63,0.45)';
-    for (let y = floorY + 30, i = 0; y < H; y += 46, i++) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(750, y);
-      ctx.stroke();
-      for (let x = (i % 2) * 90 + 40; x < 750; x += 180) {
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x, y + 46);
-        ctx.stroke();
-      }
-    }
-    ctx.fillStyle = P.woodDeep;
-    ctx.fillRect(0, floorY - 6, 750, 12);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(-2, floorY - 6, 754, 12);
-  }
-
-  private drawWindow(ctx: Ctx, x: number, y: number, w: number, h: number) {
-    ctx.save();
-    roundRect(ctx, x - 10, y - 10, w + 20, h + 20, 14);
-    ctx.fillStyle = P.wood;
-    ctx.fill();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.rect(x, y, w, h);
-    ctx.clip();
-    ctx.fillStyle = '#CFE7EA';
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = P.teal;
-    ctx.fillRect(x, y + h * 0.55, w, h);
-    ellipse(ctx, x + 40 + Math.sin(this.t * 0.5) * 6, y + h * 0.75, 26, 10);
-    ctx.fillStyle = P.lily;
-    ctx.fill();
-    ellipse(ctx, x + w - 40, y + 34, 18, 18);
-    ctx.fillStyle = '#FBE3A0';
-    ctx.fill();
-    for (let i = 0; i < 2; i++) {
-      const cx = x + ((this.t * 8 + i * 90) % (w + 60)) - 30;
-      ellipse(ctx, cx, y + 60 + i * 28, 26, 10);
-      ctx.fillStyle = P.white;
-      ctx.fill();
-    }
-    ctx.restore();
-    ctx.strokeStyle = P.woodDeep;
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(x + w / 2, y);
-    ctx.lineTo(x + w / 2, y + h);
-    ctx.moveTo(x, y + h / 2);
-    ctx.lineTo(x + w, y + h / 2);
-    ctx.stroke();
-    roundRect(ctx, x - 20, y + h + 4, w + 40, 16, 6);
-    ctx.fillStyle = P.woodLight;
-    ctx.fill();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2;
-    ctx.stroke();
   }
 
   /** One hook on the photo wall: a framed photo, or a dashed outline asking for one. */
@@ -411,7 +350,7 @@ export class HomeScene implements Scene {
   private toolbar(ctx: Ctx, y: number) {
     const s = this.game.save;
     const items: [string, string, boolean][] = [
-      ['wardrobe', '衣柜', false], ['records', '个人记录', false], ['letters', '信箱', s.letters.length > s.seen.letters], ['decor', '布置', false],
+      ['wardrobe', '衣柜', false], ['records', '个人记录', false], ['letters', '信箱', newMail(s)], ['decor', '布置', false],
     ];
     const w = 164, gap = 12, x0 = 375 - (items.length * w + (items.length - 1) * gap) / 2;
     items.forEach(([id, label, isNew], i) => {
@@ -432,14 +371,14 @@ export class HomeScene implements Scene {
     // the photo picker is only as tall as the album needs
     const fit = m.kind === 'hang' ? Math.max(560, 320 + Math.ceil(g.album.list.length / 3) * 186)
       : m.kind === 'wardrobe' ? 900
-        : m.kind === 'letters' ? 160 + ALL_LETTERS * 144
+        : m.kind === 'letters' ? tall
           : m.kind === 'decor' ? Math.max(520, 190 + Math.ceil(this.decos().length / 3) * 218)
             : tall;
     const d = dialog(ctx, g, this.taps, 'm', 690, Math.min(tall, fit), m.t);
     if (m.kind === 'hang') this.drawHang(ctx, d, m);
     else if (m.kind === 'wardrobe') this.drawWardrobe(ctx, d);
     else if (m.kind === 'records') this.drawRecords(ctx, d, m);
-    else if (m.kind === 'letters') this.drawLetters(ctx, d);
+    else if (m.kind === 'letters') this.drawLetters(ctx, d, m);
     else this.drawDecor(ctx, d);
     pill(ctx, this.taps, 'close', d.x + d.w - 84, d.y + 18, 64, 56, '✕', { size: 28 });
     ctx.restore();
@@ -632,14 +571,137 @@ export class HomeScene implements Scene {
     this.mScroll.setContent(y - (d.y + 166) + 20);
   }
 
-  private drawLetters(ctx: Ctx, d: Rect) {
+  /** The old turtle's letters found so far, in order: the first one (0) once it's been delivered, then by day. */
+  private storyShelf() {
     const s = this.game.save;
+    return [...(s.secret >= 2 ? [0] : []), ...s.story];
+  }
+
+  private drawLetters(ctx: Ctx, d: Rect, m: Extract<Modal, { kind: 'letters' }>) {
     text(ctx, '信箱', d.x + 40, d.y + 48, 34, { bold: true, align: 'left' });
-    text(ctx, `遗失的信 ${s.letters.length} / ${ALL_LETTERS}`, d.x + d.w - 110, d.y + 48, 22, { align: 'right', color: P.inkSoft });
-    this.area(ctx, d, d.y + 90);
-    let y = d.y + 110;
+    tabs(ctx, this.taps, 'lt', d.x + 30, d.y + 100, d.w - 60, ['乌龟爷爷的信', '路上捡的信'], m.tab);
+    ctx.fillStyle = P.paper;
+    ctx.fillRect(d.x + 24, d.y + 160, d.w - 48, 4);
+    if (m.tab === 1) this.drawRoadLetters(ctx, d);
+    else if (m.open >= 0) this.drawStoryLetter(ctx, d, m.open);
+    else this.drawStoryShelf(ctx, d);
+  }
+
+  /** Thirty envelopes, one for each day's river; the ones not found yet are blank. */
+  private drawStoryShelf(ctx: Ctx, d: Rect) {
+    const s = this.game.save;
+    this.area(ctx, d, d.y + 166);
+    let y = d.y + 192;
+    text(ctx, `找到 ${s.story.length} / ${YEAR_END} 封`, d.x + 44, y + 14, 26, { bold: true, align: 'left' });
+    y += 44;
+    const intro = wrapText(ctx, '乌龟爷爷年轻时写给老朋友阿灰的信，一直没寄出去，被春天的大水冲散了。每天的河上漂着一封，跳到那片荷叶上就能捡到。', 22, d.w - 88);
+    intro.forEach((l, i) => text(ctx, l, d.x + 44, y + i * 34, 22, { align: 'left', color: P.inkSoft }));
+    y += intro.length * 34 + 10;
+    // 第0号快递: once all thirty are in, the first letter waits to be taken up the river
+    if (s.secret >= 1) {
+      const r = { x: d.x + 34, y, w: d.w - 68, h: 132 };
+      roundRect(ctx, r.x, r.y, r.w, r.h, 16);
+      ctx.fillStyle = '#FDF3D2';
+      ctx.fill();
+      ctx.strokeStyle = P.gold;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      envelope(ctx, r.x + 70, r.y + 66, 1.1, true, '0');
+      text(ctx, '第0号快递', r.x + 136, r.y + 44, 30, { bold: true, align: 'left' });
+      const sub = s.secret === 1 ? '把第一封信送到上游，交给鹈鹕阿灰' : '阿灰收到了。点开读读第一封信';
+      text(ctx, sub, r.x + 136, r.y + 88, 21, { align: 'left', color: P.inkSoft, maxWidth: s.secret === 1 ? 300 : r.w - 160 });
+      const sr = this.mScroll.screen(r);
+      if (s.secret === 1) {
+        const b = { x: r.x + r.w - 180, y: r.y + 34, w: 160, h: 64 };
+        const sb = this.mScroll.screen(b);
+        const down = !!sb && this.taps.add('secret', sb);
+        button(ctx, b.x, b.y, b.w, b.h, '去送信', { primary: true, pressed: down, size: 26 });
+      } else if (sr) this.taps.add('st_0', sr);
+      y += r.h + 20;
+    }
+    const cols = 5, gap = 12, cw = (d.w - 68 - gap * (cols - 1)) / cols, ch = 132;
+    for (let i = 0; i < YEAR_END; i++) {
+      const n = i + 1, got = s.story.includes(n);
+      const x = d.x + 34 + (i % cols) * (cw + gap), cy = y + Math.floor(i / cols) * (ch + gap);
+      const r = { x, y: cy, w: cw, h: ch };
+      const sr = got ? this.mScroll.screen(r) : null;
+      const down = !!sr && this.taps.add(`st_${n}`, sr);
+      ctx.save();
+      if (down) ctx.globalAlpha = 0.7;
+      roundRect(ctx, x, cy, cw, ch, 12);
+      ctx.fillStyle = got ? '#FFFDF7' : alpha(P.paperShade, 0.6);
+      ctx.fill();
+      if (got) {
+        ctx.strokeStyle = alpha(INK, 0.5);
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        envelope(ctx, x + cw / 2, cy + 46, 0.8, true, `${n}`);
+        text(ctx, STORY[i].title, x + cw / 2, cy + 106, 20, { bold: true, maxWidth: cw - 12 });
+      } else {
+        ctx.setLineDash([5, 6]);
+        ctx.strokeStyle = alpha(INK, 0.25);
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        envelope(ctx, x + cw / 2, cy + 46, 0.8, false, '?');
+        text(ctx, `第${n}天`, x + cw / 2, cy + 106, 19, { color: P.inkSoft, maxWidth: cw - 12 });
+      }
+      ctx.restore();
+    }
+    y += Math.ceil(YEAR_END / cols) * (ch + gap) + 6;
+    text(ctx, '没找到的信还漂在那一天的河上，回路线图重跑就能捡到', 375, y + 14, 20, { color: P.inkSoft, maxWidth: d.w - 80 });
+    y += 44;
+    this.mScroll.end(ctx);
+    this.mScroll.setContent(y - (d.y + 166));
+  }
+
+  /** One of the old turtle's letters, on its own sheet of paper. */
+  private drawStoryLetter(ctx: Ctx, d: Rect, n: number) {
+    const shelf = this.storyShelf();
+    const i = shelf.indexOf(n);
+    const title = n ? STORY[n - 1].title : '第一封信';
+    const body = n ? STORY[n - 1].text : FIRST_LETTER;
+    const x = d.x + 40, w = d.w - 80, y0 = d.y + 186, h = d.y + d.h - 130 - y0;
+    // lined writing paper, a little crooked
+    ctx.save();
+    ctx.translate(375, y0 + h / 2);
+    ctx.rotate(-0.008);
+    ctx.translate(-375, -(y0 + h / 2));
+    roundRect(ctx, x, y0, w, h, 10);
+    ctx.fillStyle = '#FFFDF4';
+    ctx.fill();
+    ctx.strokeStyle = alpha(INK, 0.6);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.strokeStyle = alpha(P.teal, 0.35);
+    ctx.lineWidth = 1.4;
+    for (let ly = y0 + 150; ly < y0 + h - 30; ly += 52) {
+      ctx.beginPath();
+      ctx.moveTo(x + 30, ly + 12);
+      ctx.lineTo(x + w - 30, ly + 12);
+      ctx.stroke();
+    }
+    text(ctx, title, 375, y0 + 56, 34, { bold: true });
+    text(ctx, n ? `第 ${n} 封 · 第${n}天在河上捡到` : '第0号快递 · 已交给阿灰', 375, y0 + 100, 21, { color: P.inkSoft });
+    const lines = wrapText(ctx, body, 28, w - 80);
+    lines.forEach((l, k) => text(ctx, l, x + 40, y0 + 150 + k * 52, 28, { align: 'left' }));
+    text(ctx, n ? '—— 小龟' : '—— 你的朋友 小龟', x + w - 44, y0 + 150 + lines.length * 52 + 20, 26, { align: 'right', color: P.inkSoft });
+    ctx.restore();
+    const by = d.y + d.h - 106;
+    pill(ctx, this.taps, 'stPrev', d.x + 40, by, 170, 72, '‹ 上一封', { size: 26, disabled: i <= 0 });
+    pill(ctx, this.taps, 'stBack', 375 - 100, by, 200, 72, '放回去', { size: 26 });
+    pill(ctx, this.taps, 'stNext', d.x + d.w - 210, by, 170, 72, '下一封 ›', { size: 26, disabled: i < 0 || i >= shelf.length - 1 });
+  }
+
+  /** The lost letters picked up on the road behind the truck. */
+  private drawRoadLetters(ctx: Ctx, d: Rect) {
+    const s = this.game.save;
+    this.area(ctx, d, d.y + 166);
+    let y = d.y + 190;
+    text(ctx, `找到 ${s.letters.length} / ${ALL_LETTERS} 封`, d.x + 44, y + 14, 26, { bold: true, align: 'left' });
+    y += 50;
     for (let i = 0; i < ALL_LETTERS; i++) {
-      const l = s.letters[i];
+      const l = s.letters[i] ? letterText(s.letters[i]) : '';
       ctx.save();
       const lines = l ? wrapText(ctx, l, 26, d.w - 140) : [];
       ctx.restore();
@@ -663,7 +725,7 @@ export class HomeScene implements Scene {
       y += h + 18;
     }
     this.mScroll.end(ctx);
-    this.mScroll.setContent(y - (d.y + 90));
+    this.mScroll.setContent(y - (d.y + 166));
   }
 
   private drawDecor(ctx: Ctx, d: Rect) {
@@ -717,83 +779,13 @@ export function drawPhoto(ctx: Ctx, img: ImageSource | null, x: number, y: numbe
   ctx.strokeRect(x, y, w, h);
 }
 
-let frameSp: SpriteBank | null = null;
-/** Lets drawFrame use the painted frames once the shop sprites are loaded. */
-export function setFrameArt(sp: SpriteBank) {
-  frameSp = sp;
-  void sp.ensure(Object.keys(FRAME_OPEN));
-}
-/** Where the picture shows in each painted frame (fractions of the portrait art: x0, y0, x1, y1). */
-const FRAME_OPEN: Record<string, [number, number, number, number]> = {
-  frame_wood: [0.18, 0.138, 0.806, 0.868], frame_lily: [0.083, 0.082, 0.915, 0.939],
-  frame_shell: [0.2, 0.183, 0.822, 0.861], frame_gold: [0.185, 0.182, 0.813, 0.898],
-};
-
-/** A photo in one of the frame styles from the shop. */
+/** A photo in one of the frame styles from the shop (`frame_wood`, `frame_lily`, …), its outer edge on x, y, w, h. */
 export function drawFrame(ctx: Ctx, style: string, x: number, y: number, w: number, h: number, img: ImageSource | null) {
-  const open = FRAME_OPEN[style];
-  if (open && frameSp?.has(style)) {
-    // the painted frames are portrait; hang them on their side so landscape photos fit
-    const [x0, y0, x1, y1] = open;
-    ctx.save();
-    ctx.fillStyle = 'rgba(74,59,48,0.18)';
-    roundRect(ctx, x + 3, y + 5, w, h, 6);
-    ctx.fill();
-    ctx.restore();
-    drawPhoto(ctx, img, x + w * y0, y + h * (1 - x1), w * (y1 - y0), h * (x1 - x0));
-    const s = frameSp.get(style);
-    ctx.save();
-    ctx.translate(x + w / 2, y + h / 2);
-    ctx.rotate(-Math.PI / 2);
-    frameSp.draw(ctx, style, 0, 0, h / s.w, w / s.h);
-    ctx.restore();
-    return;
-  }
-  const b = Math.max(6, Math.min(w, h) * 0.12);
-  const look: Record<string, [string, string]> = {
-    frame_wood: [P.wood, P.woodDeep], frame_lily: [P.lily, P.lilyDeep], frame_shell: ['#F4D9CF', '#D9A898'], frame_gold: [P.gold, P.mustard],
-  };
-  const [fill, edge] = look[style] ?? look.frame_wood;
-  ctx.save();
-  ctx.fillStyle = 'rgba(74,59,48,0.25)';
-  ctx.fillRect(x + 4, y + 5, w, h);
-  roundRect(ctx, x, y, w, h, 4);
-  ctx.fillStyle = fill;
-  ctx.fill();
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.strokeStyle = edge;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x + b * 0.4, y + b * 0.4, w - b * 0.8, h - b * 0.8);
-  drawPhoto(ctx, img, x + b, y + b, w - 2 * b, h - 2 * b);
-  // corner bits
-  const c = (cx: number, cy: number) => {
-    if (style === 'frame_lily') {
-      ellipse(ctx, cx, cy, b * 0.9, b * 0.6);
-      ctx.fillStyle = P.lilyLight;
-      ctx.fill();
-      ctx.strokeStyle = INK;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    } else if (style === 'frame_shell') {
-      ellipse(ctx, cx, cy, b * 0.7, b * 0.7);
-      ctx.fillStyle = P.white;
-      ctx.fill();
-      ctx.strokeStyle = '#D9A898';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    } else if (style === 'frame_gold') {
-      ellipse(ctx, cx, cy, b * 0.45, b * 0.45);
-      ctx.fillStyle = P.white;
-      ctx.fill();
-    }
-  };
-  c(x + b / 2, y + b / 2);
-  c(x + w - b / 2, y + b / 2);
-  c(x + b / 2, y + h - b / 2);
-  c(x + w - b / 2, y + h - b / 2);
-  ctx.restore();
+  const k = style.slice(6) as FrameKind;
+  const kind = FRAME_KINDS.includes(k) ? k : 'wood';
+  const o = frameOpening(kind, x, y, w, h);
+  drawPhoto(ctx, img, o.x, o.y, o.w, o.h);
+  frame(ctx, kind, x, y, w, h);
 }
 
 /** A shop item's picture, fitted in a box of about `size` around (x, y). */
@@ -809,6 +801,33 @@ export function itemIcon(ctx: Ctx, g: Game, id: string, x: number, y: number, si
   const k = Math.min(size / s.w, size / s.h, 1.4);
   // anchors differ (feet, middle, hat brim); centre the picture's box instead
   sp.draw(ctx, id, x - (s.w / 2 - s.ax) * k, y - (s.h / 2 - s.ay) * k, k);
+}
+
+/** An envelope for the mailbox: kraft with a red wax seal (and its number), or a blank outline if not found yet. */
+function envelope(ctx: Ctx, x: number, y: number, s: number, got: boolean, label: string) {
+  const w = 76 * s, h = 52 * s;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  roundRect(ctx, x - w / 2, y - h / 2, w, h, 5 * s);
+  ctx.fillStyle = got ? P.kraftTop : 'rgba(255,255,255,0.5)';
+  ctx.fill();
+  ctx.strokeStyle = got ? INK : 'rgba(74,59,48,0.3)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // the flap
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2 + 3, y - h / 2 + 3);
+  ctx.lineTo(x, y + h * 0.12);
+  ctx.lineTo(x + w / 2 - 3, y - h / 2 + 3);
+  ctx.stroke();
+  if (got) {
+    ellipse(ctx, x, y + h * 0.1, 13 * s, 13 * s);
+    ctx.fillStyle = P.red;
+    ctx.fill();
+    ctx.stroke();
+  }
+  text(ctx, label, x, y + h * 0.1 + 1, (label.length > 1 ? 14 : 17) * s, { bold: true, color: got ? P.white : 'rgba(74,59,48,0.35)' });
+  ctx.restore();
 }
 
 /** The frog's own orange courier cap, for the wardrobe's "no hat" choice. */

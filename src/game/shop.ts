@@ -1,5 +1,6 @@
 // The staff shop (福利社), run by a hamster whose cheeks are always full. Gear upgrades that help on
 // the river, hats and scarves, furniture for the frog's room and frames for the photo wall.
+import { chalkboard, chalkText } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { button, ellipse, roundRect, text, wrapText, type Rect } from '../art/ui';
 import { clamp } from '../engine/math';
@@ -10,6 +11,7 @@ import type { Game, Scene } from './game';
 import { itemIcon } from './home';
 import { HubScene } from './hub';
 import { Scroller, Taps, Toast, dialog, drawDressedFrog, header, iconAt, pill, tabs } from './menu';
+import { SCENE_MUSIC } from './sound';
 
 const TABS = ['装备', '衣帽', '家居', '相框'];
 const TAB_ICONS = ['cat_gear', 'cat_hat', 'cat_deco', 'cat_frame'];
@@ -42,9 +44,11 @@ export class ShopScene implements Scene {
     this.tab = tab;
     const deal = item(dailyDeal())!;
     this.line = { text: Math.random() < 0.6 ? `今日特价：${deal.name}，打八折！` : HELLO[Math.floor(Math.random() * HELLO.length)], t: 0 };
-    game.audio.setMusic('bgm_hq');
+    game.audio.setMusic(SCENE_MUSIC.shop);
+    game.audio.setAmbience(null);
     game.audio.play('ui_open');
-    void game.sprites.ensure([...TAB_ICONS, ...HAMSTER, 'shop_counter', 'shop_dealboard', 'shop_gift', 'shop_shelf_jars', ...GEAR.flatMap((g) => [2, 3, 4, 5].map((l) => `gear_${g.id}_lv${l}`))]);
+    game.audio.play('hamster_hi', { delay: 0.45 });
+    void game.sprites.ensure([...HAMSTER, ...GEAR.flatMap((g) => [2, 3, 4, 5].map((l) => `gear_${g.id}_lv${l}`))]);
     game.tm.log('shop', { tab, coins: game.save.coins });
   }
 
@@ -57,6 +61,8 @@ export class ShopScene implements Scene {
     this.flash = Math.max(0, this.flash - dt * 2);
     this.cheer = Math.max(0, this.cheer - dt);
     this.think = Math.max(0, this.think - dt);
+    // the parcel reaches the frog's hands
+    if (this.gift > 0.25 && this.gift - dt <= 0.25) this.game.audio.play('gift_open', { volume: 0.8 });
     this.gift = Math.max(0, this.gift - dt);
   }
 
@@ -93,7 +99,7 @@ export class ShopScene implements Scene {
     } else if (id.startsWith('tab')) {
       const i = Number(id.slice(3));
       if (i === this.tab) return;
-      au.play('paper_flip', { volume: 0.7 });
+      au.play('tab_switch');
       this.tab = i;
       this.scroll.reset();
       this.game.tm.log('shop_tab', { tab: TABS[i] });
@@ -128,6 +134,7 @@ export class ShopScene implements Scene {
     if (price === null) return;
     if (s.coins < price) {
       g.audio.play('ui_error');
+      g.audio.play('hamster_hmm', { delay: 0.2 });
       this.say(`还差 ${price - s.coins} 金币哦，多送几单再来！`);
       this.think = 2.2;
       return;
@@ -149,8 +156,8 @@ export class ShopScene implements Scene {
       } else if (it.kind === 'deco') this.toast.show('已经摆进你家了');
       else this.toast.show('回家挂照片时就能选这个相框');
     }
-    g.audio.play('cash_register');
-    g.audio.play('coins_change', { delay: 0.1, volume: 0.7 });
+    g.audio.play('purchase');
+    g.audio.play('hamster_thanks', { delay: 0.5 });
     g.tm.log('shop_buy', { what: 'gear' in p ? `${p.gear}${s.gear[p.gear]}` : p.item, price, coins: s.coins });
     this.flash = 1;
     this.cheer = 0.8;
@@ -170,7 +177,7 @@ export class ShopScene implements Scene {
     const s = this.game.save;
     s.wear[it.kind] = s.wear[it.kind] === it.id ? null : it.id;
     this.game.writeSave();
-    this.game.audio.play('bag_open', { volume: 0.7 });
+    this.game.audio.play('equip');
     this.cheer = 0.6;
   }
 
@@ -207,59 +214,18 @@ export class ShopScene implements Scene {
     const g = this.game;
     const sp = g.sprites;
     const s = g.save;
-    if (sp.has('shop_room')) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, 750, y1 + 80);
-      ctx.clip();
-      const bg = sp.get('shop_room');
-      sp.draw(ctx, 'shop_room', 0, y1 + 80 - bg.h);
-      ctx.restore();
-    } else {
-      ctx.fillStyle = '#B98A5E';
-      ctx.fillRect(0, 0, 750, y1 + 80);
-      ctx.fillStyle = 'rgba(148,104,63,0.35)';
-      for (let x = 0; x < 750; x += 46) ctx.fillRect(x, 0, 3, y1 + 80);
-      if (sp.has('shop_shelf_jars')) sp.draw(ctx, 'shop_shelf_jars', 0, y0 + 12, 750 / 620);
-      // shelves of goods
-      else for (const [sy, n] of [[y0 + 70, 0], [y0 + 170, 1]] as const) {
-        ctx.fillStyle = P.woodDeep;
-        ctx.fillRect(20, sy, 710, 14);
-        ctx.strokeStyle = INK;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(20, sy, 710, 14);
-        for (let i = 0; i < 12; i++) {
-          const x = 44 + i * 58, h = 30 + ((i * 7 + n * 3) % 4) * 8;
-          roundRect(ctx, x, sy - h, 40, h, 6);
-          ctx.fillStyle = [P.gold, P.tealLight, P.pink, P.lilyLight, P.orange, P.blueLight, P.kraftTop][(i + n * 3) % 7];
-          ctx.fill();
-          ctx.strokeStyle = INK;
-          ctx.lineWidth = 1.8;
-          ctx.stroke();
-        }
-      }
-    }
-    // the counter top
+    // the back wall with its shelves, then the counter in front of the hamster (its front runs on down behind the sheet)
     const cy = y1 - 30;
-    const paintedCounter = sp.has('shop_counter');
-    if (paintedCounter) sp.draw(ctx, 'shop_counter', 0, cy - 36);
-    else {
-    ctx.fillStyle = P.wood;
-    ctx.fillRect(0, cy, 750, y1 + 80 - cy);
-    ctx.strokeStyle = 'rgba(148,104,63,0.6)';
-    ctx.lineWidth = 2;
-    for (let y = cy + 26; y < y1 + 80; y += 26) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(750, y);
-      ctx.stroke();
-    }
-    ctx.fillStyle = P.woodLight;
-    ctx.fillRect(0, cy - 14, 750, 18);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2.5;
-    ctx.strokeRect(-2, cy - 14, 754, 18);
-    }
+    ctx.fillStyle = '#A97A4E';
+    ctx.fillRect(0, cy, 750, g.H - cy);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, 750, y1 + 80);
+    ctx.clip();
+    ctx.fillStyle = '#9E7449';
+    ctx.fillRect(0, 0, 750, y1 + 80);
+    sp.draw(ctx, 'shop_back', 0, y0);
+    ctx.restore();
     // hamster behind the counter, bobbing more when happy
     const hop = this.cheer > 0 ? Math.abs(Math.sin(this.cheer * 12)) * 14 : Math.sin(this.t * 2.2) * 2;
     ctx.save();
@@ -270,28 +236,14 @@ export class ShopScene implements Scene {
     const hamster = sp.has(`shop_hamster_${pose}`) ? `shop_hamster_${pose}` : 'shop_hamster';
     sp.draw(ctx, hamster, 560, cy + 40 - hop, 1.15);
     ctx.restore();
-    if (!paintedCounter) {
-      text(ctx, '店长 · 仓鼠阿圆', 560, cy + 22, 20, { color: INK, bold: true, alpha: 0.75 });
-      // a till on the counter
-      roundRect(ctx, 650, cy - 66, 76, 54, 8);
-      ctx.fillStyle = P.blue;
-      ctx.fill();
-      ctx.strokeStyle = INK;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      roundRect(ctx, 660, cy - 58, 56, 18, 4);
-      ctx.fillStyle = P.tealLight;
-      ctx.fill();
-    }
-    // the daily deal on a chalkboard, and the parcel handed over after a purchase
-    if (sp.has('shop_dealboard')) {
-      const deal = item(dailyDeal())!;
-      iconAt(ctx, sp, 'shop_dealboard', 106, y0 + 100, 190);
-      text(ctx, '今日特价', 106, y0 + 86, 19, { color: P.cream, bold: true });
-      text(ctx, deal.name, 106, y0 + 112, 24, { color: P.white, bold: true, maxWidth: 140 });
-      text(ctx, `${priceOf(deal)} 金币`, 106, y0 + 138, 19, { color: P.gold, bold: true });
-    }
-    if (this.gift > 0 && sp.has('shop_gift')) {
+    sp.draw(ctx, 'shop_counter', 0, cy);
+    // the daily deal on a chalkboard hung on the wall, and the parcel handed over after a purchase
+    const deal = item(dailyDeal())!;
+    const board = chalkboard(ctx, 18, y0 + 48, 178, 124, { hang: 30 });
+    chalkText(ctx, '今日特价', board.x + board.w / 2, board.y + 20, 20, { color: '#F3D98B', bold: true });
+    chalkText(ctx, deal.name, board.x + board.w / 2, board.y + 52, 26, { bold: true, maxWidth: board.w - 12 });
+    chalkText(ctx, `${priceOf(deal)} 金币`, board.x + board.w / 2, board.y + 82, 21, { color: '#F4B8B0', bold: true });
+    if (this.gift > 0) {
       const k = 1 - this.gift / 1.1;
       iconAt(ctx, sp, 'shop_gift', 470 - k * 230, cy - 62 - Math.sin(k * Math.PI) * 50, 90, Math.min(1, this.gift * 4));
     }

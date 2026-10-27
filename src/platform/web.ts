@@ -91,6 +91,11 @@ export class WebPlatform implements Platform {
     document.addEventListener('visibilitychange', () => cb(document.visibilityState === 'visible'));
   }
 
+  onGesture(cb: () => void): void {
+    // browsers only let audio start inside these (a touch counts when it ends; pointerdown doesn't)
+    for (const type of ['touchend', 'pointerup', 'click', 'keydown']) document.addEventListener(type, cb, { capture: true, passive: true });
+  }
+
   createCanvas(w: number, h: number): Canvas {
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.ceil(w));
@@ -111,6 +116,16 @@ export class WebPlatform implements Platform {
     const r = await fetch(url);
     if (!r.ok) throw new Error(`${r.status} ${url}`);
     return r.arrayBuffer();
+  }
+
+  async loadText(url: string): Promise<string> {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`${r.status} ${url}`);
+    return r.text();
+  }
+
+  async loadJson<T = unknown>(url: string): Promise<T> {
+    return JSON.parse(await this.loadText(url)) as T;
   }
 
   async loadFont(family: string, url: string): Promise<boolean> {

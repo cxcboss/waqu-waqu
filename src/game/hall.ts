@@ -1,18 +1,22 @@
 // The HQ hall (河湾总部), open between workdays: the frog's delivery record, the work log, the
 // photo album, the wall of honour (achievements) and the river news, with the owl behind the counter.
+import { todSprite } from '../art/codeart';
+import { emptyState, medal, todAt, type EmptyKind } from '../art/kit';
 import { INK, P } from '../art/palette';
-import { HQ_ROOM, K } from '../art/sprites';
+import { HQ_CLOCK, HQ_ROOM, clockHands } from '../art/room';
+import { K } from '../art/sprites';
 import { ellipse, roundRect, text, wrapText } from '../art/ui';
 import { clamp } from '../engine/math';
 import type { Ctx } from '../platform/types';
 import { ALBUM_MAX } from './album';
 import { ACHIEVEMENTS, RANKS, rankIndex, stampCount, unreadNotes, type NoteKind } from './career';
 import { item } from './catalog';
-import { DAYS } from './config';
+import { DAYS, dayLabel } from './config';
 import type { Game, Scene } from './game';
 import { HubScene } from './hub';
 import { drawStamp } from './map';
 import { Scroller, Taps, Toast, dot, header, iconAt, shortDate, tabs } from './menu';
+import { SCENE_MUSIC } from './sound';
 import { PhotoViewer, type ViewerPhoto } from './viewer';
 
 const TABS = ['送单', '日志', '相册', '荣誉', '动态'];
@@ -50,9 +54,10 @@ export class HallScene implements Scene {
     this.tab = tab;
     this.unread = unreadNotes(game.save);
     this.seen0 = game.save.seen.notes;
-    game.audio.setMusic('bgm_hq');
+    game.audio.setMusic(SCENE_MUSIC.hall);
+    game.audio.setAmbience(null);
     game.audio.play('owl_hoot', { delay: 0.3, volume: 0.6 });
-    void game.sprites.ensure([...TAB_ICONS, ...new Set(OWL_POSE), 'owl_sleepy', ...RANKS.map((_, i) => `badge_rank${i}`), ...ACHIEVEMENTS.flatMap((a) => [`medal_${a.id}`, `medal_${a.id}_off`])]);
+    void game.sprites.ensure([...new Set(OWL_POSE), 'owl_sleepy']);
     game.tm.log('hall', { tab, notes: this.unread });
     if (tab === 4) this.markRead();
   }
@@ -96,7 +101,7 @@ export class HallScene implements Scene {
     } else if (id.startsWith('tab')) {
       const i = Number(id.slice(3));
       if (i === this.tab) return;
-      au.play('paper_flip', { volume: 0.7 });
+      au.play('tab_switch');
       this.tab = i;
       this.tabT = 0;
       this.scroll.reset();
@@ -116,7 +121,7 @@ export class HallScene implements Scene {
 
   private photos(): ViewerPhoto[] {
     const al = this.game.album;
-    return al.list.map((a) => ({ key: a.id, img: () => al.image(a.id), caption: a.caption, footer: `蛙趣快递 · 第 ${a.day} 天 · ${shortDate(a.at)}` }));
+    return al.list.map((a) => ({ key: a.id, img: () => al.image(a.id), caption: a.caption, footer: `蛙趣快递 · ${dayLabel(a.day)} · ${shortDate(a.at)}` }));
   }
 
   private openPhoto(i: number) {
@@ -161,11 +166,8 @@ export class HallScene implements Scene {
     const roomTop = counterY + 36 - HQ_ROOM.h;
     ctx.fillStyle = '#C9A37A';
     ctx.fillRect(0, 0, 750, H);
-    sp.draw(ctx, 'hq_room', 0, roomTop);
-    if (roomTop > 0) {
-      ctx.fillStyle = '#EEDFC0';
-      ctx.fillRect(0, 0, 750, roomTop + 1);
-    }
+    sp.draw(ctx, todSprite('hq_room', todAt()), 0, roomTop);
+    clockHands(ctx, HQ_CLOCK.x, roomTop + HQ_CLOCK.y, HQ_CLOCK.r, new Date());
     const ox = 640 * K, oy = counterY + 3;
     const bob = Math.sin(this.t * 2) * 2;
     // painted poses are whole owls; the old one is a body plus a flapping wing
@@ -230,10 +232,8 @@ export class HallScene implements Scene {
     ctx.setLineDash([]);
   }
 
-  private empty(ctx: Ctx, y: number, a: string, b: string) {
-    text(ctx, a, 375, y + 80, 28, { bold: true, color: P.inkSoft });
-    text(ctx, b, 375, y + 124, 22, { color: P.inkSoft, maxWidth: 620 });
-    return y + 180;
+  private empty(ctx: Ctx, y: number, kind: EmptyKind, a: string, b: string) {
+    return emptyState(ctx, 375, y + 40, kind, a, b, { size: 170 });
   }
 
   // 送单情况: rank, the numbers, best day by day, who gets the most parcels
@@ -337,7 +337,7 @@ export class HallScene implements Scene {
   // 工作日志: one page per day worked, newest first; tap a page to read all of it
   private drawLog(ctx: Ctx, y: number) {
     const s = this.game.save;
-    if (!s.log.length) return this.empty(ctx, y, '还没有工作日志', '每天下班回总部结算后，这里会自动记一页');
+    if (!s.log.length) return this.empty(ctx, y, 'log', '还没有工作日志', '每天下班回总部结算后，这里会自动记一页');
     this.heading(ctx, '工作日志', y, `最近 ${s.log.length} 天`);
     y += 50;
     for (const e of s.log) {
@@ -362,9 +362,9 @@ export class HallScene implements Scene {
       ctx.strokeStyle = P.kraft;
       ctx.lineWidth = 2;
       ctx.stroke();
-      const name = DAYS[e.day - 1]?.name ?? '';
+      const name = e.day ? DAYS[e.day - 1]?.name ?? '' : '';
       text(ctx, `第 ${e.n} 次上班 · ${shortDate(e.at)}`, 64, y + 32, 22, { align: 'left', color: P.inkSoft });
-      text(ctx, `第${e.day}天 · ${name}`, 64, y + 70, 30, { align: 'left', bold: true, maxWidth: 420 });
+      text(ctx, name ? `${dayLabel(e.day)} · ${name}` : dayLabel(e.day), 64, y + 70, 30, { align: 'left', bold: true, maxWidth: 420 });
       text(ctx, `送达 ${e.delivered}/${e.total} · 错投 ${e.wrong} · 泡水 ${e.wet} · 收入 ${e.income >= 0 ? '+' : ''}${e.income}`, 64, y + 106, 22, { align: 'left' });
       // grade postmark
       ctx.save();
@@ -388,7 +388,7 @@ export class HallScene implements Scene {
   private drawAlbum(ctx: Ctx, y: number) {
     const al = this.game.album;
     const list = al.list;
-    if (!list.length) return this.empty(ctx, y, '相册还是空的', '下班结算时，点照片上的「收藏」就会放进相册');
+    if (!list.length) return this.empty(ctx, y, 'album', '相册还是空的', '下班结算时，点照片上的「收藏」就会放进相册');
     this.heading(ctx, '我的相册', y, `${list.length} / ${ALBUM_MAX} 张`);
     y += 50;
     const cw = 206, ch = 200;
@@ -422,7 +422,7 @@ export class HallScene implements Scene {
       }
       ctx.strokeRect(-iw / 2, -ch / 2 + 10, iw, ih);
       text(ctx, a.caption, 0, ch / 2 - 34, 20, { bold: true, maxWidth: cw - 16 });
-      text(ctx, `第${a.day}天`, 0, ch / 2 - 12, 16, { color: P.inkSoft });
+      text(ctx, dayLabel(a.day), 0, ch / 2 - 12, 16, { color: P.inkSoft });
       if (this.game.save.room.frames.some((f) => f?.photo === a.id)) {
         roundRect(ctx, cw / 2 - 58, -ch / 2 + 16, 50, 26, 13);
         ctx.fillStyle = P.orange;
@@ -454,15 +454,7 @@ export class HallScene implements Scene {
       ctx.strokeStyle = done ? P.gold : P.kraft;
       ctx.lineWidth = 2;
       ctx.stroke();
-      if (!iconAt(ctx, this.game.sprites, done ? `medal_${a.id}` : `medal_${a.id}_off`, 96, y + 56, 84)) {
-        ellipse(ctx, 96, y + 56, 34, 34);
-        ctx.fillStyle = done ? P.gold : P.paperShade;
-        ctx.fill();
-        ctx.strokeStyle = done ? INK : 'rgba(74,59,48,0.4)';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-        text(ctx, '★', 96, y + 58, 34, { color: done ? P.white : 'rgba(74,59,48,0.3)', bold: true });
-      }
+      medal(ctx, a.id, 96, y + 56, 92, done);
       text(ctx, a.name, 148, y + 32, 28, { align: 'left', bold: true, color: done ? INK : P.inkSoft });
       text(ctx, a.desc, 148, y + 66, 21, { align: 'left', color: P.inkSoft, maxWidth: 380 });
       const reward = `+${a.coins} 金币${a.reward ? ` · ${item(a.reward)?.name}` : ''}`;
@@ -488,7 +480,7 @@ export class HallScene implements Scene {
   // 河湾动态: news, newest first
   private drawNews(ctx: Ctx, y: number) {
     const s = this.game.save;
-    if (!s.notes.length) return this.empty(ctx, y, '河湾里还很安静', '送出包裹后，居民们的趣事会出现在这里');
+    if (!s.notes.length) return this.empty(ctx, y, 'news', '河湾里还很安静', '送出包裹后，居民们的趣事会出现在这里');
     this.heading(ctx, '河湾动态', y, `${s.notes.length} 条`);
     y += 50;
     for (const n of s.notes) {

@@ -6,9 +6,11 @@ import { placeholderHouse } from './houses';
 import * as A from './shapes';
 import * as H from './shapes-home';
 import { defs } from './svg';
+import { pxPerUnit, useCanvas } from './kit/canvas';
 
-/** Design units (750-wide canvas) per concept unit (1080-wide concept art). */
-export const K = 750 / 1080;
+/** Width of the design canvas, and design units per concept unit (1080-wide concept art). */
+export const DESIGN_W = 750;
+export const K = DESIGN_W / 1080;
 export const TILE_H = 2016; // background tile height in concept units (1400 design units)
 
 export interface Sprite {
@@ -112,149 +114,29 @@ def('hand', [-44, -6, 64, 120], A.hand);
 paintedOnly('letter', [-42, -28, 42, 28]);
 paintedOnly('bill', [-135.4, -74.9, 135.4, 74.9]);
 
-// Route map
-paintedOnly('willow', [-89.3, -132.5, 89.3, 92.2]);
-paintedOnly('map_meadow', [0, 0, 1080, 1620]);
-
-// HQ
-const HQ_ROOM_H = 1296;
-export const HQ_ROOM = { h: HQ_ROOM_H * K, contentH: 800 * K };
-def('hq_room', [0, 0, 1080, HQ_ROOM_H], () => A.hqRoom(HQ_ROOM_H));
-def('hq_counter', [-20, -68, 1100, 236], A.hqCounter);
+// HQ (the room and the counter are code art: room.ts)
 def('owl', [-150, -320, 150, 6], A.owl);
 def('owl_wing', [-10, -190, 210, 20], A.owlWing);
 
-// Outside work: home page buildings, the frog's room, the shop, hats and gear (shapes-home.ts)
-def('hub_hq', [-226, -380, 226, 30], H.hubHq);
-def('hub_shop', [-182, -340, 182, 26], H.hubShop);
-def('hub_home', [-182, -314, 190, 28], H.hubHome);
+// Outside work: the shopkeeper, hats and gear (shapes-home.ts). The buildings, rooms and furniture are
+// code art (village.ts, room.ts, furniture.ts, registered in hub.ts and codeart.ts).
 def('shop_hamster', [-74, -176, 74, 14], H.hamster);
-def('home_bed', [-176, -226, 170, 20], H.bed);
-def('home_wardrobe', [-118, -418, 118, 18], H.wardrobe);
-def('home_desk', [-160, -228, 160, 18], H.desk);
-def('deco_rug', [-200, -72, 200, 72], H.rug);
-def('deco_plant', [-64, -142, 64, 6], H.plant);
-def('deco_clock', [-62, -146, 62, 54], H.cuckoo);
-def('deco_lights', [-256, -6, 256, 54], H.lights);
-def('deco_lamp', [-72, -154, 72, 8], H.lamp);
-def('deco_fish', [-56, -108, 56, 8], H.fishbowl);
-def('deco_shelf', [-132, -120, 132, 28], H.shelf);
-def('deco_record', [-86, -194, 86, 16], H.recordPlayer);
 for (const [k, b] of [
   ['straw', [-84, -60, 84, 22]], ['flower', [-6, -50, 46, 20]], ['beanie', [-54, -88, 54, 14]], ['beret', [-58, -56, 66, 12]],
   ['top', [-58, -106, 58, 18]], ['pilot', [-60, -64, 60, 38]], ['swim', [-50, -62, 50, 14]], ['gold', [-44, -52, 50, 14]],
 ] as const) def(`hat_${k}`, [...b], () => H.hat(k));
 for (const [k, b] of [['scarf', [-68, -14, 68, 70]], ['bow', [-40, -24, 40, 24]], ['camera', [-44, -12, 44, 68]]] as const) def(`neck_${k}`, [...b], () => H.neck(k));
 for (const k of ['bag', 'shoe', 'fin']) def(`gear_${k}`, [-62, -64, 62, 64], () => H.gearIcon(k));
-/** Optional painted backgrounds; without them the screens draw their own. */
-paintedOnly('home_room', [0, 0, 1080, 1620]);
-paintedOnly('shop_room', [0, 0, 1080, 1620]);
-
-// Scene art (round 5), painted only: home page scenery, HQ owl poses / tabs / badges / medals / frames,
-// the room's window and new furniture, the shop's hamster poses / counter / gear levels. Loaded when a scene asks.
+// Scene art (round 5), painted only: HQ owl poses, the shop's hamster poses, gear levels. Loaded when a scene asks.
 for (const [name, b, s] of [
-  ['hub_signpost', [-95, -260, 95, 0], K],
-  ['hub_bridge', [-100, -130, 100, 130], K],
-  ['hub_tree_a', [-110, -300, 110, 0], K],
-  ['hub_tree_b', [-100, -320, 100, 0], K],
-  ['hub_flowers_a', [-80, -100, 80, 0], K],
-  ['hub_flowers_b', [-70, -110, 70, 0], K],
-  ['hub_lamp', [-45, -240, 45, 0], K],
-  ['hub_bg_day', [0, 0, 1080, 1620], K],
-  ['hub_bg_eve', [0, 0, 1080, 1620], K],
-  ['hub_hq_eve', [-226, -380, 226, 30], K],
-  ['hub_shop_eve', [-182, -340, 182, 26], K],
-  ['hub_home_eve', [-182, -314, 190, 28], K],
   ['owl_read', [-150, -320, 150, 6], K],
   ['owl_stamp', [-150, -320, 150, 6], K],
   ['owl_cheer', [-150, -320, 150, 6], K],
   ['owl_sleepy', [-150, -320, 150, 6], K],
-  ['tab_record', [-48, -48, 48, 48], K],
-  ['tab_log', [-48, -48, 48, 48], K],
-  ['tab_album', [-48, -48, 48, 48], K],
-  ['tab_honour', [-48, -48, 48, 48], K],
-  ['tab_news', [-48, -48, 48, 48], K],
-  ['badge_rank0', [-180, -115, 180, 115], K],
-  ['badge_rank1', [-180, -115, 180, 115], K],
-  ['badge_rank2', [-180, -115, 180, 115], K],
-  ['badge_rank3', [-180, -115, 180, 115], K],
-  ['badge_rank4', [-180, -115, 180, 115], K],
-  ['badge_rank5', [-180, -115, 180, 115], K],
-  ['badge_rank6', [-180, -115, 180, 115], K],
-  ['frame_wood', [-180, -220, 180, 220], K],
-  ['frame_lily', [-180, -220, 180, 220], K],
-  ['frame_shell', [-180, -220, 180, 220], K],
-  ['frame_gold', [-180, -220, 180, 220], K],
-  ['medal_first', [-64, -64, 64, 64], K],
-  ['medal_first_off', [-64, -64, 64, 64], K],
-  ['medal_deliver30', [-64, -64, 64, 64], K],
-  ['medal_deliver30_off', [-64, -64, 64, 64], K],
-  ['medal_deliver100', [-64, -64, 64, 64], K],
-  ['medal_deliver100_off', [-64, -64, 64, 64], K],
-  ['medal_urgent10', [-64, -64, 64, 64], K],
-  ['medal_urgent10_off', [-64, -64, 64, 64], K],
-  ['medal_cod10', [-64, -64, 64, 64], K],
-  ['medal_cod10_off', [-64, -64, 64, 64], K],
-  ['medal_trip3', [-64, -64, 64, 64], K],
-  ['medal_trip3_off', [-64, -64, 64, 64], K],
-  ['medal_sgrade', [-64, -64, 64, 64], K],
-  ['medal_sgrade_off', [-64, -64, 64, 64], K],
-  ['medal_clean5', [-64, -64, 64, 64], K],
-  ['medal_clean5_off', [-64, -64, 64, 64], K],
-  ['medal_spring', [-64, -64, 64, 64], K],
-  ['medal_spring_off', [-64, -64, 64, 64], K],
-  ['medal_longjump', [-64, -64, 64, 64], K],
-  ['medal_longjump_off', [-64, -64, 64, 64], K],
-  ['medal_fall1', [-64, -64, 64, 64], K],
-  ['medal_fall1_off', [-64, -64, 64, 64], K],
-  ['medal_fall50', [-64, -64, 64, 64], K],
-  ['medal_fall50_off', [-64, -64, 64, 64], K],
-  ['medal_rescue1', [-64, -64, 64, 64], K],
-  ['medal_rescue1_off', [-64, -64, 64, 64], K],
-  ['medal_rescue30', [-64, -64, 64, 64], K],
-  ['medal_rescue30_off', [-64, -64, 64, 64], K],
-  ['medal_thrown1', [-64, -64, 64, 64], K],
-  ['medal_thrown1_off', [-64, -64, 64, 64], K],
-  ['medal_letter1', [-64, -64, 64, 64], K],
-  ['medal_letter1_off', [-64, -64, 64, 64], K],
-  ['medal_letter3', [-64, -64, 64, 64], K],
-  ['medal_letter3_off', [-64, -64, 64, 64], K],
-  ['medal_runs10', [-64, -64, 64, 64], K],
-  ['medal_runs10_off', [-64, -64, 64, 64], K],
-  ['medal_album10', [-64, -64, 64, 64], K],
-  ['medal_album10_off', [-64, -64, 64, 64], K],
-  ['medal_home1', [-64, -64, 64, 64], K],
-  ['medal_home1_off', [-64, -64, 64, 64], K],
-  ['medal_hats3', [-64, -64, 64, 64], K],
-  ['medal_hats3_off', [-64, -64, 64, 64], K],
-  ['medal_gearmax', [-64, -64, 64, 64], K],
-  ['medal_gearmax_off', [-64, -64, 64, 64], K],
-  ['home_window_day', [-150, -180, 150, 180], K],
-  ['home_window_night', [-150, -180, 150, 180], K],
-  ['home_mailbox', [-75, -210, 75, 0], K],
-  ['home_ledger', [-100, -150, 100, 0], K],
-  ['home_wardrobe_open', [-118, -436, 118, 0], K],
-  ['deco_cushion', [-75, -120, 75, 0], K],
-  ['deco_teatable', [-115, -200, 115, 0], K],
-  ['deco_painting', [-85, -200, 85, 0], K],
-  ['deco_hammock', [-170, -200, 170, 0], K],
-  ['deco_globe', [-75, -200, 75, 0], K],
-  ['deco_trophy', [-100, -240, 100, 0], K],
-  ['deco_curtain', [-150, -380, 150, 0], K],
-  ['deco_flag', [-65, -230, 65, 0], K],
   ['shop_hamster_happy', [-74, -176, 74, 14], K],
   ['shop_hamster_give', [-74, -176, 74, 14], K],
   ['shop_hamster_think', [-74, -176, 74, 14], K],
   ['shop_hamster_bow', [-74, -176, 74, 14], K],
-  ['shop_counter', [0, 0, 750, 260], 1],
-  ['shop_dealboard', [-150, -100, 150, 100], K],
-  ['shop_gift', [-80, -160, 80, 0], K],
-  ['shop_shelf_jars', [0, 0, 620, 220], 1],
-  ['cat_gear', [-48, -48, 48, 48], K],
-  ['cat_hat', [-48, -48, 48, 48], K],
-  ['cat_neck', [-48, -48, 48, 48], K],
-  ['cat_deco', [-48, -48, 48, 48], K],
-  ['cat_frame', [-48, -48, 48, 48], K],
   ['gear_bag_lv2', [-62, -64, 62, 64], K],
   ['gear_bag_lv3', [-62, -64, 62, 64], K],
   ['gear_bag_lv4', [-62, -64, 62, 64], K],
@@ -272,10 +154,41 @@ for (const [name, b, s] of [
 // Background tile
 def('river', [0, 0, 1080, TILE_H], () => A.riverTile(TILE_H));
 
+// ---------------------------------------------------------------- code-drawn art
+
+interface CodeDef {
+  /** Bounds in design units around the anchor: [x0, y0, x1, y1]. */
+  b: [number, number, number, number];
+  draw: (ctx: Ctx, variant: string) => void;
+  /** Extra sharpness for sprites usually drawn scaled up. */
+  res: number;
+}
+const C: Record<string, CodeDef> = {};
+const banks: SpriteBank[] = [];
+/** The code art behind `name` or `name:variant`. */
+const codeDef = (name: string): CodeDef | undefined => {
+  const i = name.indexOf(':');
+  return C[i < 0 ? name : name.slice(0, i)];
+};
+
+/**
+ * Static art drawn in code (the 河湾手账 kit) rather than painted. `draw` paints it once into an offscreen
+ * canvas at the screen's sharpness, with the anchor at (0, 0) and design units as units; it's painted again
+ * only when the resolution changes. Ask for a variant with `name:variant` (for example `hub_hq:night`):
+ * each variant is baked on its own and `draw` gets the part after the colon ('' without one).
+ * After that it's an ordinary sprite: `sp.draw`, `sp.has`, `iconAt` work the same as for painted art, and a
+ * code sprite takes over from a painted or placeholder sprite of the same name. Pure Canvas 2D, no SVG.
+ * `bounds()` reports it in concept units like any other sprite (the design-unit bounds divided by K).
+ */
+export function codeSprite(name: string, b: [number, number, number, number], draw: (ctx: Ctx, variant: string) => void, o: { res?: number } = {}) {
+  C[name] = { b, draw, res: o.res ?? 1 };
+  for (const bank of banks) bank.dropCode(name);
+}
+
 /** Non-lazy art that has to be in before the first screen (the loading screen waits for it). */
 const CORE = /^(frog_stand|frog_happy|coin|hand|hat_|neck_)/;
 /** The art one day of play needs; the rest is only for the other screens. */
-const PLAY = /^(frog_|box\d|satchel|lily|log$|river$|hand$|coin$|bill$|letter$|splash$|willow$|truck_|hat_|neck_|gear_)/;
+const PLAY = /^(frog_|box\d|satchel|lily|log$|river$|hand$|coin$|bill$|letter$|splash$|truck_|hat_|neck_|gear_)/;
 
 export const SPRITE_NAMES = Object.keys(D);
 /** The definitions, for tools that render the placeholders (art reference sheets). */
@@ -292,7 +205,43 @@ export class SpriteBank {
   /** How many sprites are painted art rather than placeholders. */
   painted = 0;
 
-  constructor(private platform: Platform) {}
+  /** Baked code sprites by full name (with variant), and the sharpness each was baked at. */
+  private code = new Map<string, { s: Sprite; px: number }>();
+
+  constructor(private platform: Platform) {
+    // the kit bakes icons, medals and frames into offscreen canvases at the main canvas' sharpness
+    useCanvas((w, h) => platform.createCanvas(w, h), () => platform.canvas.width / DESIGN_W);
+    banks.push(this);
+  }
+
+  /** Registers code-drawn art (see the `codeSprite` function). */
+  codeSprite(name: string, b: [number, number, number, number], draw: (ctx: Ctx, variant: string) => void, o: { res?: number } = {}) {
+    codeSprite(name, b, draw, o);
+  }
+
+  /** Forgets the bakes of a code sprite (all its variants), so it's drawn afresh next time. */
+  dropCode(name: string) {
+    for (const k of [...this.code.keys()]) if (k === name || k.startsWith(name + ':')) this.code.delete(k);
+  }
+
+  /** The baked code sprite for `name` (or `name:variant`), baking it now if needed; undefined if there's no such code art. */
+  private codeArt(name: string): Sprite | undefined {
+    const d = codeDef(name);
+    if (!d) return undefined;
+    const i = name.indexOf(':');
+    const [x0, y0, x1, y1] = d.b;
+    // big layers are capped like the placeholders, so they stay light on memory
+    const px = Math.min(pxPerUnit(), x1 - x0 > 600 ? 1.6 : 2.5) * d.res;
+    const e = this.code.get(name);
+    if (e && e.px === px) return e.s;
+    const c = this.platform.createCanvas((x1 - x0) * px, (y1 - y0) * px);
+    const g = c.getContext('2d')!;
+    g.setTransform(c.width / (x1 - x0), 0, 0, c.height / (y1 - y0), -x0 * (c.width / (x1 - x0)), -y0 * (c.height / (y1 - y0)));
+    d.draw(g, i < 0 ? '' : name.slice(i + 1));
+    const s: Sprite = { img: c, w: x1 - x0, h: y1 - y0, ax: -x0, ay: -y0 };
+    this.code.set(name, { s, px });
+    return s;
+  }
 
   private px = 1;
   private base = 'art/';
@@ -425,8 +374,7 @@ export class SpriteBank {
   private async paintedList(base: string): Promise<Map<string, string>> {
     const out = new Map<string, string>();
     try {
-      const raw = await this.platform.loadBinary(base + 'manifest.json');
-      const list: unknown = JSON.parse(new TextDecoder().decode(raw));
+      const list = await this.platform.loadJson(base + 'manifest.json');
       for (const n of Array.isArray(list) ? list : []) {
         if (typeof n !== 'string') continue;
         const name = n.replace(/\.(png|jpg|jpeg|webp)$/i, '');
@@ -466,25 +414,26 @@ export class SpriteBank {
     return { img: c, w: (x1 - x0) * d.s, h: (y1 - y0) * d.s, ax: -x0 * d.s, ay: -y0 * d.s };
   }
 
-  /** Whether there's art for this sprite (painted-only sprites may be missing). */
+  /** Whether there's art for this sprite (painted-only sprites may be missing; code sprites are always there). */
   has(name: string) {
-    return this.map.has(name);
+    return this.map.has(name) || codeDef(name) !== undefined;
   }
 
   get(name: string): Sprite {
-    const s = this.map.get(name);
+    const s = this.codeArt(name) ?? this.map.get(name);
     if (!s) throw new Error('missing sprite ' + name);
     return s;
   }
 
-  /** Bounds of a sprite in concept units relative to its anchor. */
+  /** Bounds of a sprite in concept units relative to its anchor (a code sprite's design-unit bounds are converted). */
   bounds(name: string): SpriteDef['b'] {
-    return D[name].b;
+    const c = codeDef(name)?.b;
+    return c ? [c[0] / K, c[1] / K, c[2] / K, c[3] / K] : D[name].b;
   }
 
   /** Draws a sprite with its anchor at (x, y), optionally scaled, rotated and faded. */
   draw(ctx: Ctx, name: string, x: number, y: number, sx = 1, sy = sx, rot = 0, alpha = 1) {
-    const s = this.map.get(name);
+    const s = this.codeArt(name) ?? this.map.get(name);
     if (!s) {
       if (D[name]?.lazy || this.deferred.has(name)) void this.loadOne(name);
       else throw new Error('missing sprite ' + name);

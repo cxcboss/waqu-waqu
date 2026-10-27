@@ -1,143 +1,217 @@
 {
- "format": "mp3 单声道 44.1kHz",
+ "format": "mp3 单声道（音效 44.1kHz 64kbps；音乐和环境声 32kHz 40kbps）",
  "sounds": {
   "ui_tap": {
-   "file": "sfx/ui_tap.mp3",
-   "group": "ui",
+   "kind": "ui",
    "use": "普通按钮点击",
-   "duration": 0.04,
+   "file": "sfx/ui_tap.mp3",
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.04,
    "bytes": 879,
    "credits": [
     {
      "source": "Kenney · Interface Sounds",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/interface-sounds",
-     "license": "CC0 1.0",
-     "file": "select_001.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "ui_confirm": {
+   "kind": "ui",
+   "use": "确认/领取成功/开始",
    "file": "sfx/ui_confirm.mp3",
-   "group": "ui",
-   "use": "确认/领取成功",
-   "duration": 0.29,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.29,
    "bytes": 2969,
    "credits": [
     {
      "source": "Kenney · Interface Sounds",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/interface-sounds",
-     "license": "CC0 1.0",
-     "file": "confirmation_001.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "ui_back": {
-   "file": "sfx/ui_back.mp3",
-   "group": "ui",
+   "kind": "ui",
    "use": "返回/取消",
-   "duration": 0.06,
+   "file": "sfx/ui_back.mp3",
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.06,
    "bytes": 1088,
    "credits": [
     {
      "source": "Kenney · Interface Sounds",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/interface-sounds",
-     "license": "CC0 1.0",
-     "file": "back_001.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "ui_open": {
+   "kind": "ui",
+   "use": "打开浮层（背包、订单、弹窗）",
    "file": "sfx/ui_open.mp3",
-   "group": "ui",
-   "use": "打开浮层（背包、订单）",
-   "duration": 0.15,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.15,
    "bytes": 1715,
    "credits": [
     {
      "source": "Kenney · Interface Sounds",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/interface-sounds",
-     "license": "CC0 1.0",
-     "file": "open_001.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "ui_close": {
-   "file": "sfx/ui_close.mp3",
-   "group": "ui",
+   "kind": "ui",
    "use": "关闭浮层",
-   "duration": 0.15,
+   "file": "sfx/ui_close.mp3",
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.15,
    "bytes": 1715,
    "credits": [
     {
      "source": "Kenney · Interface Sounds",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/interface-sounds",
-     "license": "CC0 1.0",
-     "file": "close_001.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "ui_error": {
+   "kind": "ui",
+   "use": "操作无效（背包满了还领、钱不够、没解锁）",
    "file": "sfx/ui_error.mp3",
-   "group": "ui",
-   "use": "操作无效（如背包已满时再领取）",
-   "duration": 0.16,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.16,
    "bytes": 1924,
    "credits": [
     {
      "source": "Kenney · Interface Sounds",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/interface-sounds",
-     "license": "CC0 1.0",
-     "file": "error_001.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "ui_tick": {
+   "kind": "ui",
+   "use": "结算数字滚动/逐条计数/蓄力刻度",
    "file": "sfx/ui_tick.mp3",
-   "group": "ui",
-   "use": "结算数字滚动/逐条计数",
-   "duration": 0.02,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "gap": 0.03,
+   "duration": 0.02,
    "bytes": 670,
    "credits": [
     {
      "source": "Kenney · Interface Sounds",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/interface-sounds",
-     "license": "CC0 1.0",
-     "file": "tick_001.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
-  "jump_charge": {
-   "file": "sfx/jump_charge.mp3",
-   "group": "jump",
-   "use": "按住蓄力（松手时停止播放；力度越大可调高 playbackRate）",
-   "duration": 1.4,
+  "tab_switch": {
+   "kind": "ui",
+   "use": "切换页签",
+   "file": "sfx/tab_switch.mp3",
    "loop": false,
    "volume": 1.0,
-   "bytes": 11746,
+   "preload": true,
+   "duration": 0.08,
+   "bytes": 1297,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "toast_blip": {
+   "kind": "ui",
+   "use": "小字条提示冒出来",
+   "file": "sfx/toast_blip.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "preload": true,
+   "gap": 0.15,
+   "duration": 0.13,
+   "bytes": 1506,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "hint_pop": {
+   "kind": "ui",
+   "use": "提示气泡冒出来（猫头鹰提醒、教程）",
+   "file": "sfx/hint_pop.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "preload": true,
+   "gap": 0.2,
+   "duration": 0.43,
+   "bytes": 4014,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "frame_tap": {
+   "kind": "ui",
+   "use": "点相框/挂照片",
+   "file": "sfx/frame_tap.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.28,
+   "bytes": 2760,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "map_unlock": {
+   "kind": "sfx",
+   "use": "路线图上解锁新的一天/新的一章",
+   "file": "sfx/map_unlock.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 1.06,
+   "bytes": 9030,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -145,16 +219,17 @@
    ]
   },
   "jump_charge_max": {
-   "file": "sfx/jump_charge_max.mp3",
-   "group": "jump",
+   "kind": "sfx",
    "use": "蓄力满",
-   "duration": 0.59,
+   "file": "sfx/jump_charge_max.mp3",
    "loop": false,
    "volume": 1.0,
-   "bytes": 5268,
+   "preload": true,
+   "duration": 0.66,
+   "bytes": 5895,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -162,16 +237,17 @@
    ]
   },
   "aim_predict": {
-   "file": "sfx/aim_predict.mp3",
-   "group": "jump",
+   "kind": "sfx",
    "use": "瞄准约 2 秒后出现预测虚线",
-   "duration": 0.67,
+   "file": "sfx/aim_predict.mp3",
    "loop": false,
    "volume": 1.0,
-   "bytes": 5895,
+   "preload": true,
+   "duration": 0.79,
+   "bytes": 6940,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -179,16 +255,18 @@
    ]
   },
   "jump_release": {
+   "kind": "sfx",
+   "use": "松手起跳（弹弓 '嗖-boing'）",
    "file": "sfx/jump_release.mp3",
-   "group": "jump",
-   "use": "松手起跳（弹弓'嗖-boing'）",
-   "duration": 0.56,
    "loop": false,
    "volume": 1.0,
-   "bytes": 5059,
+   "preload": true,
+   "voices": 3,
+   "duration": 0.43,
+   "bytes": 4014,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -196,16 +274,17 @@
    ]
   },
   "jump_whoosh": {
+   "kind": "sfx",
+   "use": "空中风声（远跳时叠加）",
    "file": "sfx/jump_whoosh.mp3",
-   "group": "jump",
-   "use": "空中风声（远跳时可叠加）",
-   "duration": 0.44,
    "loop": false,
    "volume": 1.0,
-   "bytes": 4014,
+   "preload": true,
+   "duration": 0.44,
+   "bytes": 4223,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -213,12 +292,17 @@
    ]
   },
   "frog_croak": {
+   "kind": "voice",
+   "use": "青蛙叫：起跳/成功落地/点主页的青蛙",
    "file": "sfx/frog_croak.mp3",
-   "group": "jump",
-   "use": "青蛙叫：起跳/成功落地/待机随机播放",
-   "duration": 1.07,
    "loop": false,
    "volume": 1.0,
+   "variants": [
+    "frog_croak_2"
+   ],
+   "preload": true,
+   "gap": 0.2,
+   "duration": 1.06,
    "bytes": 9030,
    "credits": [
     {
@@ -227,18 +311,16 @@
      "url": "https://freesound.org/people/Breviceps/sounds/447917/",
      "license": "CC0 1.0"
     }
-   ],
-   "variants": [
-    "frog_croak_2"
    ]
   },
   "frog_croak_2": {
+   "kind": "voice",
+   "use": "青蛙叫（短促变体）",
    "file": "sfx/frog_croak_2.mp3",
-   "group": "jump",
-   "use": "青蛙叫（短促变体，与 frog_croak 随机轮换）",
-   "duration": 0.37,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.37,
    "bytes": 3596,
    "credits": [
     {
@@ -250,23 +332,23 @@
    ]
   },
   "land_truck": {
+   "kind": "sfx",
+   "use": "落在运输车上（金属轻响 + 回弹 '啵'）",
    "file": "sfx/land_truck.mp3",
-   "group": "jump",
-   "use": "落在运输车上（金属轻响 + 回弹'啵'）",
-   "duration": 0.23,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.23,
    "bytes": 2342,
    "credits": [
     {
      "source": "Kenney · Impact Sounds",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/impact-sounds",
-     "license": "CC0 1.0",
-     "file": "impactMetal_light_000.ogg"
+     "license": "CC0 1.0"
     },
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -274,12 +356,13 @@
    ]
   },
   "land_pad": {
+   "kind": "sfx",
+   "use": "落在荷叶/浮木上（软软的啪嗒 + 水声）",
    "file": "sfx/land_pad.mp3",
-   "group": "jump",
-   "use": "落在荷叶/浮木上（软软的啪嗒 + 一点水声）",
-   "duration": 0.53,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.53,
    "bytes": 4850,
    "credits": [
     {
@@ -295,7 +378,7 @@
      "license": "CC0 1.0"
     },
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -303,23 +386,77 @@
    ]
   },
   "land_house": {
+   "kind": "sfx",
+   "use": "落在居民房子上（木头）",
    "file": "sfx/land_house.mp3",
-   "group": "jump",
-   "use": "落在居民房屋上（木头）",
-   "duration": 0.16,
    "loop": false,
    "volume": 1.0,
-   "bytes": 1924,
+   "preload": true,
+   "duration": 0.14,
+   "bytes": 1715,
    "credits": [
     {
      "source": "Kenney · Impact Sounds",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/impact-sounds",
-     "license": "CC0 1.0",
-     "file": "impactWood_light_000.ogg"
+     "license": "CC0 1.0"
     },
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "tongue_thwip": {
+   "kind": "sfx",
+   "use": "吐舌头",
+   "file": "sfx/tongue_thwip.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "preload": true,
+   "duration": 0.17,
+   "bytes": 1924,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "slurp": {
+   "kind": "sfx",
+   "use": "舌头卷着包裹缩回来",
+   "file": "sfx/slurp.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "preload": true,
+   "duration": 0.38,
+   "bytes": 3596,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "perfect_sparkle": {
+   "kind": "sfx",
+   "use": "完美落点（落在荷叶正中、救回包裹）",
+   "file": "sfx/perfect_sparkle.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "preload": true,
+   "duration": 0.76,
+   "bytes": 6731,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -327,16 +464,17 @@
    ]
   },
   "fall_whistle": {
-   "file": "sfx/fall_whistle.mp3",
-   "group": "water",
+   "kind": "sfx",
    "use": "跳空下坠的卡通滑哨（入水前）",
-   "duration": 0.55,
+   "file": "sfx/fall_whistle.mp3",
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.55,
    "bytes": 5059,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -344,12 +482,13 @@
    ]
   },
   "splash": {
-   "file": "sfx/splash.mp3",
-   "group": "water",
+   "kind": "sfx",
    "use": "掉进河里",
-   "duration": 1.31,
+   "file": "sfx/splash.mp3",
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 1.3,
    "bytes": 10910,
    "credits": [
     {
@@ -361,12 +500,16 @@
    ]
   },
   "swim_stroke": {
+   "kind": "sfx",
+   "use": "游泳时每次点击划水",
    "file": "sfx/swim_stroke.mp3",
-   "group": "water",
-   "use": "游泳时每次点击划水（与 swim_stroke_2 轮换，可随机音高）",
-   "duration": 0.55,
    "loop": false,
    "volume": 1.0,
+   "variants": [
+    "swim_stroke_2"
+   ],
+   "preload": true,
+   "duration": 0.52,
    "bytes": 4850,
    "credits": [
     {
@@ -375,19 +518,17 @@
      "url": "https://freesound.org/people/qubodup/sounds/737233/",
      "license": "CC0 1.0"
     }
-   ],
-   "variants": [
-    "swim_stroke_2"
    ]
   },
   "swim_stroke_2": {
-   "file": "sfx/swim_stroke_2.mp3",
-   "group": "water",
+   "kind": "sfx",
    "use": "划水变体",
-   "duration": 0.55,
+   "file": "sfx/swim_stroke_2.mp3",
    "loop": false,
    "volume": 1.0,
-   "bytes": 5059,
+   "preload": true,
+   "duration": 0.52,
+   "bytes": 4641,
    "credits": [
     {
      "source": "Freesound · Water Splash",
@@ -398,16 +539,21 @@
    ]
   },
   "swim_bubbles": {
+   "kind": "sfx",
+   "use": "落水期间的咕噜水泡（循环）",
+   "loopAt": [
+    0.3,
+    4.2966
+   ],
    "file": "sfx/swim_bubbles.mp3",
-   "group": "water",
-   "use": "落水期间的咕噜水泡（可循环，提示快速连点）",
-   "duration": 1.0,
    "loop": true,
    "volume": 1.0,
-   "bytes": 8612,
+   "preload": true,
+   "duration": 4.6,
+   "bytes": 37242,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -415,16 +561,17 @@
    ]
   },
   "swim_climb": {
+   "kind": "sfx",
+   "use": "游上岸",
    "file": "sfx/swim_climb.mp3",
-   "group": "water",
-   "use": "成功游上岸",
-   "duration": 0.65,
    "loop": false,
    "volume": 1.0,
-   "bytes": 5686,
+   "preload": true,
+   "duration": 0.7,
+   "bytes": 6104,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -432,13 +579,14 @@
    ]
   },
   "parcel_soaked": {
+   "kind": "warn",
+   "use": "背包里的包裹泡水了",
    "file": "sfx/parcel_soaked.mp3",
-   "group": "water",
-   "use": "背包包裹泡水损坏提示",
-   "duration": 0.42,
    "loop": false,
    "volume": 1.0,
-   "bytes": 4014,
+   "preload": true,
+   "duration": 0.38,
+   "bytes": 3596,
    "credits": [
     {
      "source": "Freesound · Short Water Squish",
@@ -447,7 +595,7 @@
      "license": "CC0 1.0"
     },
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -455,16 +603,17 @@
    ]
   },
   "truck_slowdown": {
+   "kind": "sfx",
+   "use": "青蛙回到车上，车减速",
    "file": "sfx/truck_slowdown.mp3",
-   "group": "truck",
-   "use": "青蛙回到车上，车辆减速",
-   "duration": 0.9,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.9,
    "bytes": 7776,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -472,16 +621,17 @@
    ]
   },
   "truck_speedup": {
+   "kind": "sfx",
+   "use": "再次起跳，车恢复速度",
    "file": "sfx/truck_speedup.mp3",
-   "group": "truck",
-   "use": "再次起跳，车辆恢复速度",
-   "duration": 0.8,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.8,
    "bytes": 6940,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -489,13 +639,15 @@
    ]
   },
   "truck_horn": {
+   "kind": "sfx",
+   "use": "出发/到站/司机催（卡通喇叭）",
    "file": "sfx/truck_horn.mp3",
-   "group": "truck",
-   "use": "上班出发/下班到站（卡通喇叭）",
-   "duration": 0.71,
    "loop": false,
    "volume": 1.0,
-   "bytes": 6313,
+   "preload": true,
+   "gap": 0.25,
+   "duration": 0.7,
+   "bytes": 6104,
    "credits": [
     {
      "source": "Freesound · Bicycle Horn",
@@ -506,13 +658,18 @@
    ]
   },
   "truck_engine_loop": {
+   "kind": "sfx",
+   "use": "运输车发动机底噪（循环，音量很低）",
+   "loopAt": [
+    0.3,
+    5.3
+   ],
    "file": "sfx/truck_engine_loop.mp3",
-   "group": "truck",
-   "use": "运输车发动机底噪（循环，音量放很低）",
-   "duration": 5.0,
    "loop": true,
-   "volume": 0.35,
-   "bytes": 40586,
+   "volume": 0.6,
+   "preload": true,
+   "duration": 5.6,
+   "bytes": 45392,
    "credits": [
     {
      "source": "Freesound · engine_idle_loop.wav",
@@ -522,13 +679,31 @@
     }
    ]
   },
-  "parcel_pickup": {
-   "file": "sfx/parcel_pickup.mp3",
-   "group": "parcel",
-   "use": "从车上领取包裹",
-   "duration": 0.65,
+  "exhaust_puff": {
+   "kind": "sfx",
+   "use": "排气管冒烟呛到青蛙",
+   "file": "sfx/exhaust_puff.mp3",
    "loop": false,
    "volume": 1.0,
+   "duration": 0.63,
+   "bytes": 5686,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "parcel_pickup": {
+   "kind": "sfx",
+   "use": "从车上领包裹（纸箱 + 拍一下）",
+   "file": "sfx/parcel_pickup.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "preload": true,
+   "duration": 0.64,
    "bytes": 5686,
    "credits": [
     {
@@ -536,56 +711,63 @@
      "author": "CrownieYT",
      "url": "https://freesound.org/people/CrownieYT/sounds/441649/",
      "license": "CC0 1.0"
+    },
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
     }
    ]
   },
   "parcel_place": {
+   "kind": "sfx",
+   "use": "把包裹交给居民/放回车上",
    "file": "sfx/parcel_place.mp3",
-   "group": "parcel",
-   "use": "把包裹交给居民",
-   "duration": 0.21,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.21,
    "bytes": 2342,
    "credits": [
     {
      "source": "Kenney · RPG Audio",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/rpg-audio",
-     "license": "CC0 1.0",
-     "file": "bookPlace1.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "bag_open": {
+   "kind": "sfx",
+   "use": "打开背包/穿衣服",
    "file": "sfx/bag_open.mp3",
-   "group": "parcel",
-   "use": "打开背包",
-   "duration": 0.56,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.56,
    "bytes": 5059,
    "credits": [
     {
      "source": "Kenney · RPG Audio",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/rpg-audio",
-     "license": "CC0 1.0",
-     "file": "cloth1.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "bag_full": {
+   "kind": "warn",
+   "use": "背包满了/太重",
    "file": "sfx/bag_full.mp3",
-   "group": "parcel",
-   "use": "背包满/超重",
-   "duration": 0.3,
    "loop": false,
    "volume": 1.0,
-   "bytes": 2969,
+   "preload": true,
+   "duration": 0.37,
+   "bytes": 3596,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -593,16 +775,17 @@
    ]
   },
   "deliver_happy": {
-   "file": "sfx/deliver_happy.mp3",
-   "group": "parcel",
+   "kind": "sfx",
    "use": "居民开心签收",
-   "duration": 0.71,
+   "file": "sfx/deliver_happy.mp3",
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.71,
    "bytes": 6313,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -610,16 +793,17 @@
    ]
   },
   "deliver_confused": {
+   "kind": "voice",
+   "use": "居民疑惑（送错了）",
    "file": "sfx/deliver_confused.mp3",
-   "group": "parcel",
-   "use": "居民疑惑（没买东西/送错）",
-   "duration": 0.45,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.45,
    "bytes": 4223,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -627,16 +811,35 @@
    ]
   },
   "deliver_unhappy": {
+   "kind": "voice",
+   "use": "居民不满（加急迟到、找零错）",
    "file": "sfx/deliver_unhappy.mp3",
-   "group": "parcel",
-   "use": "居民不满（加急迟到等）",
-   "duration": 0.5,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.5,
    "bytes": 4641,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "aww_missed": {
+   "kind": "voice",
+   "use": "包裹没送到，房子过去了",
+   "file": "sfx/aww_missed.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "preload": true,
+   "duration": 0.9,
+   "bytes": 7776,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -644,16 +847,36 @@
    ]
   },
   "coin": {
+   "kind": "sfx",
+   "use": "得到金币/小费",
    "file": "sfx/coin.mp3",
-   "group": "parcel",
-   "use": "获得金币/奖励",
-   "duration": 0.63,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "gap": 0.06,
+   "duration": 0.63,
    "bytes": 5686,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "coin_loss": {
+   "kind": "warn",
+   "use": "扣钱（救命绳、罚款）",
+   "file": "sfx/coin_loss.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "preload": true,
+   "duration": 0.67,
+   "bytes": 5895,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -661,16 +884,17 @@
    ]
   },
   "cash_register": {
-   "file": "sfx/cash_register.mp3",
-   "group": "parcel",
+   "kind": "sfx",
    "use": "货到付款收款",
-   "duration": 0.81,
+   "file": "sfx/cash_register.mp3",
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.83,
    "bytes": 7149,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -678,68 +902,72 @@
    ]
   },
   "coins_change": {
+   "kind": "sfx",
+   "use": "找零数硬币",
    "file": "sfx/coins_change.mp3",
-   "group": "parcel",
-   "use": "找零时数硬币",
-   "duration": 0.71,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.71,
    "bytes": 6313,
    "credits": [
     {
      "source": "Kenney · RPG Audio",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/rpg-audio",
-     "license": "CC0 1.0",
-     "file": "handleCoins.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "urgent_alert": {
+   "kind": "warn",
+   "use": "新的加急件/加急快超时",
    "file": "sfx/urgent_alert.mp3",
-   "group": "parcel",
-   "use": "出现加急订单/加急快超时",
-   "duration": 0.67,
    "loop": false,
    "volume": 1.0,
+   "preload": true,
+   "duration": 0.67,
    "bytes": 5895,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
     }
    ]
   },
-  "urgent_tick_loop": {
-   "file": "sfx/urgent_tick_loop.mp3",
-   "group": "parcel",
-   "use": "加急倒计时最后 10 秒的滴答（循环）",
-   "duration": 3.99,
-   "loop": true,
+  "urgent_tick": {
+   "kind": "warn",
+   "use": "加急倒计时的一声嘀嗒（play.ts 越来越快地播）",
+   "file": "sfx/urgent_tick.mp3",
+   "loop": false,
    "volume": 1.0,
-   "bytes": 32435,
+   "preload": true,
+   "gap": 0.05,
+   "duration": 0.09,
+   "bytes": 1297,
    "credits": [
     {
-     "source": "Freesound · Loopable Ticking Clock",
-     "author": "OwlStorm",
-     "url": "https://freesound.org/people/OwlStorm/sounds/212181/",
-     "license": "CC0 1.0"
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
     }
    ]
   },
   "urgent_late": {
-   "file": "sfx/urgent_late.mp3",
-   "group": "parcel",
+   "kind": "warn",
    "use": "加急超时",
-   "duration": 0.6,
+   "file": "sfx/urgent_late.mp3",
    "loop": false,
    "volume": 1.0,
-   "bytes": 5268,
+   "preload": true,
+   "duration": 0.86,
+   "bytes": 7358,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -747,12 +975,12 @@
    ]
   },
   "phone_ring": {
+   "kind": "sfx",
+   "use": "居民打电话催单",
    "file": "sfx/phone_ring.mp3",
-   "group": "parcel",
-   "use": "居民打电话催单（老式电话铃，一声）",
-   "duration": 1.33,
    "loop": false,
    "volume": 1.0,
+   "duration": 1.32,
    "bytes": 11119,
    "credits": [
     {
@@ -763,17 +991,125 @@
     }
    ]
   },
-  "day_fail": {
-   "file": "sfx/day_fail.mp3",
-   "group": "hq",
-   "use": "被甩出屏幕、当天提前结束（卡通失败长号）",
-   "duration": 2.15,
+  "warn_pulse": {
+   "kind": "warn",
+   "use": "危险提示（快被甩出屏幕、要沉了）",
+   "file": "sfx/warn_pulse.mp3",
    "loop": false,
    "volume": 1.0,
-   "bytes": 17807,
+   "preload": true,
+   "gap": 0.3,
+   "duration": 0.33,
+   "bytes": 3178,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "warn_pop": {
+   "kind": "voice",
+   "use": "青蛙 '哇哦！'（刚进危险区）",
+   "file": "sfx/warn_pop.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "preload": true,
+   "gap": 0.5,
+   "duration": 0.42,
+   "bytes": 4014,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "lasso_whirl": {
+   "kind": "sfx",
+   "use": "司机甩套索",
+   "file": "sfx/lasso_whirl.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.74,
+   "bytes": 6522,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "rope_snap": {
+   "kind": "sfx",
+   "use": "套索绷紧把青蛙拉回来",
+   "file": "sfx/rope_snap.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.46,
+   "bytes": 4223,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "door_open": {
+   "kind": "sfx",
+   "use": "居民开门",
+   "file": "sfx/door_open.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0.2,
+   "duration": 0.91,
+   "bytes": 7776,
+   "credits": [
+    {
+     "source": "Kenney · RPG Audio",
+     "author": "Kenney (kenney.nl)",
+     "url": "https://kenney.nl/assets/rpg-audio",
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "door_close": {
+   "kind": "sfx",
+   "use": "居民关门",
+   "file": "sfx/door_close.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0.2,
+   "duration": 0.45,
+   "bytes": 4223,
+   "credits": [
+    {
+     "source": "Kenney · RPG Audio",
+     "author": "Kenney (kenney.nl)",
+     "url": "https://kenney.nl/assets/rpg-audio",
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "day_start": {
+   "kind": "jingle",
+   "use": "开工小乐句",
+   "file": "sfx/day_start.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.8,
+   "bytes": 6940,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -781,30 +1117,68 @@
    ]
   },
   "day_complete": {
+   "kind": "jingle",
+   "use": "完成当天路线（胜利小乐句，和白天音乐同一作者）",
    "file": "sfx/day_complete.mp3",
-   "group": "hq",
-   "use": "完成当天路线（胜利小乐句，与 BGM 同一作者）",
-   "duration": 3.52,
    "loop": false,
    "volume": 1.0,
+   "duration": 3.52,
    "bytes": 28674,
    "credits": [
     {
      "source": "OpenGameArt · Gone Fishin' / Beary Fishy Menu Screen / The Reel Winner",
      "author": "Memoraphile @ You're Perfect Studio",
      "url": "https://opengameart.org/content/gone-fishin",
-     "license": "CC0 1.0",
-     "file": "the_reel_winner_by_memoraphile_CC0.mp3"
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "day_fail": {
+   "kind": "jingle",
+   "use": "当天提前结束（卡通失败长号）",
+   "file": "sfx/day_fail.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 2.12,
+   "bytes": 17598,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "chapter_clear": {
+   "kind": "jingle",
+   "use": "一章全部通过",
+   "file": "sfx/chapter_clear.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 2.35,
+   "bytes": 19270,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
     }
    ]
   },
   "owl_hoot": {
+   "kind": "voice",
+   "use": "猫头鹰经理出场",
    "file": "sfx/owl_hoot.mp3",
-   "group": "hq",
-   "use": "猫头鹰经理出场/点评",
-   "duration": 1.11,
    "loop": false,
    "volume": 1.0,
+   "variants": [
+    "owl_hoot_2",
+    "owl_hoot_3"
+   ],
+   "gap": 0.4,
+   "duration": 1.1,
    "bytes": 9448,
    "credits": [
     {
@@ -815,69 +1189,141 @@
     }
    ]
   },
-  "paper_flip": {
-   "file": "sfx/paper_flip.mp3",
-   "group": "hq",
-   "use": "翻阅单据",
-   "duration": 0.63,
+  "owl_hoot_2": {
+   "kind": "voice",
+   "use": "猫头鹰叫（变体）",
+   "file": "sfx/owl_hoot_2.mp3",
    "loop": false,
    "volume": 1.0,
+   "duration": 1.31,
+   "bytes": 11119,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "owl_hoot_3": {
+   "kind": "voice",
+   "use": "猫头鹰叫（变体）",
+   "file": "sfx/owl_hoot_3.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 1.24,
+   "bytes": 10493,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "owl_pleased": {
+   "kind": "voice",
+   "use": "猫头鹰 '嗯嗯'（满意）",
+   "file": "sfx/owl_pleased.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.63,
+   "bytes": 5686,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "owl_hmm": {
+   "kind": "voice",
+   "use": "猫头鹰 '嗯……'（不太满意）",
+   "file": "sfx/owl_hmm.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.71,
+   "bytes": 6313,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "paper_flip": {
+   "kind": "sfx",
+   "use": "翻单据/翻页",
+   "file": "sfx/paper_flip.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "variants": [
+    "paper_flip_2"
+   ],
+   "duration": 0.63,
    "bytes": 5686,
    "credits": [
     {
      "source": "Kenney · RPG Audio",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/rpg-audio",
-     "license": "CC0 1.0",
-     "file": "bookFlip1.ogg"
+     "license": "CC0 1.0"
     }
-   ],
-   "variants": [
-    "paper_flip_2"
    ]
   },
   "paper_flip_2": {
-   "file": "sfx/paper_flip_2.mp3",
-   "group": "hq",
+   "kind": "sfx",
    "use": "翻页变体",
-   "duration": 0.39,
+   "file": "sfx/paper_flip_2.mp3",
    "loop": false,
    "volume": 1.0,
+   "duration": 0.39,
    "bytes": 3805,
    "credits": [
     {
      "source": "Kenney · RPG Audio",
      "author": "Kenney (kenney.nl)",
      "url": "https://kenney.nl/assets/rpg-audio",
-     "license": "CC0 1.0",
-     "file": "bookFlip2.ogg"
+     "license": "CC0 1.0"
     }
    ]
   },
   "stamp": {
+   "kind": "sfx",
+   "use": "盖章（砰 + 墨印 '咔'）",
    "file": "sfx/stamp.mp3",
-   "group": "hq",
-   "use": "盖章",
-   "duration": 0.56,
    "loop": false,
    "volume": 1.0,
-   "bytes": 5059,
+   "duration": 0.54,
+   "bytes": 4850,
    "credits": [
     {
      "source": "Freesound · traditional stamp.wav",
      "author": "I.fekry",
      "url": "https://freesound.org/people/I.fekry/sounds/470710/",
      "license": "CC0 1.0"
+    },
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
     }
    ]
   },
   "photo_shutter": {
+   "kind": "sfx",
+   "use": "照片定格",
    "file": "sfx/photo_shutter.mp3",
-   "group": "hq",
-   "use": "今日精彩瞬间：照片定格",
-   "duration": 0.4,
    "loop": false,
    "volume": 1.0,
+   "duration": 0.4,
    "bytes": 3805,
    "credits": [
     {
@@ -889,52 +1335,641 @@
    ]
   },
   "rating_good": {
-   "file": "sfx/rating_good.mp3",
-   "group": "hq",
+   "kind": "jingle",
    "use": "评级揭晓（好）",
-   "duration": 0.69,
+   "file": "sfx/rating_good.mp3",
    "loop": false,
    "volume": 1.0,
-   "bytes": 6104,
+   "duration": 0.93,
+   "bytes": 7985,
    "credits": [
     {
-     "source": "Kenney · Music Jingles",
-     "author": "Kenney (kenney.nl)",
-     "url": "https://kenney.nl/assets/music-jingles",
-     "license": "CC0 1.0",
-     "file": "Pizzicato jingles/jingles_PIZZI06.ogg"
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
     }
    ]
   },
   "rating_bad": {
-   "file": "sfx/rating_bad.mp3",
-   "group": "hq",
+   "kind": "jingle",
    "use": "评级揭晓（差）",
-   "duration": 0.56,
+   "file": "sfx/rating_bad.mp3",
    "loop": false,
    "volume": 1.0,
-   "bytes": 5059,
+   "duration": 1.28,
+   "bytes": 10910,
    "credits": [
     {
-     "source": "Kenney · Music Jingles",
-     "author": "Kenney (kenney.nl)",
-     "url": "https://kenney.nl/assets/music-jingles",
-     "license": "CC0 1.0",
-     "file": "Pizzicato jingles/jingles_PIZZI04.ogg"
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "achievement": {
+   "kind": "jingle",
+   "use": "成就达成",
+   "file": "sfx/achievement.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 1.19,
+   "bytes": 10075,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "rank_up": {
+   "kind": "jingle",
+   "use": "升职",
+   "file": "sfx/rank_up.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 1.94,
+   "bytes": 16135,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
     }
    ]
   },
   "upgrade": {
+   "kind": "jingle",
+   "use": "装备升级",
    "file": "sfx/upgrade.mp3",
-   "group": "hq",
-   "use": "购买装备升级",
-   "duration": 1.17,
    "loop": false,
    "volume": 1.0,
+   "duration": 1.19,
+   "bytes": 10075,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "purchase": {
+   "kind": "sfx",
+   "use": "福利社买东西",
+   "file": "sfx/purchase.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.83,
+   "bytes": 7149,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "equip": {
+   "kind": "sfx",
+   "use": "换上衣服/帽子",
+   "file": "sfx/equip.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.25,
+   "bytes": 2551,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "gift_open": {
+   "kind": "sfx",
+   "use": "拆礼物/领奖励",
+   "file": "sfx/gift_open.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.96,
+   "bytes": 8194,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "letter_open": {
+   "kind": "sfx",
+   "use": "拆信",
+   "file": "sfx/letter_open.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.32,
+   "bytes": 3178,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "gust": {
+   "kind": "sfx",
+   "use": "一阵风",
+   "file": "sfx/gust.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 2.25,
+   "bytes": 18643,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "thunder": {
+   "kind": "sfx",
+   "use": "远处的雷",
+   "file": "sfx/thunder.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 3.44,
+   "bytes": 28047,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "gull": {
+   "kind": "sfx",
+   "use": "海鸥叫",
+   "file": "sfx/gull.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 1.56,
+   "bytes": 13000,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "firecracker": {
+   "kind": "sfx",
+   "use": "鞭炮",
+   "file": "sfx/firecracker.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 2.12,
+   "bytes": 17598,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "ice_crack": {
+   "kind": "sfx",
+   "use": "冰面裂开",
+   "file": "sfx/ice_crack.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.69,
+   "bytes": 6104,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "leaf_rustle": {
+   "kind": "sfx",
+   "use": "落叶沙沙",
+   "file": "sfx/leaf_rustle.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 1.15,
    "bytes": 9866,
    "credits": [
     {
-     "source": "代码合成 · tools/synth.py",
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "driver_call": {
+   "kind": "voice",
+   "use": "司机喊一声",
+   "file": "sfx/driver_call.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.61,
+   "bytes": 5477,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "driver_cheer": {
+   "kind": "voice",
+   "use": "司机高兴",
+   "file": "sfx/driver_cheer.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.57,
+   "bytes": 5059,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "driver_grumble": {
+   "kind": "voice",
+   "use": "司机嘟囔",
+   "file": "sfx/driver_grumble.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.6,
+   "bytes": 5268,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "hamster_hi": {
+   "kind": "voice",
+   "use": "仓鼠问好",
+   "file": "sfx/hamster_hi.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.2,
+   "bytes": 2133,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "hamster_thanks": {
+   "kind": "voice",
+   "use": "仓鼠谢谢",
+   "file": "sfx/hamster_thanks.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.29,
+   "bytes": 2969,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "hamster_hmm": {
+   "kind": "voice",
+   "use": "仓鼠发愁",
+   "file": "sfx/hamster_hmm.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "duration": 0.43,
+   "bytes": 4014,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_soft_1": {
+   "kind": "voice",
+   "use": "居民说话的音节（soft，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_soft_1.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.15,
+   "bytes": 1715,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_soft_2": {
+   "kind": "voice",
+   "use": "居民说话的音节（soft，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_soft_2.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.15,
+   "bytes": 1715,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_soft_3": {
+   "kind": "voice",
+   "use": "居民说话的音节（soft，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_soft_3.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.13,
+   "bytes": 1506,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_soft_4": {
+   "kind": "voice",
+   "use": "居民说话的音节（soft，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_soft_4.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.15,
+   "bytes": 1715,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_soft_5": {
+   "kind": "voice",
+   "use": "居民说话的音节（soft，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_soft_5.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.13,
+   "bytes": 1506,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_beak_1": {
+   "kind": "voice",
+   "use": "居民说话的音节（beak，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_beak_1.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.15,
+   "bytes": 1715,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_beak_2": {
+   "kind": "voice",
+   "use": "居民说话的音节（beak，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_beak_2.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.13,
+   "bytes": 1506,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_beak_3": {
+   "kind": "voice",
+   "use": "居民说话的音节（beak，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_beak_3.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.15,
+   "bytes": 1715,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_beak_4": {
+   "kind": "voice",
+   "use": "居民说话的音节（beak，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_beak_4.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.15,
+   "bytes": 1715,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_bleat_1": {
+   "kind": "voice",
+   "use": "居民说话的音节（bleat，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_bleat_1.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.13,
+   "bytes": 1506,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_bleat_2": {
+   "kind": "voice",
+   "use": "居民说话的音节（bleat，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_bleat_2.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.15,
+   "bytes": 1715,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_bleat_3": {
+   "kind": "voice",
+   "use": "居民说话的音节（bleat，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_bleat_3.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.13,
+   "bytes": 1506,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_click_1": {
+   "kind": "voice",
+   "use": "居民说话的音节（click，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_click_1.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.09,
+   "bytes": 1297,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_click_2": {
+   "kind": "voice",
+   "use": "居民说话的音节（click，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_click_2.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.09,
+   "bytes": 1297,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "syl_click_3": {
+   "kind": "voice",
+   "use": "居民说话的音节（click，game/sound.ts 按物种调音高）",
+   "file": "sfx/syl_click_3.mp3",
+   "loop": false,
+   "volume": 1.0,
+   "gap": 0,
+   "voices": 6,
+   "duration": 0.09,
+   "bytes": 1297,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
      "author": "本项目原创",
      "url": "",
      "license": "原创，无限制"
@@ -942,13 +1977,17 @@
    ]
   },
   "amb_river": {
+   "kind": "amb",
+   "use": "河水（每天全程）",
    "file": "amb/amb_river.mp3",
-   "group": "amb",
-   "use": "河流流水环境声（全程循环，低音量）",
-   "duration": 16.0,
    "loop": true,
-   "volume": 0.5,
-   "bytes": 96462,
+   "volume": 0.9,
+   "loopAt": [
+    0.3,
+    16.3
+   ],
+   "duration": 16.6,
+   "bytes": 83565,
    "credits": [
     {
      "source": "Freesound · Stream, Running Water | Aviemore Scotland",
@@ -959,13 +1998,17 @@
    ]
   },
   "amb_frogs": {
+   "kind": "amb",
+   "use": "远处蛙鸣（夏天、主页夜里）",
    "file": "amb/amb_frogs.mp3",
-   "group": "amb",
-   "use": "远处蛙鸣（可选，叠在河流上，偶尔播放）",
-   "duration": 10.0,
    "loop": true,
-   "volume": 0.4,
-   "bytes": 60413,
+   "volume": 1.0,
+   "loopAt": [
+    0.3,
+    10.3
+   ],
+   "duration": 10.6,
+   "bytes": 53505,
    "credits": [
     {
      "source": "Freesound · Croaking Frogs",
@@ -975,59 +2018,515 @@
     }
    ]
   },
-  "bgm_title": {
-   "file": "bgm/bgm_title.mp3",
-   "group": "bgm",
-   "use": "标题/菜单",
-   "duration": 71.88,
+  "amb_birds": {
+   "kind": "amb",
+   "use": "春天的鸟叫（第 1 章、主页白天）",
+   "file": "amb/amb_birds.mp3",
    "loop": true,
-   "volume": 0.6,
-   "bytes": 575573,
+   "volume": 1.0,
+   "loopAt": [
+    0.3,
+    12.3
+   ],
+   "duration": 12.6,
+   "bytes": 63405,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "amb_cicadas": {
+   "kind": "amb",
+   "use": "夏天的蝉和蜻蜓（第 2 章）",
+   "file": "amb/amb_cicadas.mp3",
+   "loop": true,
+   "volume": 1.0,
+   "loopAt": [
+    0.3,
+    10.3
+   ],
+   "duration": 10.6,
+   "bytes": 53505,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "amb_rain": {
+   "kind": "amb",
+   "use": "雨（第 3 章；暴雨夜带雷）",
+   "file": "amb/amb_rain.mp3",
+   "loop": true,
+   "volume": 1.0,
+   "loopAt": [
+    0.3,
+    10.3
+   ],
+   "spots": {
+    "ids": [
+     "thunder"
+    ],
+    "every": [
+     16,
+     34
+    ],
+    "volume": 0.8
+   },
+   "duration": 10.6,
+   "bytes": 53505,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "amb_wind": {
+   "kind": "amb",
+   "use": "秋风和落叶（第 4 章）",
+   "file": "amb/amb_wind.mp3",
+   "loop": true,
+   "volume": 1.0,
+   "loopAt": [
+    0.3,
+    12.3
+   ],
+   "spots": {
+    "ids": [
+     "gust",
+     "leaf_rustle"
+    ],
+    "every": [
+     7,
+     15
+    ]
+   },
+   "duration": 12.6,
+   "bytes": 63405,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "amb_winter": {
+   "kind": "amb",
+   "use": "冬天的冷风和冰（第 5 章）",
+   "file": "amb/amb_winter.mp3",
+   "loop": true,
+   "volume": 1.0,
+   "loopAt": [
+    0.3,
+    12.3
+   ],
+   "spots": {
+    "ids": [
+     "ice_crack",
+     "gust"
+    ],
+    "every": [
+     9,
+     18
+    ]
+   },
+   "duration": 12.6,
+   "bytes": 63405,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "amb_harbor": {
+   "kind": "amb",
+   "use": "港口的海浪和海鸥（第 6 章）",
+   "file": "amb/amb_harbor.mp3",
+   "loop": true,
+   "volume": 1.0,
+   "loopAt": [
+    0.3,
+    12.3
+   ],
+   "spots": {
+    "ids": [
+     "gull"
+    ],
+    "every": [
+     6,
+     14
+    ],
+    "volume": 0.8
+   },
+   "duration": 12.6,
+   "bytes": 63405,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "amb_crickets": {
+   "kind": "amb",
+   "use": "夜里的蟋蟀（夜路、主页夜里）",
+   "file": "amb/amb_crickets.mp3",
+   "loop": true,
+   "volume": 1.0,
+   "loopAt": [
+    0.3,
+    10.3
+   ],
+   "duration": 10.6,
+   "bytes": 53505,
+   "credits": [
+    {
+     "source": "代码合成 · tools/audio",
+     "author": "本项目原创",
+     "url": "",
+     "license": "原创，无限制"
+    }
+   ]
+  },
+  "amb_storm": {
+   "kind": "amb",
+   "use": "暴雨（第 15 天）：雨更大、雷更密",
+   "file": "amb/amb_rain.mp3",
+   "of": "amb_rain",
+   "loop": true,
+   "volume": 1.3,
+   "spots": {
+    "ids": [
+     "thunder"
+    ],
+    "every": [
+     7,
+     15
+    ]
+   }
+  },
+  "amb_blizzard": {
+   "kind": "amb",
+   "use": "暴风雪（第 25 天）：风更急",
+   "file": "amb/amb_winter.mp3",
+   "of": "amb_winter",
+   "loop": true,
+   "volume": 1.3,
+   "rate": 1.15,
+   "spots": {
+    "ids": [
+     "gust",
+     "ice_crack"
+    ],
+    "every": [
+     4,
+     9
+    ]
+   }
+  },
+  "amb_newyear": {
+   "kind": "amb",
+   "use": "年末烟花夜（第 30 天）：远处的鞭炮",
+   "file": "amb/amb_harbor.mp3",
+   "of": "amb_harbor",
+   "loop": true,
+   "volume": 0.8,
+   "spots": {
+    "ids": [
+     "firecracker",
+     "gull"
+    ],
+    "every": [
+     3,
+     8
+    ],
+    "volume": 0.7
+   }
+  },
+  "bgm_title": {
+   "kind": "music",
+   "use": "主页、路线图",
+   "file": "bgm/bgm_title.mp3",
+   "loop": true,
+   "volume": 0.8,
+   "loopAt": [
+    0.3,
+    45.1598
+   ],
+   "duration": 45.46,
+   "bytes": 227745,
    "credits": [
     {
      "source": "OpenGameArt · Gone Fishin' / Beary Fishy Menu Screen / The Reel Winner",
      "author": "Memoraphile @ You're Perfect Studio",
      "url": "https://opengameart.org/content/gone-fishin",
-     "license": "CC0 1.0",
-     "file": "beary_fishy_menu_screen_by_memoraphile_CC0.mp3"
+     "license": "CC0 1.0"
     }
    ]
   },
   "bgm_work": {
+   "kind": "music",
+   "use": "第 1 章 春 · 柳湾",
    "file": "bgm/bgm_work.mp3",
-   "group": "bgm",
-   "use": "白天配送（主玩法）",
-   "duration": 107.71,
    "loop": true,
-   "volume": 0.55,
-   "bytes": 862293,
+   "volume": 0.8,
+   "loopAt": [
+    0.3,
+    54.1603
+   ],
+   "duration": 54.46,
+   "bytes": 272745,
    "credits": [
     {
      "source": "OpenGameArt · Gone Fishin' / Beary Fishy Menu Screen / The Reel Winner",
      "author": "Memoraphile @ You're Perfect Studio",
      "url": "https://opengameart.org/content/gone-fishin",
-     "license": "CC0 1.0",
-     "file": "gone_fishin_by_memoraphile_CC0_0.mp3"
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "bgm_summer": {
+   "kind": "music",
+   "use": "第 2 章 初夏 · 荷花塘",
+   "file": "bgm/bgm_summer.mp3",
+   "loop": true,
+   "volume": 0.72,
+   "loopAt": [
+    0.3,
+    45.676
+   ],
+   "duration": 45.98,
+   "bytes": 230445,
+   "credits": [
+    {
+     "source": "OpenGameArt · Happy Vibes",
+     "author": "Ruskerdax",
+     "url": "https://opengameart.org/content/happy-vibes",
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "bgm_rain": {
+   "kind": "music",
+   "use": "第 3 章 雨季 · 急流峡",
+   "file": "bgm/bgm_rain.mp3",
+   "loop": true,
+   "volume": 0.8,
+   "loopAt": [
+    0.3,
+    86.172
+   ],
+   "duration": 86.47,
+   "bytes": 432765,
+   "credits": [
+    {
+     "source": "OpenGameArt · Down the River",
+     "author": "Komiku (Loyalty Freak Music)",
+     "url": "https://opengameart.org/content/down-the-river",
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "bgm_autumn": {
+   "kind": "music",
+   "use": "第 4 章 秋 · 枫叶溪",
+   "file": "bgm/bgm_autumn.mp3",
+   "loop": true,
+   "volume": 0.75,
+   "loopAt": [
+    0.3,
+    69.7169
+   ],
+   "duration": 70.02,
+   "bytes": 350505,
+   "credits": [
+    {
+     "source": "OpenGameArt · Jazz Aug 15 <> Ionion",
+     "author": "pro-sensory",
+     "url": "https://opengameart.org/content/jazz-aug-15-ionion",
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "bgm_winter": {
+   "kind": "music",
+   "use": "第 5 章 冬 · 冰河",
+   "file": "bgm/bgm_winter.mp3",
+   "loop": true,
+   "volume": 0.8,
+   "loopAt": [
+    0.3,
+    68.8714
+   ],
+   "duration": 69.17,
+   "bytes": 346365,
+   "credits": [
+    {
+     "source": "OpenGameArt · 4 Music Box Tracks",
+     "author": "AureolusOmicron",
+     "url": "https://opengameart.org/content/4-music-box-tracks",
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "bgm_harbor": {
+   "kind": "music",
+   "use": "第 6 章 年末 · 港口集市",
+   "file": "bgm/bgm_harbor.mp3",
+   "loop": true,
+   "volume": 0.8,
+   "loopAt": [
+    0.3,
+    64.2999
+   ],
+   "duration": 64.6,
+   "bytes": 323505,
+   "credits": [
+    {
+     "source": "OpenGameArt · Children's March Theme",
+     "author": "Cleyton Kauffman",
+     "url": "https://opengameart.org/content/childrens-march-theme",
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "bgm_spring": {
+   "kind": "music",
+   "use": "第 7 章 早春 · 环河联运",
+   "file": "bgm/bgm_spring.mp3",
+   "loop": true,
+   "volume": 0.8,
+   "loopAt": [
+    0.3,
+    52.1919
+   ],
+   "duration": 52.49,
+   "bytes": 263025,
+   "credits": [
+    {
+     "source": "OpenGameArt · Good Morning",
+     "author": "Cakeflaps @ You're Perfect Studio",
+     "url": "https://opengameart.org/content/good-morning",
+     "license": "CC0 1.0"
     }
    ]
   },
   "bgm_hq": {
+   "kind": "music",
+   "use": "总部、大厅",
    "file": "bgm/bgm_hq.mp3",
-   "group": "bgm",
-   "use": "总部结算",
-   "duration": 124.44,
    "loop": true,
-   "volume": 0.55,
-   "bytes": 996040,
+   "volume": 0.72,
+   "loopAt": [
+    0.3,
+    124.7443
+   ],
+   "duration": 125.04,
+   "bytes": 625725,
    "credits": [
     {
      "source": "OpenGameArt · Cozy Puzzle In-Game 3",
      "author": "mintodog",
      "url": "https://opengameart.org/content/cozy-puzzle-in-game-3",
-     "license": "CC0 1.0",
-     "file": "cozy_puzzle_in-game_3_bpm108.mp3"
+     "license": "CC0 1.0"
     }
    ]
+  },
+  "bgm_shop": {
+   "kind": "music",
+   "use": "福利社",
+   "file": "bgm/bgm_shop.mp3",
+   "loop": true,
+   "volume": 0.7,
+   "loopAt": [
+    0.3,
+    43.1582
+   ],
+   "duration": 43.46,
+   "bytes": 217845,
+   "credits": [
+    {
+     "source": "OpenGameArt · 4 Music Box Tracks",
+     "author": "AureolusOmicron",
+     "url": "https://opengameart.org/content/4-music-box-tracks",
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "bgm_home": {
+   "kind": "music",
+   "use": "小呱的家",
+   "file": "bgm/bgm_home.mp3",
+   "loop": true,
+   "volume": 0.72,
+   "loopAt": [
+    0.3,
+    73.0274
+   ],
+   "duration": 73.33,
+   "bytes": 367065,
+   "credits": [
+    {
+     "source": "OpenGameArt · Happy Ukelele Island Surfing Theme",
+     "author": "Tarush Singhal",
+     "url": "https://opengameart.org/content/happy-ukelele-island-surfing-theme",
+     "license": "CC0 1.0"
+    }
+   ]
+  },
+  "bgm_hq_low": {
+   "kind": "music",
+   "use": "没过关时的总部：同一首，更轻更闷",
+   "file": "bgm/bgm_hq.mp3",
+   "of": "bgm_hq",
+   "loop": true,
+   "volume": 0.5,
+   "lowpass": 1600
+  },
+  "bgm_storm": {
+   "kind": "music",
+   "use": "暴雨夜班（第 15 天）：闷一点、慢一点",
+   "file": "bgm/bgm_rain.mp3",
+   "of": "bgm_rain",
+   "loop": true,
+   "volume": 0.75,
+   "rate": 0.94,
+   "lowpass": 2200
+  },
+  "bgm_blizzard": {
+   "kind": "music",
+   "use": "暴风雪（第 25 天）：闷一点、慢一点",
+   "file": "bgm/bgm_winter.mp3",
+   "of": "bgm_winter",
+   "loop": true,
+   "volume": 0.75,
+   "rate": 0.94,
+   "lowpass": 2400
+  },
+  "bgm_ending": {
+   "kind": "music",
+   "use": "第 30 天之后的结局：主题曲从头再来",
+   "file": "bgm/bgm_title.mp3",
+   "of": "bgm_title",
+   "loop": true,
+   "volume": 0.9
   }
  }
 }

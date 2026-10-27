@@ -1,5 +1,10 @@
-// Canvas helpers for the paper-page UI described in the art bible.
+// Canvas helpers for the paper-page UI described in the art bible. The kit (src/art/kit) adds the
+// signage, labels, icons and medals that go with them.
 import type { Ctx } from '../platform/types';
+import { faded, shade, tint } from './kit/color';
+import { icon, type IconName } from './kit/icons';
+import { wobbleRect } from './kit/ink';
+import { grainFill } from './kit/paper';
 import { INK, P } from './palette';
 
 const FALLBACK = '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
@@ -37,24 +42,44 @@ export function roundRect(ctx: Ctx, x: number, y: number, w: number, h: number, 
   ctx.closePath();
 }
 
+export interface PanelOpts {
+  r?: number;
+  fill?: string;
+  /** Colour of the stitched inner line, or false for none. */
+  stitch?: string | false;
+  shadow?: boolean;
+  lw?: number;
+  /** Paper grain over the fill: true for the usual strength, or its alpha. */
+  grain?: boolean | number;
+  /** A strip of washi tape over the top edge: true, or its colour. */
+  tape?: boolean | string;
+  /** Hand-drawn edges that wobble a little (the same wobble every frame for the same size). */
+  wobble?: boolean;
+}
+
 /** Paper panel: cream page, ink outline, stitched kraft inner line, soft drop shadow. */
-export function panel(ctx: Ctx, x: number, y: number, w: number, h: number, o: { r?: number; fill?: string; stitch?: string; shadow?: boolean; lw?: number } = {}) {
+export function panel(ctx: Ctx, x: number, y: number, w: number, h: number, o: PanelOpts = {}) {
   const r = o.r ?? 14;
+  const shape = o.wobble ? () => wobbleRect(ctx, x, y, w, h, r, Math.round(w * 3 + h * 7), 0.8) : () => roundRect(ctx, x, y, w, h, r);
   if (o.shadow !== false) {
+    ctx.save();
+    ctx.translate(3, 5);
+    shape();
     ctx.fillStyle = P.paperShade;
-    ctx.globalAlpha = 0.85;
-    roundRect(ctx, x + 3, y + 5, w, h, r);
+    ctx.globalAlpha *= 0.85;
     ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.restore();
   }
-  roundRect(ctx, x, y, w, h, r);
+  shape();
   ctx.fillStyle = o.fill || P.paper;
   ctx.fill();
+  if (o.grain) grainFill(ctx, o.grain === true ? 0.4 : o.grain);
   ctx.lineWidth = o.lw ?? 2.2;
   ctx.strokeStyle = INK;
+  ctx.lineJoin = 'round';
   ctx.stroke();
   const inset = Math.min(8, h / 6);
-  if (inset > 3) {
+  if (inset > 3 && o.stitch !== false) {
     roundRect(ctx, x + inset, y + inset, w - inset * 2, h - inset * 2, Math.max(3, r - inset));
     ctx.setLineDash([7, 5]);
     ctx.lineWidth = 1.5;
@@ -62,6 +87,29 @@ export function panel(ctx: Ctx, x: number, y: number, w: number, h: number, o: {
     ctx.stroke();
     ctx.setLineDash([]);
   }
+  if (o.tape) tape(ctx, x + w / 2, y + 1, Math.min(150, w * 0.36), typeof o.tape === 'string' ? o.tape : undefined);
+}
+
+/** A strip of washi tape centred on (x, y), with torn zigzag ends. */
+export function tape(ctx: Ctx, x: number, y: number, w: number, color = 'rgba(232,183,74,0.6)', rot = -0.035) {
+  const h = 28;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.beginPath();
+  ctx.moveTo(-w / 2, -h / 2);
+  ctx.lineTo(w / 2, -h / 2);
+  for (let i = 1; i <= 6; i++) ctx.lineTo(w / 2 + (i % 2 ? 4 : 0), -h / 2 + (i * h) / 6);
+  ctx.lineTo(-w / 2, h / 2);
+  for (let i = 1; i <= 6; i++) ctx.lineTo(-w / 2 - (i % 2 ? 4 : 0), h / 2 - (i * h) / 6);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  // a faint printed pattern on the tape
+  ctx.clip();
+  ctx.fillStyle = 'rgba(255,250,238,0.35)';
+  for (let i = -w / 2 + 6; i < w / 2; i += 14) ctx.fillRect(i, -h / 2, 5, h);
+  ctx.restore();
 }
 
 /**
@@ -86,28 +134,66 @@ export function pressOut(ctx: Ctx, pressed: boolean | undefined, shape: () => vo
   ctx.restore();
 }
 
-/** Pill button with stitched edge. */
-export function button(ctx: Ctx, x: number, y: number, w: number, h: number, label: string, o: { primary?: boolean; pressed?: boolean; size?: number; disabled?: boolean } = {}) {
+export type ButtonKind = 'primary' | 'secondary' | 'ghost';
+
+/** Colours of each kind of button: face, the lip under it, the stitching and the label. */
+const BUTTON: Record<ButtonKind, { fill: string; lip: string; stitch: string; label: string }> = {
+  primary: { fill: P.orange, lip: P.orangeDeep, stitch: '#F5B48E', label: P.white },
+  secondary: { fill: P.kraft, lip: '#B8925F', stitch: P.kraftTop, label: INK },
+  ghost: { fill: P.paper, lip: P.paperShade, stitch: P.kraft, label: INK },
+};
+
+/**
+ * Pill button with a stitched edge: primary (orange), secondary (kraft, the default) or ghost (paper).
+ * A disabled button turns grey rather than see-through; `icon` puts a pictogram before the label.
+ */
+export function button(
+  ctx: Ctx, x: number, y: number, w: number, h: number, label: string,
+  o: { primary?: boolean; kind?: ButtonKind; pressed?: boolean; size?: number; disabled?: boolean; icon?: IconName } = {},
+) {
+  const kind = o.kind ?? (o.primary ? 'primary' : 'secondary');
+  const look = BUTTON[kind];
+  const fill = o.disabled ? faded(look.fill, 0.75) : look.fill;
   pressIn(ctx, { x, y, w, h }, o.pressed);
   ctx.save();
-  if (o.disabled) ctx.globalAlpha = 0.45;
   const dy = o.pressed ? 3 : 0;
-  ctx.fillStyle = o.primary ? P.orangeDeep : '#B8925F';
+  ctx.fillStyle = o.disabled ? faded(look.lip, 0.75) : look.lip;
   roundRect(ctx, x, y + 5, w, h, h / 2);
   ctx.fill();
   roundRect(ctx, x, y + dy, w, h, h / 2);
-  ctx.fillStyle = o.primary ? P.orange : P.kraft;
+  ctx.fillStyle = fill;
   ctx.fill();
+  // the light catches the upper half, and the face has a little paper tooth
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = tint(fill, 0.28);
+  ctx.globalAlpha *= 0.5;
+  roundRect(ctx, x + h * 0.2, y + dy + 4, w - h * 0.4, h * 0.36, h * 0.18);
+  ctx.fill();
+  ctx.globalAlpha /= 0.5;
+  roundRect(ctx, x, y + dy, w, h, h / 2);
+  grainFill(ctx, 0.3);
+  ctx.restore();
+  roundRect(ctx, x, y + dy, w, h, h / 2);
   ctx.lineWidth = 2.2;
   ctx.strokeStyle = INK;
   ctx.stroke();
   roundRect(ctx, x + 8, y + dy + 7, w - 16, h - 14, (h - 14) / 2);
   ctx.setLineDash([6, 5]);
   ctx.lineWidth = 1.5;
-  ctx.strokeStyle = o.primary ? '#F5B48E' : P.kraftTop;
+  ctx.strokeStyle = o.disabled ? shade(fill, 0.12) : look.stitch;
   ctx.stroke();
   ctx.setLineDash([]);
-  text(ctx, label, x + w / 2, y + dy + h / 2 + 1, o.size || 30, { color: o.primary ? P.white : INK, bold: true, maxWidth: w - 30 });
+  const size = o.size || 30;
+  const color = o.disabled ? P.inkSoft : look.label;
+  if (o.icon) {
+    const is = Math.min(h * 0.56, size * 1.5);
+    ctx.font = font(size, true);
+    const tw = Math.min(ctx.measureText(label).width, w - is - 46);
+    const left = x + w / 2 - (is + 8 + tw) / 2;
+    icon(ctx, o.icon, left + is / 2, y + dy + h / 2, is, { faded: o.disabled });
+    text(ctx, label, left + is + 8 + tw / 2, y + dy + h / 2 + 1, size, { color, bold: true, maxWidth: w - is - 46 });
+  } else text(ctx, label, x + w / 2, y + dy + h / 2 + 1, size, { color, bold: true, maxWidth: w - 30 });
   ctx.restore();
   pressOut(ctx, o.pressed, () => roundRect(ctx, x, y + dy, w, h, h / 2));
 }
@@ -187,9 +273,13 @@ export function richWidth(ctx: Ctx, line: Seg[], size: number, bold = false) {
   return w;
 }
 
-/** Draws one line of segments centered on x (or starting at x with `left`). */
-export function rich(ctx: Ctx, line: Seg[], x: number, y: number, size: number, o: { color?: string; hl?: string; bold?: boolean; left?: boolean } = {}) {
+/** Draws one line of segments centered on x (or starting at x with `left`), smaller if it's wider than `maxWidth`. */
+export function rich(ctx: Ctx, line: Seg[], x: number, y: number, size: number, o: { color?: string; hl?: string; bold?: boolean; left?: boolean; maxWidth?: number } = {}) {
   const bold = !!o.bold;
+  if (o.maxWidth) {
+    const w = richWidth(ctx, line, size, bold);
+    if (w > o.maxWidth) size = Math.max(12, Math.floor((size * o.maxWidth) / w));
+  }
   ctx.save();
   let cx = o.left ? x : x - richWidth(ctx, line, size, bold) / 2;
   ctx.textAlign = 'left';
@@ -216,18 +306,25 @@ export function rich(ctx: Ctx, line: Seg[], x: number, y: number, size: number, 
   ctx.restore();
 }
 
-/** Breaks a sentence into lines no wider than maxWidth (character by character, as Chinese allows). */
+/**
+ * The pieces a line of text may be broken between: one Chinese character each, but a number or a latin
+ * word stays whole, an opening bracket or quote sticks to what follows it, and closing punctuation to
+ * what comes before it (so no line starts with '。' or ends with '“').
+ */
+const BREAKS = /[（“‘《「【(¥$+−]*(?:[0-9A-Za-z]+(?:[.:,/'-][0-9A-Za-z]+)*%?|—+|…+|[\s\S])[，。！？、；：…）”’》」】,.!?;:)]*/gu;
+export const breakPieces = (s: string) => s.match(BREAKS) ?? [];
+
+/** Breaks a sentence into lines no wider than maxWidth, between the pieces above. */
 export function wrapText(ctx: Ctx, s: string, size: number, maxWidth: number, bold = false): string[] {
   ctx.save();
   ctx.font = font(size, bold);
   const out: string[] = [];
   let cur = '';
-  for (const ch of s) {
-    // keep closing punctuation on the line it belongs to
-    if (cur && ctx.measureText(cur + ch).width > maxWidth && !'，。！？、…）”'.includes(ch)) {
-      out.push(cur);
-      cur = ch;
-    } else cur += ch;
+  for (const p of breakPieces(s)) {
+    if (cur && ctx.measureText(cur + p).width > maxWidth) {
+      out.push(cur.trimEnd());
+      cur = p.trimStart();
+    } else cur += p;
   }
   if (cur) out.push(cur);
   ctx.restore();

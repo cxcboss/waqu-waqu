@@ -1,7 +1,7 @@
 // Keeps everything the game has downloaded on the device, so a second visit (or a flaky connection) doesn't
 // have to fetch it again. Stale-while-revalidate: answer from the cache at once, refresh it in the background.
 // A new deploy therefore shows up on the visit after the one that noticed it.
-const CACHE = 'waqu-v1';
+const CACHE = 'waqu-v2';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {
