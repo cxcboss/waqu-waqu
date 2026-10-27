@@ -1,7 +1,7 @@
 // The frog's working life outside a single day: career totals, the work log, river news, the money
 // book, ranks and achievements. Everything here is worked out from finished days and kept in the save.
 import { GEAR, STARTER_ITEMS, gearMax, item, type GearId } from './catalog';
-import { DAYS, YEAR_END } from './config';
+import { DAYS, YEAR_END, dayLabel } from './config';
 import type { SaveData } from './game';
 import type { DayResult } from './hq';
 import { letterId, letterText } from './lines';
@@ -182,7 +182,7 @@ export function upgradeSave(raw: unknown): SaveData {
   // letters are kept by id; older saves kept their words, and anything that isn't a letter goes
   s.letters = [...new Set(list(o.letters).filter(isStr).map(letterId).filter((id): id is string => !!id))];
   const seen = isObj(o.seen) ? o.seen : {};
-  s.seen = { notes: int(seen.notes, 0), letters: int(seen.letters, 0), ach: int(seen.ach, 0), map: 1 };
+  s.seen = { notes: int(seen.notes, 0), letters: int(seen.letters, 0), story: 0, ach: int(seen.ach, 0), map: 1 };
   // note and photo ids come from this counter: never hand out one that's already taken
   const used = [...s.notes.map((n) => n.id), ...s.album.map((a) => Number(a.id.replace(/^p/, '')) || 0)];
   s.seq = Math.max(int(o.seq, 0), ...used, 0);
@@ -202,6 +202,7 @@ export function upgradeSave(raw: unknown): SaveData {
   const days = (v: unknown, max: number) => [...new Set(list(v).filter((d): d is number => isNum(d) && Number.isInteger(d) && d >= 1 && d <= max))].sort((a, b) => a - b);
   s.skipped = days(o.skipped, DAYS.length).filter((d) => !s.stamps[d]?.[0]);
   s.story = days(o.story, YEAR_END);
+  s.seen.story = int(seen.story, 0, 0, s.story.length);
   s.secret = int(o.secret, 0, 0, 2);
   if (s.story.length >= YEAR_END && !s.secret) s.secret = 1;
   // (a save that got past the year's end before there was an ending sees it after its next day at HQ)
@@ -324,6 +325,9 @@ export function addEntry(s: SaveData, text: string, amount: number, now = Date.n
 
 export const unreadNotes = (s: SaveData) => s.notes.filter((n) => n.id > s.seen.notes).length;
 
+/** Letters in the mailbox not read yet: lost ones from the road, or the old turtle's from the river. */
+export const newMail = (s: SaveData) => s.letters.length > s.seen.letters || s.story.length > s.seen.story;
+
 /** Coins for each stamp earned for the first time. */
 export const FIRST_STAMP_COINS = 10;
 
@@ -373,14 +377,22 @@ export function recordDay(
       e.n++;
     }
     if (ex.letter && letterText(ex.letter) && !s.letters.includes(ex.letter)) s.letters.push(ex.letter);
+    if (ex.story && !s.story.includes(ex.story)) {
+      s.story = [...s.story, ex.story].sort((a, b) => a - b);
+      addNote(s, 'letter', `在河上捡到乌龟爷爷写给阿灰的第 ${ex.story} 封信，放进了家里的信箱。`, r.day, now);
+      if (s.story.length >= YEAR_END && !s.secret) {
+        s.secret = 1;
+        addNote(s, 'letter', '乌龟爷爷的三十封信都找齐了。最后一封说，请把第一封信送到上游——第0号快递开放了，去信箱看看。', r.day, now);
+      }
+    }
   }
 
   const stampCoins = o.fresh.filter(Boolean).length * FIRST_STAMP_COINS;
   const total = o.income + stampCoins + o.rankCoins;
   if (total > 0) k.earned += total;
   s.coins = Math.max(0, s.coins + total);
-  const name = DAYS[r.day - 1]?.name ?? '';
-  addEntry(s, `第${r.day}天工资${name ? ` · ${name}` : ''}`, o.income + o.rankCoins, now);
+  const name = r.day ? DAYS[r.day - 1]?.name ?? '' : '';
+  addEntry(s, `${dayLabel(r.day)}${r.day ? '工资' : ''}${name ? ` · ${name}` : ''}`, o.income + o.rankCoins, now);
   if (stampCoins) addEntry(s, '新好评章奖励', stampCoins, now);
 
   // river news: a couple of parcels opened, a mix-up, a soaked box, the letter
@@ -405,7 +417,7 @@ export function recordDay(
   }
   const names = ['准时下班', '干得漂亮', '今日挑战'];
   const got = o.fresh.map((f, i) => (f ? names[i] : '')).filter(Boolean);
-  if (got.length) addNote(s, 'stamp', `第${r.day}天拿到新的好评章：${got.join('、')}。`, r.day, now);
+  if (got.length) addNote(s, 'stamp', `${dayLabel(r.day)}拿到新的好评章：${got.join('、')}。`, r.day, now);
   const rankUp = after > before ? RANKS[after] : null;
   if (rankUp) addNote(s, 'rank', `升职啦！现在是「${rankUp.name}」${rankUp.perk ? `，${rankUp.perk}` : ''}。`, r.day, now);
 

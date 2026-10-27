@@ -9,7 +9,7 @@ import { button, ellipse, panel, pressIn, pressOut, roundRect, text } from '../a
 import { bush, fence, flowerClump, hue, lampPost, leaves, lilyHouse, lilyPad, pine, postOffice, reeds, rock, roundTree, shopStall, signpost, van, vanWheel } from '../art/village';
 import { clamp, easeOutCubic, lerp } from '../engine/math';
 import type { Ctx } from '../platform/types';
-import { ACHIEVEMENTS, RANKS, daysWorked, firstDay, rankIndex, stampCount, stampsPossible, unreadNotes } from './career';
+import { ACHIEVEMENTS, RANKS, daysWorked, firstDay, newMail, rankIndex, stampCount, stampsPossible, unreadNotes } from './career';
 import { GEAR, gearDef, gearMax, ITEMS, priceOf } from './catalog';
 import { DAYS } from './config';
 import type { Game, Scene } from './game';
@@ -449,7 +449,7 @@ export class HubScene implements Scene {
 
     const unread = unreadNotes(s) > 0;
     const shopNew = this.affordable();
-    const homeNew = s.letters.length > s.seen.letters;
+    const homeNew = newMail(s);
     this.smoke(ctx, L.hq.x - 104 * sc, L.hq.y - 306 * sc, 0.8);
     this.place(ctx, 'hq', 'hub_hq', L.hq.x, L.hq.y, '河湾总部', '送单 · 日志 · 相册', unread, sc);
     this.place(ctx, 'shop', 'hub_shop', L.shop.x, L.shop.y, '福利社', '装备 · 衣帽 · 家居', shopNew, sc);

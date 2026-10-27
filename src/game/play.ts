@@ -10,7 +10,7 @@ import { RESIDENT } from './cast';
 import { MAX_SLOTS, gearEffects, type GearEffects } from './catalog';
 import { CHAPTERS, DAYS, FEAT_INFO, SIZE_INFO, TUNING, chapterOf, type Feat } from './config';
 import type { Game, Scene } from './game';
-import { HqScene, type DayResult, type Photo } from './hq';
+import { HqScene, type DayFeats, type DayResult, type Photo } from './hq';
 import { buildLevel, dayConfig, edgeOut, isBox, isPad, shapeN, toLocal, type House, type Level, type Order, type Plat, type PlatKind } from './level';
 import { FRAGILE_HITS } from './levelfeats';
 import { HURRY_LINES, KICK_LINES, LETTERS, OFFWORK_LINES, dealLine } from './lines';
@@ -450,7 +450,7 @@ export class PlayScene implements Scene {
     game.perf = { frames: 0, slow: 0, time: 0 };
     this.wall = game.platform.now();
     const s = game.save;
-    this.log('run_start', { attempt: tm.count(`day${day}`), unlocked: s.day, best: s.best[day] ?? null, stamps: s.stamps[day] ?? [], gear: { ...s.gear }, bag: this.lv.cfg.bagSlots });
+    this.log('run_start', { attempt: tm.count(`day${day}`), unlocked: s.day, best: s.best[day] ?? null, stamps: s.stamps[day] ?? [], gear: { ...s.gear }, bag: this.lv.cfg.bagSlots, assist: this.assist, fails: s.fails[day] ?? 0 });
   }
 
   /** An event for the play statistics, stamped with the run's clock and how far along the route it happened. */
@@ -481,6 +481,22 @@ export class PlayScene implements Scene {
       real: Math.round((this.game.platform.now() - this.wall) / 1000),
       fps: perf.time > 1 ? Math.round(perf.frames / perf.time) : null, slow: perf.slow,
       state: this.frog.state, on: this.frog.on?.kind ?? null, step: this.step,
+      feats: this.feats(),
+    };
+  }
+
+  /** How the day is going with the chapters' mechanics, for HQ and the run summary. */
+  private feats(): DayFeats {
+    const orders = this.lv.orders;
+    const care = (o: Order) => o.fragile !== undefined || !!o.keep;
+    return {
+      spoiled: orders.filter((o) => o.spoiled && (o.state === 'delivered' || o.state === 'wrong')).length,
+      careful: orders.filter(care).length,
+      careOk: orders.filter((o) => care(o) && o.state === 'delivered' && !o.spoiled).length,
+      returns: orders.filter((o) => o.ret).length,
+      returned: orders.filter((o) => o.ret && o.state === 'delivered').length,
+      ...this.featStats,
+      assist: this.assist,
     };
   }
 
@@ -2142,15 +2158,8 @@ export class PlayScene implements Scene {
       codLoss: this.stats.codLoss,
       bestTrip: this.stats.bestTrip,
       fastUrgent: this.stats.fastUrgent,
-      feats: {
-        spoiled: orders.filter((o) => o.spoiled && (o.state === 'delivered' || o.state === 'wrong')).length,
-        careful: orders.filter((o) => o.fragile !== undefined || o.keep).length,
-        careOk: orders.filter((o) => (o.fragile !== undefined || o.keep) && o.state === 'delivered' && !o.spoiled).length,
-        returns: orders.filter((o) => o.ret).length,
-        returned: orders.filter((o) => o.ret && o.state === 'delivered').length,
-        ...this.featStats,
-        assist: this.assist,
-      },
+      oldLetter: orders.some((o) => o.oldLetter && o.state === 'delivered'),
+      feats: this.feats(),
       extra: {
         jumps: this.stats.jumps, longest: this.extra.far, rescued: this.tally.rescued, letter: this.extra.letter, story: this.extra.story,
         parcels: orders.map((o) => {
@@ -2400,8 +2409,8 @@ export class PlayScene implements Scene {
     this.log('story', { n });
     const f = this.frog;
     this.popups.push({ text: '捡到一封信！', x: f.x, y: f.y - 110, t: 0, color: P.orangeDeep });
-    this.showToast('是老乌龟寄给阿灰的信，回家放进信箱');
-    this.queueShot('letter', '捡到老乌龟的信！', 8, 0.15);
+    this.showToast('是乌龟爷爷寄给阿灰的信，回家放进信箱');
+    this.queueShot('letter', '捡到乌龟爷爷的信！', 8, 0.15);
     const au = this.game.audio;
     au.play('letter_open', { delay: 0.1 });
     au.play('perfect_sparkle', { delay: 0.3, volume: 0.7 });
@@ -2896,6 +2905,14 @@ export class PlayScene implements Scene {
       if (o.urgent && o.deadline && this.runT - o.urgentAt <= (ch.kind === 'urgentFast' ? ch.sec : 20)) this.stats.fastUrgent = true;
       const n = this.lv.orders.filter((x) => x.state === 'delivered').length;
       if (n === 1) this.queueShot('first', '第一单送达！', 4, T + 0.3);
+      if (o.oldLetter) {
+        // 第0号快递: the letter got there
+        this.log('old_letter');
+        this.houseSay(h, '是小龟的字……');
+        this.queueShot('letter0', '阿灰收到了乌龟爷爷的信', 10, T + 0.6);
+        au.play('letter_open', { delay: T + 0.3 });
+        au.play('perfect_sparkle', { delay: T + 0.6, volume: 0.8 });
+      }
       if (o.urgent && !o.late) this.queueShot('urgent', '加急件准时送达！', 5, T + 0.3);
       if (o.cod) this.openCod(o, h, T);
     } else {
@@ -5490,7 +5507,14 @@ export class PlayScene implements Scene {
     const k = h / 124;
     sp.draw(ctx, `avatar_${o.house.species}`, x + w * 0.32, y + 34 * k, 0.86 * k);
     codeTag(ctx, x + w * 0.76, y + 30 * k, o.code, o.house.color, 1.05 * k);
-    sp.draw(ctx, boxSprite(o.size, o.urgent, o.cod), x + w / 2, y + h - 10 * k, (o.size === 0 ? 1.15 : o.size === 1 ? 1 : 0.9) * k);
+    if (o.oldLetter) {
+      // the old letter itself, not a box
+      ctx.save();
+      ctx.translate(x + w / 2, y + h - 24 * k);
+      ctx.scale(k * 1.15, k * 1.15);
+      padLetter(ctx, 0, 0, this.time);
+      ctx.restore();
+    } else sp.draw(ctx, boxSprite(o.size, o.urgent, o.cod), x + w / 2, y + h - 10 * k, (o.size === 0 ? 1.15 : o.size === 1 ? 1 : 0.9) * k);
     // labels stuck on the parcel's lid, below the avatar and inside the card: what's special about it
     let ly = y + 66 * k;
     for (const t of this.cardTags(o, c.where).slice(0, 2)) {
@@ -5538,6 +5562,7 @@ export class PlayScene implements Scene {
   /** The labels on a parcel's card: urgent, its twist (a return, fragile, chilled or hot, chased up), cash on delivery. */
   private cardTags(o: Order, where: Card['where']) {
     const out: { s: string; fill: string; ink?: boolean; bar?: number }[] = [];
+    if (o.oldLetter) out.push({ s: '旧信', fill: P.mustard, ink: true });
     if (o.urgent) out.push({ s: '急', fill: P.red });
     if (o.ret) out.push({ s: where === 'ret' ? '点我收回' : '退货', fill: P.tealDeep });
     if (o.fragile !== undefined) out.push(o.spoiled ? { s: '碎了', fill: P.inkSoft } : { s: o.fragile ? '易碎!' : '易碎', fill: o.fragile ? P.red : P.orangeDeep });

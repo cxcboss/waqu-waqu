@@ -239,6 +239,25 @@ def report(rows):
         tail = ' → '.join(r['ev'] for r in last[-5:])
         say(f"  第{v[0]['day']}天 进度 {last[-1]['d'].get('p') if last else '-'} · {round(last[-1]['t'] or 0) if last else 0} 秒：{tail}")
 
+    say('\n## 章节机关（10-27 起，第 6 天以后）')
+    say('第一次见到的机关：' + top(Counter(r['d']['f'] for r in by_ev['feat_hint']), 30))
+    say('脚下没了：' + top(Counter(r['d']['kind'] for r in by_ev['give_way'])) + f" · 薄冰裂开 {len(by_ev['ice'])} · 掉进漩涡 {len(by_ev['whirl'])}")
+    say(f"易碎件磕到 {len(by_ev['knock'])} 次 · 包裹坏了：" + top(Counter(r['d']['how'] for r in by_ev['spoiled'])))
+    say(f"收退货 {len(by_ev['collect'])} 件 · 带回车上 {len(by_ev['return_in'])} 件，用时 中位 {med([r['d']['sec'] for r in by_ev['return_in']])} 秒")
+    say(f"吵醒熊 {len(by_ev['woke'])} · 被大鹅啄 {len(by_ev['peck'])} · 催单送晚 {len(by_ev['nag_late'])} · 补货 {len(by_ev['restock'])}")
+    say(f"海鸥来了 {len(by_ev['gull'])} 次：扑空 {len(by_ev['gull_miss'])} · 叼走 {len(by_ev['snatch'])} · 赶走 {len(by_ev['shoo'])}"
+        f"（嘴里有包裹的 {sum(1 for r in by_ev['shoo'] if r['d'].get('carrying'))}）· 被叼跑算漏送 {len(by_ev['snatch_lost'])}")
+
+    say('\n## 卡关帮助、信和结局')
+    hq = [r['d'] for r in by_ev['hq'] if 'fails' in r['d']]
+    if hq:
+        say('结算时这一天连续没过几次：' + top(Counter(d['fails'] for d in hq)))
+    btn = Counter(r['d']['id'] for r in by_ev['hq_btn'])
+    say(f"点「慢一点再试」 {btn['slow']} 次 · 「跳过这一天」 {btn['skip']} 次 · 「年终总结」 {btn['ending']} 次 · 开着慢一点开局 {sum(1 for r in by_ev['run_start'] if r['d'].get('assist'))} 局")
+    say(f"捡到乌龟爷爷的信 {len(by_ev['story'])} 次（{len({(r['pid'], r['d']['n']) for r in by_ev['story']})} 封不重复）· 读信 {len(by_ev['story_read'])} 次"
+        f" · 第0号快递 开始 {len(by_ev['secret_start'])} 次、送到 {len(by_ev['old_letter'])} 次")
+    say(f"看年终总结 {len(by_ev['ending'])} 次 · 翻到最后一页 {sum(1 for r in by_ev['ending_page'] if r['d'].get('i') == 4)} 次")
+
     say('\n## 总部')
     say('结算后点：' + top(Counter(r['d']['id'] + ('' if r['d'].get('open', True) else '(未解锁)') for r in by_ev['hq_btn'])))
     say(f"看大图 {len(by_ev['photo'])} 次 · 保存 " + top(Counter(r['d']['res'] for r in by_ev['photo_save'])))

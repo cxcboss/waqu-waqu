@@ -168,6 +168,9 @@ export const CHAPTERS = [
   { title: '早春 · 环河联运', tint: 'rgba(250,200,210,0.14)' },
 ] as const;
 export const DAYS_PER_CHAPTER = 5;
+/** A day as it's named on screen: 第12天, or the hidden 第0号快递. */
+export const dayLabel = (day: number) => (day ? `第${day}天` : '第0号快递');
+
 export const chapterOf = (day: number) => Math.max(0, Math.floor((day - 1) / DAYS_PER_CHAPTER));
 /** The last day of the year: passing it plays the ending and opens the seventh chapter. */
 export const YEAR_END = 30;
@@ -293,11 +296,11 @@ for (const [i, d] of LATER.entries()) {
 export const SECRET: DayConfig = {
   day: 0, length: 7 * 970 + 100, speed: 50, houses: 7, orders: 7, urgent: 0, sizes: [0, 0, 1], bagSlots: 4, predictDelay: 1.2,
   markTargets: false, tutorial: false, seed: 4242, name: '第0号快递', ordered: false, cod: 0, codNote: 10,
-  challenge: allIn, intro: '把老乌龟的信送到上游', feats: { turtle: 3, bud: 3, leaf: 3, night: 1 }, secret: true,
+  challenge: allIn, intro: '把乌龟爷爷的信送到上游', feats: { turtle: 3, bud: 3, leaf: 3, night: 1 }, secret: true,
   brief: {
     title: '第0号快递',
     rows: [
-      ['letter', '老乌龟几十年前【没寄出的信】'],
+      ['letter', '乌龟爷爷几十年前【没寄出的信】'],
       ['code', '送到上游最远的那户人家'],
       ['lily1', '这段河道【从没人走过】'],
       ['frog_nervous', '天快亮了，萤火虫会【照亮荷叶】'],

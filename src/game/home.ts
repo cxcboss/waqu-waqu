@@ -1,20 +1,21 @@
 // The frog's home (我的家): its room with a photo wall for pictures kept from HQ, furniture bought at
 // the shop, the wardrobe, a desk with personal records and the money book, and the letters found.
 import { todSprite } from '../art/codeart';
-import { drawBaked, frame, frameOpening, FRAME_KINDS, lampGlow, todAt, type FrameKind } from '../art/kit';
+import { alpha, drawBaked, frame, frameOpening, FRAME_KINDS, lampGlow, todAt, type FrameKind } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { homeRoom } from '../art/room';
-import { ellipse, roundRect, text, wrapText, type Rect } from '../art/ui';
+import { button, ellipse, roundRect, text, wrapText, type Rect } from '../art/ui';
 import { clamp } from '../engine/math';
 import type { Ctx, ImageSource } from '../platform/types';
-import { RANKS, rankIndex, stampCount, stampsPossible } from './career';
+import { RANKS, newMail, rankIndex, stampCount, stampsPossible } from './career';
 import { ITEMS, item, type ItemKind } from './catalog';
-import { DAYS } from './config';
+import { DAYS, YEAR_END } from './config';
 import type { Game, Scene } from './game';
 import { HallScene } from './hall';
 import { HubScene } from './hub';
-import { LETTERS, letterText } from './lines';
+import { FIRST_LETTER, LETTERS, STORY, letterText } from './lines';
 import { Scroller, Taps, Toast, dialog, dot, drawDressedFrog, header, iconAt, pill, shortDate, tabs } from './menu';
+import { PlayScene } from './play';
 import { ShopScene } from './shop';
 import { SCENE_MUSIC } from './sound';
 
@@ -22,7 +23,8 @@ type Modal =
   | { kind: 'hang'; slot: number; frame: string }
   | { kind: 'wardrobe' }
   | { kind: 'records'; tab: number }
-  | { kind: 'letters' }
+  /** `open`: the old turtle's letter being read (its day, 0 for the first one), or -1. */
+  | { kind: 'letters'; tab: number; open: number }
   | { kind: 'decor' };
 
 export const ALL_LETTERS = LETTERS.length;
@@ -86,9 +88,12 @@ export class HomeScene implements Scene {
     } else if (id === 'wardrobe') this.openModal({ kind: 'wardrobe' });
     else if (id === 'records') this.openModal({ kind: 'records', tab: 0 });
     else if (id === 'letters') {
-      this.openModal({ kind: 'letters' });
-      if (s.letters.length > s.seen.letters) {
+      // opens on whichever has something new; the turtle's letters first
+      const road = s.letters.length > s.seen.letters && s.story.length <= s.seen.story;
+      this.openModal({ kind: 'letters', tab: road ? 1 : 0, open: -1 });
+      if (newMail(s)) {
         s.seen.letters = s.letters.length;
+        s.seen.story = s.story.length;
         g.writeSave();
       }
     } else if (id === 'decor') this.openModal({ kind: 'decor' });
@@ -162,6 +167,31 @@ export class HomeScene implements Scene {
         g.tm.log('wear', { slot, id: s.wear[slot] });
         au.play('equip');
         this.joy = 0.6;
+      }
+    } else if (m.kind === 'letters') {
+      if (id.startsWith('lt')) {
+        m.tab = Number(id.slice(2));
+        m.open = -1;
+        this.mScroll.reset();
+        au.play('tab_switch');
+      } else if (id.startsWith('st_')) {
+        m.open = Number(id.slice(3));
+        au.play('letter_open', { volume: 0.8 });
+        g.tm.log('story_read', { n: m.open });
+      } else if (id === 'stBack') {
+        m.open = -1;
+        au.play('paper_flip', { volume: 0.7 });
+      } else if (id === 'stPrev' || id === 'stNext') {
+        const have = this.storyShelf();
+        const i = have.indexOf(m.open) + (id === 'stPrev' ? -1 : 1);
+        if (i >= 0 && i < have.length) {
+          m.open = have[i];
+          au.play('paper_flip', { volume: 0.7 });
+        }
+      } else if (id === 'secret' && s.secret === 1) {
+        au.play('ui_confirm');
+        g.tm.log('secret_start', {});
+        g.go(new PlayScene(g, 0), true);
       }
     } else if (m.kind === 'records') {
       if (id.startsWith('rt')) {
@@ -243,12 +273,12 @@ export class HomeScene implements Scene {
     }
     this.taps.add('records', { x: desk.x - 111, y: desk.y - 160, w: 150, h: 160 });
     this.taps.add('letters', { x: desk.x + 10, y: desk.y - 160, w: 100, h: 160 });
-    if (s.letters.length > s.seen.letters) dot(ctx, desk.x + 82, desk.y - 156);
+    if (newMail(s)) dot(ctx, desk.x + 82, desk.y - 156);
     // the mailbox by the door: the same letters as the desk, with a flag that waves when something new came
     const mx = 690, my = fy(335);
     sp.draw(ctx, 'home_mailbox', mx, my);
     this.taps.add('letters', { x: mx - 46, y: my - 146, w: 92, h: 150 });
-    if (s.letters.length > s.seen.letters) dot(ctx, mx + 30, my - 140);
+    if (newMail(s)) dot(ctx, mx + 30, my - 140);
     sp.draw(ctx, 'home_wardrobe', 646, floorY + 96);
     this.taps.add('wardrobe', { x: 566, y: floorY + 96 - 290, w: 160, h: 290 });
     this.drawFrog(ctx, 375, fy(210));
@@ -320,7 +350,7 @@ export class HomeScene implements Scene {
   private toolbar(ctx: Ctx, y: number) {
     const s = this.game.save;
     const items: [string, string, boolean][] = [
-      ['wardrobe', '衣柜', false], ['records', '个人记录', false], ['letters', '信箱', s.letters.length > s.seen.letters], ['decor', '布置', false],
+      ['wardrobe', '衣柜', false], ['records', '个人记录', false], ['letters', '信箱', newMail(s)], ['decor', '布置', false],
     ];
     const w = 164, gap = 12, x0 = 375 - (items.length * w + (items.length - 1) * gap) / 2;
     items.forEach(([id, label, isNew], i) => {
@@ -341,14 +371,14 @@ export class HomeScene implements Scene {
     // the photo picker is only as tall as the album needs
     const fit = m.kind === 'hang' ? Math.max(560, 320 + Math.ceil(g.album.list.length / 3) * 186)
       : m.kind === 'wardrobe' ? 900
-        : m.kind === 'letters' ? 160 + ALL_LETTERS * 144
+        : m.kind === 'letters' ? tall
           : m.kind === 'decor' ? Math.max(520, 190 + Math.ceil(this.decos().length / 3) * 218)
             : tall;
     const d = dialog(ctx, g, this.taps, 'm', 690, Math.min(tall, fit), m.t);
     if (m.kind === 'hang') this.drawHang(ctx, d, m);
     else if (m.kind === 'wardrobe') this.drawWardrobe(ctx, d);
     else if (m.kind === 'records') this.drawRecords(ctx, d, m);
-    else if (m.kind === 'letters') this.drawLetters(ctx, d);
+    else if (m.kind === 'letters') this.drawLetters(ctx, d, m);
     else this.drawDecor(ctx, d);
     pill(ctx, this.taps, 'close', d.x + d.w - 84, d.y + 18, 64, 56, '✕', { size: 28 });
     ctx.restore();
@@ -541,12 +571,135 @@ export class HomeScene implements Scene {
     this.mScroll.setContent(y - (d.y + 166) + 20);
   }
 
-  private drawLetters(ctx: Ctx, d: Rect) {
+  /** The old turtle's letters found so far, in order: the first one (0) once it's been delivered, then by day. */
+  private storyShelf() {
     const s = this.game.save;
+    return [...(s.secret >= 2 ? [0] : []), ...s.story];
+  }
+
+  private drawLetters(ctx: Ctx, d: Rect, m: Extract<Modal, { kind: 'letters' }>) {
     text(ctx, '信箱', d.x + 40, d.y + 48, 34, { bold: true, align: 'left' });
-    text(ctx, `遗失的信 ${s.letters.length} / ${ALL_LETTERS}`, d.x + d.w - 110, d.y + 48, 22, { align: 'right', color: P.inkSoft });
-    this.area(ctx, d, d.y + 90);
-    let y = d.y + 110;
+    tabs(ctx, this.taps, 'lt', d.x + 30, d.y + 100, d.w - 60, ['乌龟爷爷的信', '路上捡的信'], m.tab);
+    ctx.fillStyle = P.paper;
+    ctx.fillRect(d.x + 24, d.y + 160, d.w - 48, 4);
+    if (m.tab === 1) this.drawRoadLetters(ctx, d);
+    else if (m.open >= 0) this.drawStoryLetter(ctx, d, m.open);
+    else this.drawStoryShelf(ctx, d);
+  }
+
+  /** Thirty envelopes, one for each day's river; the ones not found yet are blank. */
+  private drawStoryShelf(ctx: Ctx, d: Rect) {
+    const s = this.game.save;
+    this.area(ctx, d, d.y + 166);
+    let y = d.y + 192;
+    text(ctx, `找到 ${s.story.length} / ${YEAR_END} 封`, d.x + 44, y + 14, 26, { bold: true, align: 'left' });
+    y += 44;
+    const intro = wrapText(ctx, '乌龟爷爷年轻时写给老朋友阿灰的信，一直没寄出去，被春天的大水冲散了。每天的河上漂着一封，跳到那片荷叶上就能捡到。', 22, d.w - 88);
+    intro.forEach((l, i) => text(ctx, l, d.x + 44, y + i * 34, 22, { align: 'left', color: P.inkSoft }));
+    y += intro.length * 34 + 10;
+    // 第0号快递: once all thirty are in, the first letter waits to be taken up the river
+    if (s.secret >= 1) {
+      const r = { x: d.x + 34, y, w: d.w - 68, h: 132 };
+      roundRect(ctx, r.x, r.y, r.w, r.h, 16);
+      ctx.fillStyle = '#FDF3D2';
+      ctx.fill();
+      ctx.strokeStyle = P.gold;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      envelope(ctx, r.x + 70, r.y + 66, 1.1, true, '0');
+      text(ctx, '第0号快递', r.x + 136, r.y + 44, 30, { bold: true, align: 'left' });
+      const sub = s.secret === 1 ? '把第一封信送到上游，交给鹈鹕阿灰' : '阿灰收到了。点开读读第一封信';
+      text(ctx, sub, r.x + 136, r.y + 88, 21, { align: 'left', color: P.inkSoft, maxWidth: s.secret === 1 ? 300 : r.w - 160 });
+      const sr = this.mScroll.screen(r);
+      if (s.secret === 1) {
+        const b = { x: r.x + r.w - 180, y: r.y + 34, w: 160, h: 64 };
+        const sb = this.mScroll.screen(b);
+        const down = !!sb && this.taps.add('secret', sb);
+        button(ctx, b.x, b.y, b.w, b.h, '去送信', { primary: true, pressed: down, size: 26 });
+      } else if (sr) this.taps.add('st_0', sr);
+      y += r.h + 20;
+    }
+    const cols = 5, gap = 12, cw = (d.w - 68 - gap * (cols - 1)) / cols, ch = 132;
+    for (let i = 0; i < YEAR_END; i++) {
+      const n = i + 1, got = s.story.includes(n);
+      const x = d.x + 34 + (i % cols) * (cw + gap), cy = y + Math.floor(i / cols) * (ch + gap);
+      const r = { x, y: cy, w: cw, h: ch };
+      const sr = got ? this.mScroll.screen(r) : null;
+      const down = !!sr && this.taps.add(`st_${n}`, sr);
+      ctx.save();
+      if (down) ctx.globalAlpha = 0.7;
+      roundRect(ctx, x, cy, cw, ch, 12);
+      ctx.fillStyle = got ? '#FFFDF7' : alpha(P.paperShade, 0.6);
+      ctx.fill();
+      if (got) {
+        ctx.strokeStyle = alpha(INK, 0.5);
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        envelope(ctx, x + cw / 2, cy + 46, 0.8, true, `${n}`);
+        text(ctx, STORY[i].title, x + cw / 2, cy + 106, 20, { bold: true, maxWidth: cw - 12 });
+      } else {
+        ctx.setLineDash([5, 6]);
+        ctx.strokeStyle = alpha(INK, 0.25);
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        envelope(ctx, x + cw / 2, cy + 46, 0.8, false, '?');
+        text(ctx, `第${n}天`, x + cw / 2, cy + 106, 19, { color: P.inkSoft, maxWidth: cw - 12 });
+      }
+      ctx.restore();
+    }
+    y += Math.ceil(YEAR_END / cols) * (ch + gap) + 6;
+    text(ctx, '没找到的信还漂在那一天的河上，回路线图重跑就能捡到', 375, y + 14, 20, { color: P.inkSoft, maxWidth: d.w - 80 });
+    y += 44;
+    this.mScroll.end(ctx);
+    this.mScroll.setContent(y - (d.y + 166));
+  }
+
+  /** One of the old turtle's letters, on its own sheet of paper. */
+  private drawStoryLetter(ctx: Ctx, d: Rect, n: number) {
+    const shelf = this.storyShelf();
+    const i = shelf.indexOf(n);
+    const title = n ? STORY[n - 1].title : '第一封信';
+    const body = n ? STORY[n - 1].text : FIRST_LETTER;
+    const x = d.x + 40, w = d.w - 80, y0 = d.y + 186, h = d.y + d.h - 130 - y0;
+    // lined writing paper, a little crooked
+    ctx.save();
+    ctx.translate(375, y0 + h / 2);
+    ctx.rotate(-0.008);
+    ctx.translate(-375, -(y0 + h / 2));
+    roundRect(ctx, x, y0, w, h, 10);
+    ctx.fillStyle = '#FFFDF4';
+    ctx.fill();
+    ctx.strokeStyle = alpha(INK, 0.6);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.strokeStyle = alpha(P.teal, 0.35);
+    ctx.lineWidth = 1.4;
+    for (let ly = y0 + 150; ly < y0 + h - 30; ly += 52) {
+      ctx.beginPath();
+      ctx.moveTo(x + 30, ly + 12);
+      ctx.lineTo(x + w - 30, ly + 12);
+      ctx.stroke();
+    }
+    text(ctx, title, 375, y0 + 56, 34, { bold: true });
+    text(ctx, n ? `第 ${n} 封 · 第${n}天在河上捡到` : '第0号快递 · 已交给阿灰', 375, y0 + 100, 21, { color: P.inkSoft });
+    const lines = wrapText(ctx, body, 28, w - 80);
+    lines.forEach((l, k) => text(ctx, l, x + 40, y0 + 150 + k * 52, 28, { align: 'left' }));
+    text(ctx, n ? '—— 小龟' : '—— 你的朋友 小龟', x + w - 44, y0 + 150 + lines.length * 52 + 20, 26, { align: 'right', color: P.inkSoft });
+    ctx.restore();
+    const by = d.y + d.h - 106;
+    pill(ctx, this.taps, 'stPrev', d.x + 40, by, 170, 72, '‹ 上一封', { size: 26, disabled: i <= 0 });
+    pill(ctx, this.taps, 'stBack', 375 - 100, by, 200, 72, '放回去', { size: 26 });
+    pill(ctx, this.taps, 'stNext', d.x + d.w - 210, by, 170, 72, '下一封 ›', { size: 26, disabled: i < 0 || i >= shelf.length - 1 });
+  }
+
+  /** The lost letters picked up on the road behind the truck. */
+  private drawRoadLetters(ctx: Ctx, d: Rect) {
+    const s = this.game.save;
+    this.area(ctx, d, d.y + 166);
+    let y = d.y + 190;
+    text(ctx, `找到 ${s.letters.length} / ${ALL_LETTERS} 封`, d.x + 44, y + 14, 26, { bold: true, align: 'left' });
+    y += 50;
     for (let i = 0; i < ALL_LETTERS; i++) {
       const l = s.letters[i] ? letterText(s.letters[i]) : '';
       ctx.save();
@@ -572,7 +725,7 @@ export class HomeScene implements Scene {
       y += h + 18;
     }
     this.mScroll.end(ctx);
-    this.mScroll.setContent(y - (d.y + 90));
+    this.mScroll.setContent(y - (d.y + 166));
   }
 
   private drawDecor(ctx: Ctx, d: Rect) {
@@ -648,6 +801,33 @@ export function itemIcon(ctx: Ctx, g: Game, id: string, x: number, y: number, si
   const k = Math.min(size / s.w, size / s.h, 1.4);
   // anchors differ (feet, middle, hat brim); centre the picture's box instead
   sp.draw(ctx, id, x - (s.w / 2 - s.ax) * k, y - (s.h / 2 - s.ay) * k, k);
+}
+
+/** An envelope for the mailbox: kraft with a red wax seal (and its number), or a blank outline if not found yet. */
+function envelope(ctx: Ctx, x: number, y: number, s: number, got: boolean, label: string) {
+  const w = 76 * s, h = 52 * s;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  roundRect(ctx, x - w / 2, y - h / 2, w, h, 5 * s);
+  ctx.fillStyle = got ? P.kraftTop : 'rgba(255,255,255,0.5)';
+  ctx.fill();
+  ctx.strokeStyle = got ? INK : 'rgba(74,59,48,0.3)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // the flap
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2 + 3, y - h / 2 + 3);
+  ctx.lineTo(x, y + h * 0.12);
+  ctx.lineTo(x + w / 2 - 3, y - h / 2 + 3);
+  ctx.stroke();
+  if (got) {
+    ellipse(ctx, x, y + h * 0.1, 13 * s, 13 * s);
+    ctx.fillStyle = P.red;
+    ctx.fill();
+    ctx.stroke();
+  }
+  text(ctx, label, x, y + h * 0.1 + 1, (label.length > 1 ? 14 : 17) * s, { bold: true, color: got ? P.white : 'rgba(74,59,48,0.35)' });
+  ctx.restore();
 }
 
 /** The frog's own orange courier cap, for the wardrobe's "no hat" choice. */

@@ -11,7 +11,7 @@ import type { Ctx } from '../platform/types';
 import { ALBUM_MAX } from './album';
 import { ACHIEVEMENTS, RANKS, rankIndex, stampCount, unreadNotes, type NoteKind } from './career';
 import { item } from './catalog';
-import { DAYS } from './config';
+import { DAYS, dayLabel } from './config';
 import type { Game, Scene } from './game';
 import { HubScene } from './hub';
 import { drawStamp } from './map';
@@ -121,7 +121,7 @@ export class HallScene implements Scene {
 
   private photos(): ViewerPhoto[] {
     const al = this.game.album;
-    return al.list.map((a) => ({ key: a.id, img: () => al.image(a.id), caption: a.caption, footer: `蛙趣快递 · 第 ${a.day} 天 · ${shortDate(a.at)}` }));
+    return al.list.map((a) => ({ key: a.id, img: () => al.image(a.id), caption: a.caption, footer: `蛙趣快递 · ${dayLabel(a.day)} · ${shortDate(a.at)}` }));
   }
 
   private openPhoto(i: number) {
@@ -362,9 +362,9 @@ export class HallScene implements Scene {
       ctx.strokeStyle = P.kraft;
       ctx.lineWidth = 2;
       ctx.stroke();
-      const name = DAYS[e.day - 1]?.name ?? '';
+      const name = e.day ? DAYS[e.day - 1]?.name ?? '' : '';
       text(ctx, `第 ${e.n} 次上班 · ${shortDate(e.at)}`, 64, y + 32, 22, { align: 'left', color: P.inkSoft });
-      text(ctx, `第${e.day}天 · ${name}`, 64, y + 70, 30, { align: 'left', bold: true, maxWidth: 420 });
+      text(ctx, name ? `${dayLabel(e.day)} · ${name}` : dayLabel(e.day), 64, y + 70, 30, { align: 'left', bold: true, maxWidth: 420 });
       text(ctx, `送达 ${e.delivered}/${e.total} · 错投 ${e.wrong} · 泡水 ${e.wet} · 收入 ${e.income >= 0 ? '+' : ''}${e.income}`, 64, y + 106, 22, { align: 'left' });
       // grade postmark
       ctx.save();
@@ -422,7 +422,7 @@ export class HallScene implements Scene {
       }
       ctx.strokeRect(-iw / 2, -ch / 2 + 10, iw, ih);
       text(ctx, a.caption, 0, ch / 2 - 34, 20, { bold: true, maxWidth: cw - 16 });
-      text(ctx, `第${a.day}天`, 0, ch / 2 - 12, 16, { color: P.inkSoft });
+      text(ctx, dayLabel(a.day), 0, ch / 2 - 12, 16, { color: P.inkSoft });
       if (this.game.save.room.frames.some((f) => f?.photo === a.id)) {
         roundRect(ctx, cw / 2 - 58, -ch / 2 + 16, 50, 26, 13);
         ctx.fillStyle = P.orange;

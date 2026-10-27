@@ -64,9 +64,8 @@ export interface SaveData {
   album: AlbumPhoto[];
   /** Lost letters found, by id (see LETTERS in lines.ts). */
   letters: string[];
-  /** What's been looked at already, for the red dots. */
-  /** What the player has already been shown: notes, letters and medals read, and the furthest stop seen opening on the map. */
-  seen: { notes: number; letters: number; ach: number; map: number };
+  /** What the player has already been shown: notes, letters (road and story) and medals read, and the furthest stop seen opening on the map. */
+  seen: { notes: number; letters: number; story: number; ach: number; map: number };
   /** Counter for note and photo ids. */
   seq: number;
   /** The last day has been passed: every stop on the route is done. */

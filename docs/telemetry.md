@@ -41,7 +41,7 @@
 
 - `open`：`os`、`browser`（wechat/qq/safari/chrome…）、`w`/`h`（CSS 像素）、`dpr`、`touch`、`standalone`、`visit`（这台设备第几次打开）、`unlocked`（已解锁到第几天）、`coins`、`sound`、`stamps`（好评章总数）、`jump`（用 `?day=` 直接进的；10-26 起只有开发环境、`?tm=off` 或这台设备已解锁的天才会生效，大于 30 按第 30 天算）
 - `loaded`：`ms` 加载耗时
-- `hide` / `show`：切到后台 / 回来，`scene`（loading/hub/map/play/hq/hall/home/shop；10-22 前的版本还有 title）。`hide` 之后没有 `show` 通常就是关掉了
+- `hide` / `show`：切到后台 / 回来，`scene`（loading/hub/map/play/hq/hall/home/shop，10-27 起还有 ending；10-22 前的版本还有 title）。`hide` 之后没有 `show` 通常就是关掉了
 - `error`：`msg`、`where`（文件:行:列 + 调用栈前几行，压缩后的代码，对照同版本 `vite build --sourcemap` 查）、`scene`
 - `sound`：`on`、`scene`
 
@@ -55,7 +55,9 @@
 
 - `map`：`sel`、`unlocked` · `map_go` / `map_back`：`sel`、`sec`（在路线图待了几秒）· `map_locked`：点了没解锁的 `day`
 - `hq`：`grade`（10-26 起没通过的一天一律记 D，S 还要求全部送达）、`pass`、`stamps`（三枚章）、`fresh`（本局新拿的）、`income`（含升职加薪和新章奖励）、`coins`、`photos`、`rankUp`（升到的职级，没升是 null）、`ach`（这一局达成的成就 id）、`news`（新增的河湾动态条数）
-- `hq_btn`：`id`（retry/home/next）、`open`（下一天是否已解锁）、`sec`（结算页看了几秒）
+- `hq_btn`：`id`（retry/home/next；10-27 起还有 slow 慢一点再试 / skip 跳过这一天 / ending 年终总结）、`open`（下一天是否已解锁）、`sec`（结算页看了几秒）
+- `hq` 10-27 起多两个字段：`fails`（这一天连续没通过几次，过了是 0；两次起出「慢一点再试」，三次起出「跳过这一天」）、`story`（这一局捡到的乌龟爷爷的第几封信，没捡到是 null）。第 0 天是隐藏关「第0号快递」
+- `ending`（10-27）：第 30 天第一次通过后看年终总结 `found`（乌龟爷爷的信找到几封）、`secret`（0 没开 / 1 第0号快递已开 / 2 已送到）· `ending_page`：翻到第 `i` 页（0 除夕夜、1 这一年、2 猫头鹰、3 信、4 新年快乐），没翻到 4 就是中途跳出去了
 - `photo`：看大图 `i`、`kind` · `photo_save`：`res`（shared/downloaded/longpress/cancelled/failed）
 - `photo_keep`：点照片上的 ♥ `i`、`kind`、`on`（true 收进相册 / false 取消）、`n`（相册现在几张）
 
@@ -63,12 +65,13 @@
 
 - `hall`：进总部 `tab`、`notes` · `hall_tab`：`tab`（送单/日志/相册/荣誉/动态）· `album_view`：看相册大图 `i`、`n` · `album_del`：移出相册后剩 `n` 张
 - `home`：进家 `frames`（墙上挂了几张）、`decos`（有几件家具）· `home_open`：`what`（hang 挂照片 / wardrobe 衣柜 / records 个人记录 / letters 信箱 / decor 布置）
+- `story_read`（10-27）：在信箱里读乌龟爷爷的第 `n` 封信（0 是送到阿灰手里的第一封）· `secret_start`：从信箱点「去送信」开始第0号快递
 - `photo_hang`：挂上照片 `slot`、`frame`（相框）、`hung`（一共挂了几张）· `wear`：换装 `slot`（hat/neck）、`id`（null 是不戴）
 - `shop`：进福利社 `tab`、`coins` · `shop_tab`：`tab` · `shop_buy`：`what`（装备是 `bag3` 这样的「装备+升到的级」，其余是物品 id）、`price`、`coins`（买完剩多少）
 
 **一局**
 
-- `run_start`：`attempt`（这台设备第几次玩这一天）、`unlocked`、`best`、`stamps`；10-22 起还有 `gear`（开局时商店装备等级，如 `{bag:1, shoes:0, fins:2}`）、`bag`（加上邮差包后今天背包几格）
+- `run_start`：`attempt`（这台设备第几次玩这一天）、`unlocked`、`best`、`stamps`；10-22 起还有 `gear`（开局时商店装备等级，如 `{bag:1, shoes:0, fins:2}`）、`bag`（加上邮差包后今天背包几格）；10-27 起还有 `assist`（这一天开了「慢一点」，河水 0.9 倍速）、`fails`（开局前这一天已经连续没过几次）
 - `step`：新手步骤切换 `from` → `to`、`sec`（上一步停留秒数）。`from: intro` 的 `sec` 就是开工说明卡看了多久；第 1 天依次 pick（点包裹）→ aim（拉）→ go（跳去房子）→ deliver（点卡片交件）→ refill（回车）；`rescue` 是第一次落水的教学（第四轮起教方向轮盘，碰一下轮盘才继续）
 - `step_fix`：新手步骤等的前提不成立了（比如该点卡片时青蛙已经不在车上/房子上、回车时包里又有了包裹），自动跳到下一步，免得河水一直停着：`from`、`to`、`state`、`on`、`bag`（包里几个）。正常玩不该出现，出现就说明引导还有漏洞（10-26 起）
 - `jump`（落地时记一条）：`pow` 力度 0～1、`dx`/`dy` 手指拉的方向（青蛙往反方向跳；`dy<0` 是手指往上拉、青蛙往下跳）、`held` 按了几秒、`from` 起跳处、`w` 背包重量、`fy` 起跳时在屏幕的高度（0 顶 1 底）、`smog` 在尾气里、`step`、`dist`、`on` 落点（lily/log/house/truck/bank/water）；落水时还有 `near`（离最近落脚点的距离）、`to`（那是什么）、`short`（true 跳近了 / false 跳远了）；第 1 天引导那一跳有 `target`（是否跳中了引导的荷叶）
@@ -96,10 +99,28 @@
 - `jump` 多一个可选 `snap`（落点吸附了多少）；`yank` 的 `why` 多一种 `rope`（用了救命绳）
 - `hint`：出现了哪条提示 `key`（每种每局最多记 3 条，总数在 run_end 的 `hints` 里）
 - `pause`、`menu`：`id`（resume/restart/map/sound）
+
+**章节机关（10-27 起，第 6 天以后；每天教一个，见 `src/game/config.ts` 的 DAYS 和 `levelfeats.ts`）**
+
+- `jump` 多一个可选 `wind`：起跳时被阵风吹偏了多少（第 17 天起）
+- `feat_hint`：第一次碰到某种机关时的说明 `f`（名字见 `config.ts` 的 `Feat`：bud 花苞荷叶 / turtle 乌龟 / fragile 易碎 / cold 冷藏 / owl 猫头鹰跟车 / rapids 急流 / dam 水坝 / return 退货 / slip 雨天石头 / rain 雨天 / whirl 漩涡 / storm 暴雨 / leaf 落叶 / gust 阵风 / night 夜路 / bulk 补货 / floe 浮冰 / thin 薄冰 / quiet 冬眠的熊 / warm 保温 / blizzard 暴风雪 / snow 下雪 / pier 栈桥 / ferry 渡船 / hook 吊钩 / gull 海鸥 / goose 大鹅 / nag 催单 / fireworks 烟花）
+- `owl_say`：跟车的猫头鹰提醒一句 `text`
+- `give_way`：脚下的东西不见了 `kind`（bud 花苞荷叶沉下去 / thin 薄冰裂开 / slip 在湿石头上滑倒 / gate 站在开闸的水坝闸门上）
+- `ice`：薄冰被踩出裂缝、快要碎了 `hp`
+- `whirl`：掉进漩涡被甩出来
+- `knock`：易碎件跟着重重落地磕了一下 `code`、`n`（磕了几次，第 3 次碎）· `spoiled`：包裹坏了 `code`、`how`（broken 碎了 / melted 化了 / cold 凉了）。坏了照样能送，只扣评分
+- `collect`：去居民家收退货 `code`、`size` · `return_in`：退货带回车上 `code`、`sec`
+- `woke`：落地太重吵醒了冬眠的熊 `impact`
+- `gull`：海鸥飞来 · `gull_miss`：海鸥扑空 `state`（青蛙在空中或在车上就抓不到）· `snatch`：海鸥叼走包里最上面的包裹 `code` · `shoo`：把海鸥赶走 `carrying`（它嘴里有没有包裹）、`code` · `snatch_lost`：包裹被海鸥叼出屏幕，算漏送 `code`
+- `peck`：被看门的大鹅啄了 `house`
+- `nag_late`：催单件送晚了 `code`
+- `restock`：双十一补货，车上多了 `n` 件
+- `story`：捡到乌龟爷爷的第 `n` 封信（第 1–30 天每天一封）· `old_letter`：第0号快递里把第一封信交给了阿灰
 - `run_end`：一局结束的汇总。`how`：off（送完提前下班）/ done（车开到终点）/ thrown / restart / quit（暂停菜单回路线图）；
   `total`、`delivered`、`wrong`、`wet`、`missed`、`left`、`urgent`、`urgentOnTime`、`cod`、`codRight`、`falls`、`jumps`、`longest`、`closeCalls`、`bestTrip`，
   计数 `taps`、`tired`、`miss`、`far`（舌头够不着，或在水里点出指针时离哪儿都太远）、`climbOk`、`climbFail`、`strokes`、`swimSec`、`warn`、`warnSec`、`rush`、`pauses`、`putBack`、`bagFull`、`exhaust`、`rescued`、`sunk`、`idle`、`kicked`、`hints`、`misses`，
-  `real`（实际秒数，含暂停）、`fps`、`slow`（卡顿帧数）、`state`/`on`/`step`（结束时青蛙在干什么）
+  `real`（实际秒数，含暂停）、`fps`、`slow`（卡顿帧数）、`state`/`on`/`step`（结束时青蛙在干什么）；
+  10-27 起还有 `feats`：`spoiled`（坏了几件）、`careful`/`careOk`（要小心的件 / 完好送到的）、`returns`/`returned`（退货 / 收回的）、`woke`、`snatched`、`pecked`、`nagLate`、`nagTips`、`knocks`、`assist`
 - `run_snap`：切到后台时的同样汇总（`how: hidden`）。一局没有 `run_end`，就看最后一条 `run_snap`，那多半是中途关掉了
 
 ## 埋点在代码哪里
@@ -111,10 +132,11 @@
 | `src/game/game.ts` | `this.tm.log(...)` | open、loaded、dpr_cap、hide/show、error、sound、ach |
 | `src/game/hub.ts`（主页小镇） | `game.tm.log(...)` | hub、hub_go、hub_locked、profile、rename |
 | `src/game/map.ts`（路线图） | 同上 | map、map_go、map_back、map_locked |
-| `src/game/play.ts`（一局） | `this.log(...)`，自动带 `day`、`t`、`d.p`（路线进度） | run_start、step、step_fix、jump、tap、tired、miss、idle、fall、climb、swim_out、rescue、sunk、pickup、bag_full、put_back、deliver、cod、missed、urgent_late、warn、thrown、rush、road、exhaust、all_out、hurry、route_end、yank、haul_land、driver_say、kicked、egg、hint、pause、menu、run_end、run_snap |
+| `src/game/play.ts`（一局） | `this.log(...)`，自动带 `day`、`t`、`d.p`（路线进度） | run_start、step、step_fix、jump、tap、tired、miss、idle、fall、climb、swim_out、rescue、sunk、pickup、bag_full、put_back、deliver、cod、missed、urgent_late、warn、thrown、rush、road、exhaust、all_out、hurry、route_end、yank、haul_land、driver_say、kicked、egg、hint、pause、menu、run_end、run_snap，章节机关的 feat_hint、owl_say、give_way、ice、whirl、knock、spoiled、collect、return_in、woke、gull、gull_miss、snatch、shoo、snatch_lost、peck、nag_late、restock、story、old_letter |
 | `src/game/hq.ts`（下班结算） | `game.tm.log(...)` | hq、hq_btn、photo、photo_save、photo_keep |
+| `src/game/ending.ts`（年终总结） | 同上 | ending、ending_page |
 | `src/game/hall.ts`（总部大厅） | 同上 | hall、hall_tab、album_view、album_del |
-| `src/game/home.ts`（我的家） | 同上 | home、home_open、photo_hang、wear |
+| `src/game/home.ts`（我的家） | 同上 | home、home_open、photo_hang、wear、story_read、secret_start |
 | `src/game/shop.ts`（福利社） | 同上 | shop、shop_tab、shop_buy |
 
 在代码里找某个事件：`grep -n "log('事件名'" src/game/*.ts`。play.ts 里的计数器（`this.tally`）不单独发，汇总在 `run_end` / `run_snap`。

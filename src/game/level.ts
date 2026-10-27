@@ -166,6 +166,8 @@ export interface Order {
   later?: boolean;
   /** One of several for the same house with the same code (双十一's 群件). */
   group?: boolean;
+  /** 第0号快递: the old turtle's first letter, for 阿灰 in the last house up the river. */
+  oldLetter?: boolean;
 }
 
 export interface Level {
@@ -351,6 +353,19 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
   }
 
   featOrders({ cfg, orders, houses, r: rf });
+  if (cfg.secret) {
+    // 阿灰 (the pelican, an old sailor now) lives in the last house up the river; the letter is for him
+    const h = houses[houses.length - 1];
+    const other = houses.find((o) => o.species === 'pelican' && o !== h);
+    if (other) {
+      other.species = h.species;
+      other.name = h.name;
+    }
+    h.species = 'pelican';
+    h.name = '阿灰';
+    const o = orders.find((o) => o.house === h) ?? orders[orders.length - 1];
+    Object.assign(o, { house: h, size: 0, urgent: false, cod: null, oldLetter: true });
+  }
 
   const truck = plat('truck', TUNING.truckX, 0, TUNING.truckHalfW, TUNING.truckHalfH, { variant: 1 });
   const road = plat('bank', 0, 0, 0, 0);

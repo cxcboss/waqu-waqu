@@ -4,7 +4,7 @@ import { button, ellipse, hit, panel, pressIn, pressOut, roundRect, text } from 
 import { lilyPad } from '../art/village';
 import { clamp, easeOutBack, easeOutCubic, lerp } from '../engine/math';
 import type { Ctx } from '../platform/types';
-import { CHAPTERS, DAYS, DAYS_PER_CHAPTER, chapterOf } from './config';
+import { CHAPTERS, DAYS, DAYS_PER_CHAPTER, YEAR_END, chapterOf } from './config';
 import type { Game, Scene } from './game';
 import { GAP, RiverLine, drawMapScenery } from './mapart';
 import { Taps, Toast, header } from './menu';
@@ -315,7 +315,20 @@ export class MapScene implements Scene {
     const got = this.game.save.stamps[s.day] ?? [];
     for (let i = 0; i < 3; i++) drawStamp(ctx, s.x - 72 + i * 36, y + 50, 14, !!got[i], i + 1);
     const best = this.game.save.best[s.day];
-    if (best) {
+    if (this.game.save.skipped.includes(s.day)) {
+      // skipped after failing it: no grade yet, and it can be come back to
+      ctx.save();
+      ctx.translate(s.x + 76, y + 49);
+      ctx.rotate(-0.12);
+      roundRect(ctx, -30, -14, 60, 28, 8);
+      ctx.fillStyle = P.paperShade;
+      ctx.fill();
+      ctx.strokeStyle = P.inkSoft;
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      text(ctx, '跳过', 0, 1, 18, { bold: true, color: P.inkSoft });
+      ctx.restore();
+    } else if (best) {
       ctx.save();
       ctx.translate(s.x + 74, y + 48);
       ctx.rotate(-0.2);
@@ -348,8 +361,16 @@ export class MapScene implements Scene {
     const bx = 486, by = y + h - 112;
     const goDown = this.taps.add('go', { x: bx, y: by, w: 210, h: 84 }, 6);
     button(ctx, bx, by, 210, 84, '开工！', { primary: true, pressed: goDown, size: 36 });
-    const best = this.game.save.best[cfg.day];
-    text(ctx, best ? `最好评级 ${best}` : '还没跑过这一天', bx + 105, by - 30, 22, { color: P.inkSoft });
+    const s = this.game.save;
+    const best = s.best[cfg.day];
+    if (s.skipped.includes(cfg.day)) text(ctx, '跳过了，补跑能拿章', bx + 105, by - 30, 22, { color: P.orangeDeep, bold: true, maxWidth: 200 });
+    else text(ctx, best ? `最好评级 ${best}` : '还没跑过这一天', bx + 105, by - 30, 22, { color: P.inkSoft });
+    // the old turtle's letter on this day's river, once the player knows there are letters to find
+    if (cfg.day <= YEAR_END && (s.story.length || s.best[cfg.day])) {
+      const found = s.story.includes(cfg.day);
+      icon(ctx, 'letter', 560, y + 46, 34, { faded: !found });
+      text(ctx, found ? '信捡到了' : '信还在河上', 584, y + 47, 21, { align: 'left', color: found ? P.lilyDeep : P.inkSoft, maxWidth: 124 });
+    }
     ctx.restore();
   }
 }

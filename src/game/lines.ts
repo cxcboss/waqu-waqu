@@ -136,6 +136,49 @@ export const LETTERS: { id: string; text: string }[] = [
   { id: 'heron', text: '“明天的荷叶会更大一点。——一只路过的鹭”' },
 ];
 
+/**
+ * The old turtle's letters to 阿灰, the friend who went to sea when they were young: written now and
+ * then over the years and never sent, kept in a tin under the bridge until the spring flood washed them
+ * down the river. One lies on each day's river, days 1–30 (levelfeats.ts puts it on a pad off to the
+ * side); they're read in the mailbox at home. A save keeps the numbers of the ones found (1–30), so the
+ * words can change.
+ */
+export const STORY: { title: string; text: string }[] = [
+  { title: '柳湾的船', text: '阿灰：你走的那天，柳湾的柳树刚冒芽。我在岸边站到天黑，船早就看不见了。我决定给你写信，等知道你在哪儿，再一起寄给你。' },
+  { title: '学跳荷叶', text: '阿灰：今天我学会了从这片荷叶跳到那片荷叶，只掉进水里三次。你要是在，一定笑我笨。' },
+  { title: '慢邮差', text: '阿灰：河湾来了个邮差，是只小蜗牛，一封信要送半个月。我的信先攒着，不交给他。' },
+  { title: '柳絮', text: '阿灰：柳絮飞得满河都是，像下雪。你说海边的雪是咸的，是真的吗？' },
+  { title: '小书架', text: '阿灰：我在桥洞里搭了个小书架，最下面一层放给你的信。已经有五封了。' },
+  { title: '憋气比赛', text: '阿灰：荷花开满了一整塘。小时候我们在这儿比憋气，你总赢——你嘴巴里偷偷藏了一大口气，别以为我不知道。' },
+  { title: '乌龟船', text: '阿灰：我驮着兔子一家过了河。原来乌龟背也能当船，你走之前我怎么没想到？' },
+  { title: '青瓷碗', text: '阿灰：兔家办喜事，我送了一只青瓷碗，一路上走得特别慢，生怕碰坏了。慢，原来也是一种本事。' },
+  { title: '冰棍', text: '阿灰：太热了，冰棍还没到嘴边就化了。你在船上，有没有冰棍吃？' },
+  { title: '快递站', text: '阿灰：猫头鹰在河湾开了家快递站。我问它能不能把信送到海上，它眨了眨眼睛，没说话。' },
+  { title: '急流', text: '阿灰：雨季来了，峡谷里的水急得吓人，我抱着石头才没被冲走。你那边的浪，是不是比这还大？' },
+  { title: '水坝', text: '阿灰：河狸师傅修了一座水坝，开闸的时候哗啦啦的，像你打呼噜。' },
+  { title: '雨天', text: '阿灰：下了一整天雨，石头滑得站不住。我躲在桥洞里给你写信，墨水被雨点打花了好几个字。' },
+  { title: '漩涡', text: '阿灰：漩涡湾里有几片荷叶一直在转，转啊转，就像我想你的时候。' },
+  { title: '打雷', text: '阿灰：昨夜打雷，整条河都亮了一下。那一下我好像看见了你的船，可惜只是一截木头。' },
+  { title: '枫叶', text: '阿灰：枫叶红了，落在水上像一只只小船。我挑了最好看的一片，夹在这封信里。' },
+  { title: '帽子', text: '阿灰：起风了，我的帽子被吹到了对岸。要是你在，一扇翅膀就帮我捡回来了。' },
+  { title: '唠叨', text: '阿灰：猫头鹰今年亲自跟车，嘴里一直念"下一家、下一家"。它比以前唠叨多了。我们都老了。' },
+  { title: '萤火虫', text: '阿灰：萤火虫照着回家的路。你走的那晚也有萤火虫，你说它们是天上掉下来的星星。' },
+  { title: '一沓信', text: '阿灰：河湾的包裹多得堆成了山。我没有包裹要寄，只有这一沓信，越攒越厚。' },
+  { title: '浮冰', text: '阿灰：下雪了。河上漂着一块块浮冰，我站在上面转了三圈，头都晕了。' },
+  { title: '薄冰', text: '阿灰：薄冰一踩就咔嚓响，我走得小心翼翼。上了年纪，做什么都小心翼翼的。' },
+  { title: '安静', text: '阿灰：熊宝宝在隔壁冬眠，我连咳嗽都捂着嘴。今年冬天真安静，安静得能听见雪落下来。' },
+  { title: '两杯茶', text: '阿灰：我煮了一壶热茶，倒了两杯。一杯给我，一杯给你。你那杯放凉了，我也喝了。' },
+  { title: '暴风雪', text: '阿灰：暴风雪，什么都看不见。我数着信，一封、两封……二十五封。我的字越写越歪了。' },
+  { title: '栈桥', text: '阿灰：港口修好了，栈桥一直伸到河中间。我常坐在栈桥尽头，看每一艘进港的船。' },
+  { title: '起重机', text: '阿灰：码头的起重机把一船船货吊上岸。要是能把你也吊回来就好了。' },
+  { title: '海鸥', text: '阿灰：海鸥从海边飞来，我问它认不认识一只叫阿灰的鹈鹕。它叼走了我的面包，什么也没说。' },
+  { title: '老水手', text: '阿灰：听集市上的人说，上游住着一位退休的老水手，爱集邮，大嘴巴。会是你吗？' },
+  { title: '除夕', text: '阿灰：除夕了，烟花把整条河都照亮。我老了，游不动去上游那么远的路。要是有谁捡到这些信，请替我把第一封送给你。' },
+];
+
+/** The first letter, the one written the day 阿灰 left: 第0号快递 takes it up the river to him. */
+export const FIRST_LETTER = '阿灰：你今天就要走了。我嘴笨，说不出口，只好写下来——河湾永远是你的家，我会一直在桥洞等你。到了海边，记得给我寄一张有大船的邮票。';
+
 /** A letter's words, or '' for an id that isn't a letter. */
 export const letterText = (id: string) => LETTERS.find((l) => l.id === id)?.text ?? '';
 
