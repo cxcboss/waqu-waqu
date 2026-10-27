@@ -2409,7 +2409,7 @@ export class PlayScene implements Scene {
     this.log('story', { n });
     const f = this.frog;
     this.popups.push({ text: '捡到一封信！', x: f.x, y: f.y - 110, t: 0, color: P.orangeDeep });
-    this.showToast('是乌龟爷爷寄给阿灰的信，回家放进信箱');
+    this.showToast('是乌龟爷爷写给阿灰的信，回家放进信箱');
     this.queueShot('letter', '捡到乌龟爷爷的信！', 8, 0.15);
     const au = this.game.audio;
     au.play('letter_open', { delay: 0.1 });
@@ -2568,7 +2568,7 @@ export class PlayScene implements Scene {
     g.o = o;
     this.log('snatch', { code: o.code });
     this.fx.push({ kind: 'say', x: 0, y: 0, t: 0, dur: 1, label: '我的包裹！' });
-    this.popups.push({ text: '快点海鸥！', x: g.x, y: g.y - 60, t: 0, color: P.red });
+    this.popups.push({ text: '点它赶走！', x: g.x, y: g.y - 60, t: 0, color: P.red });
     const au = this.game.audio;
     au.play('gull', { volume: 1, rate: 1.15 });
     au.play('bag_open', { volume: 0.6 });

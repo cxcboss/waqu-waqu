@@ -39,7 +39,7 @@
 
 **打开和设备**
 
-- `open`：`os`、`browser`（wechat/qq/safari/chrome…）、`w`/`h`（CSS 像素）、`dpr`、`touch`、`standalone`、`visit`（这台设备第几次打开）、`unlocked`（已解锁到第几天）、`coins`、`sound`、`stamps`（好评章总数）、`jump`（用 `?day=` 直接进的；10-26 起只有开发环境、`?tm=off` 或这台设备已解锁的天才会生效，大于 30 按第 30 天算）
+- `open`：`os`、`browser`（wechat/qq/safari/chrome…）、`w`/`h`（CSS 像素）、`dpr`、`touch`、`standalone`、`visit`（这台设备第几次打开）、`unlocked`（已解锁到第几天）、`coins`、`sound`、`stamps`（好评章总数）、`jump`（用 `?day=` 直接进的；10-26 起只有开发环境、`?tm=off` 或这台设备已解锁的天才会生效，超过最后一天按最后一天算，10-27 起是第 35 天）
 - `loaded`：`ms` 加载耗时
 - `hide` / `show`：切到后台 / 回来，`scene`（loading/hub/map/play/hq/hall/home/shop，10-27 起还有 ending；10-22 前的版本还有 title）。`hide` 之后没有 `show` 通常就是关掉了
 - `error`：`msg`、`where`（文件:行:列 + 调用栈前几行，压缩后的代码，对照同版本 `vite build --sourcemap` 查）、`scene`
@@ -108,7 +108,7 @@
 - `give_way`：脚下的东西不见了 `kind`（bud 花苞荷叶沉下去 / thin 薄冰裂开 / slip 在湿石头上滑倒 / gate 站在开闸的水坝闸门上）
 - `ice`：薄冰被踩出裂缝、快要碎了 `hp`
 - `whirl`：掉进漩涡被甩出来
-- `knock`：易碎件跟着重重落地磕了一下 `code`、`n`（磕了几次，第 3 次碎）· `spoiled`：包裹坏了 `code`、`how`（broken 碎了 / melted 化了 / cold 凉了）。坏了照样能送，只扣评分
+- `knock`：易碎件跟着重重落地磕了一下 `code`、`n`（磕了几次，第 2 次碎）· `spoiled`：包裹坏了 `code`、`how`（broken 碎了 / melted 化了 / cold 凉了）。坏了照样能送，只扣评分
 - `collect`：去居民家收退货 `code`、`size` · `return_in`：退货带回车上 `code`、`sec`
 - `woke`：落地太重吵醒了冬眠的熊 `impact`
 - `gull`：海鸥飞来 · `gull_miss`：海鸥扑空 `state`（青蛙在空中或在车上就抓不到）· `snatch`：海鸥叼走包里最上面的包裹 `code` · `shoo`：把海鸥赶走 `carrying`（它嘴里有没有包裹）、`code` · `snatch_lost`：包裹被海鸥叼出屏幕，算漏送 `code`

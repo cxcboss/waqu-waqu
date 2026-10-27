@@ -1,6 +1,6 @@
 # 架构和分支状态
 
-更新：2026-10-22（全部分支合并上线）。
+更新：2026-10-27（`release-polish` 分支：场景改代码绘制、音效音乐、七章 35 天和故事线，见文末）。
 
 ## 一句话
 
@@ -18,16 +18,19 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 | `src/game/game.ts` | `Game`：主循环、存档 `save`（localStorage）、场景切换、成就发放 |
 | `src/game/hub.ts` | 主页小镇（启动后的第一个画面）：上班、总部、我的家、福利社、工牌 |
 | `src/game/map.ts` | 路线图：选第几天，好评章 |
-| `src/game/play.ts` | 一局玩法（最大的文件）：跳跃、游泳轮盘和跳出指针、包裹、司机、套索拽回、拍照 |
-| `src/game/level.ts`、`config.ts` | 河道生成（同一天每次一样）、每天参数 `dayConfig` 和手感数值 `TUNING` |
+| `src/game/play.ts` | 一局玩法（最大的文件）：跳跃、游泳轮盘和跳出指针、包裹、司机、套索拽回、拍照，以及各章机关的运动、判定和绘制 |
+| `src/game/level.ts`、`levelfeats.ts`、`config.ts` | 河道生成（同一天每次一样）；`levelfeats.ts` 往河道里放各章机关；`config.ts` 是七章 35 天的 `DAYS`、隐藏关 `SECRET`、章节 `CHAPTERS` 和手感数值 `TUNING` |
+| `src/game/weather.ts` | 每章的天气和水色（雨、雪、风、夜、烟花），画在河上 |
+| `src/game/ending.ts` | 年终总结（第 30 天第一次通过后）：除夕烟花和几页小故事，最后去路线图看第七章 |
 | `src/game/cast.ts`、`resident.ts` | 20 种居民 × 20 种房子（独立搭配），居民状态机（出门→等→接件→回家）和开门 |
-| `src/game/hq.ts` | 下班结算：评级、好评章、收入、照片 |
+| `src/game/hq.ts` | 下班结算：评级、好评章、收入、照片；机关一栏；失败两次「慢一点再试」、三次「跳过这一天」 |
 | `src/game/hall.ts`、`album.ts`、`viewer.ts` | 总部大厅（送单/日志/相册/荣誉/动态）、相册存储、看大图 |
-| `src/game/home.ts` | 我的家：挂照片、衣柜、个人记录、信箱、布置 |
+| `src/game/home.ts` | 我的家：挂照片、衣柜、个人记录、信箱（乌龟爷爷的信 / 路上捡的信，集齐 30 封开「第0号快递」）、布置 |
 | `src/game/shop.ts`、`catalog.ts` | 福利社和商店目录；`gearEffects()` 把装备等级换成玩法加成（背包格、跳远、游泳推力） |
 | `src/game/career.ts`、`progress.ts`、`stories.ts` | 职级、成就、生涯记录、河湾动态 |
-| `src/game/lines.ts` | 随机台词（下班、司机催促 HURRY_LINES、踢下车 KICK_LINES） |
-| `src/art/` | 代码绘制的 SVG 占位美术；`sprites.ts` 是精灵表（名字、包围盒、alias、paintedOnly） |
+| `src/game/lines.ts` | 随机台词（下班、司机催促 HURRY_LINES、踢下车 KICK_LINES）、路上捡的信 `LETTERS`、乌龟爷爷的 30 封信 `STORY` 和第一封 `FIRST_LETTER` |
+| `src/game/sound.ts` | 每章的配乐和环境声、各场景配乐 `SCENE_MUSIC`、居民说话的声音 |
+| `src/art/` | 代码绘制：`kit/` 手账风基础件（墨线、纸纹、图标、勋章、相框、招牌、时段配色）；`river.ts` 河上的机关（乌龟、石头、落叶、浮冰、薄冰、水坝、栈桥、渡船、吊钩、海鸥、大鹅、烟花）；`village.ts`/`room.ts`/`furniture.ts` 场景；`sprites.ts` 是精灵表（名字、包围盒、alias、paintedOnly，`codeSprite` 注册代码精灵） |
 | `public/art/` | AI 画的正式美术 PNG，名字写进 `manifest.json` 就替换同名占位图；没有的自动回退到占位图 |
 | `public/audio/` | 音效音乐，来源见 `CREDITS.md`；由 `tools/audio/` 生成，场景配乐在 `src/game/sound.ts`，说明见 `docs/audio.md` |
 | `scripts/` | `deploy.sh` 部署、`stats.py` 数据报告、`telemetry.sql` 建表、`subset_font.py` 裁字体 |
@@ -95,3 +98,11 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - 分阶段加载（`sprites.ts` 的 `CORE`/`PLAY`、`Game.go`）：加载屏只等字体、脚本、主页自己的图和几张必需的小图（`CORE`），约 1.1 MB；等加载屏结束后才后台拉剩下的非 lazy 美术，先拉一天玩法要用的（`PLAY`：青蛙各姿势、包裹、荷叶、河……），再拉总部/家/福利社等。没到的精灵 `draw` 会跳过并优先请求。除主页外的场景在 `go()` 里检查：美术没到齐就先显示「加载中…」小卡片，到齐才切换（`play` 只等 `PLAY` 那一组）。新加非 lazy 精灵不用改任何东西；主页要用的才加进 `CORE`。
 - `public/sw.js`：Service Worker，同源资源先用缓存、后台更新（二次打开几乎不用联网）。新版本要多开一次才生效。只在 https 且非 dev 时注册（`main.web.ts`）。
 - 埋点请求 8 秒超时，音效降码率且每次只并发 3 个，并且在加载屏结束后才开始拉。
+
+## 章节和故事（2026-10-27，`release-polish`）
+- 七章 35 天（`config.ts` 的 `CHAPTERS`、`DAYS`）：一春 1–5、二夏 6–10、三雨季 11–15、四秋 16–20、五冬 21–25、六港口 26–30、七早春环河联运 31–35（前面的机关混在一起）。`YEAR_END = 30` 是一年的最后一天。
+- 每章 4–5 个机关，一天教一个（`DayConfig.teach`，第一次碰到时出 `feat_hint` 说明和猫头鹰提示）。机关的数据在 `level.ts` 的 `Plat`/`Order` 上（`bud`、`hp`、`ang`、`fragile`、`keep`、`ret`、`nag` 等），放置在 `levelfeats.ts`，行为和绘制在 `play.ts`（搜 `movePlat`、`drawPlat`、`featSeen`），画法在 `art/river.ts`。
+- 易碎/冷藏/保温件坏了照样能送，只扣评分（`hq.ts` 的分数公式），总部结算有一栏机关成绩（`featRow`），三枚章里的「今日挑战」按每天的机关定（`progress.ts` 的 `earnedStamps`）。
+- 卡关帮助：同一天连续没过两次，结算出「慢一点再试」（`save.assist[day]`，河水 0.9 倍速，过了就取消）；三次出「跳过这一天」（`save.skipped`，开下一天但这一天拿不到章，路线图上标「跳过」，回来补跑就去掉）。
+- 故事线：第 1–30 天每天河上漂着乌龟爷爷（小龟）年轻时写给去出海的老朋友阿灰（鹈鹕大叔）的一封信（`STORY`，`save.story` 记找到的天）。集齐 30 封 `save.secret = 1`，信箱出现「第0号快递」（第 0 天，`SECRET` 配置，`dayLabel(0)`），把第一封信送到上游的阿灰家后 `secret = 2`，能读第一封信。
+- 年终总结：第 30 天第一次通过后结算的下一步按钮变成「年终总结」（`save.ending` 记看过），之后去路线图第 31 天。

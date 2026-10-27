@@ -88,19 +88,19 @@ venv/bin/python tools/audio/build.py build/dl build/synth build/amb <旧版母�
 | `door_open` | 居民开门 | sound |
 | `door_close` | 居民关门 | sound |
 | `paper_flip` | 翻单据/翻页 | hall, home, hq, viewer |
-| `paper_flip_2` | 翻页变体 | paper_flip 的变体 |
+| `paper_flip_2` | 翻页变体 | paper_flip 的变体；ending 翻页时和 paper_flip 交替 |
 | `stamp` | 盖章（砰 + 墨印 '咔'） | career, hq, icons |
 | `photo_shutter` | 照片定格 | hq, viewer |
 | `purchase` | 福利社买东西 | shop |
 | `equip` | 换上衣服/帽子 | home, shop |
 | `gift_open` | 拆礼物/领奖励 | shop.ts：买下东西后礼物盒落到青蛙手里时；待接：结局礼物 |
-| `letter_open` | 拆信 | play |
-| `gust` | 一阵风 | 环境声随机插入（amb_wind、amb_winter、amb_blizzard） |
-| `thunder` | 远处的雷 | 环境声随机插入（amb_rain、amb_storm） |
-| `gull` | 海鸥叫 | 环境声随机插入（amb_harbor、amb_newyear） |
-| `firecracker` | 鞭炮 | 环境声随机插入（amb_newyear） |
-| `ice_crack` | 冰面裂开 | 环境声随机插入（amb_winter、amb_blizzard） |
-| `leaf_rustle` | 落叶沙沙 | 环境声随机插入（amb_wind） |
+| `letter_open` | 拆信 | play（捡到乌龟爷爷的信、第0号快递交信）、home（信箱里读信） |
+| `gust` | 一阵风 | 环境声随机插入（amb_wind、amb_winter、amb_blizzard）；play 第 17 天起阵风吹来时、weather |
+| `thunder` | 远处的雷 | 环境声随机插入（amb_rain、amb_storm）；weather 暴雨打闪 |
+| `gull` | 海鸥叫 | 环境声随机插入（amb_harbor、amb_newyear）；play 海鸥飞来抢包裹 |
+| `firecracker` | 鞭炮 | 环境声随机插入（amb_newyear）；weather 第 30 天烟花、ending 年终总结每朵烟花炸开 |
+| `ice_crack` | 冰面裂开 | 环境声随机插入（amb_winter、amb_blizzard）；play 踩上薄冰 |
+| `leaf_rustle` | 落叶沙沙 | 环境声随机插入（amb_wind）；play 落叶被踩沉、weather 飘叶 |
 
 ### 警告
 
@@ -124,7 +124,7 @@ venv/bin/python tools/audio/build.py build/dl build/synth build/amb <旧版母�
 | `deliver_unhappy` | 居民不满（加急迟到、找零错） | play |
 | `aww_missed` | 包裹没送到，房子过去了 | play, sound |
 | `warn_pop` | 青蛙 '哇哦！'（刚进危险区） | play, sound |
-| `owl_hoot` | 猫头鹰经理出场 | hall, hq |
+| `owl_hoot` | 猫头鹰经理出场 | hall, hq；play 跟车的猫头鹰提醒 |
 | `owl_hoot_2` | 猫头鹰叫（变体） | owl_hoot 的变体 |
 | `owl_hoot_3` | 猫头鹰叫（变体） | owl_hoot 的变体 |
 | `owl_pleased` | 猫头鹰 '嗯嗯'（满意） | hq |
