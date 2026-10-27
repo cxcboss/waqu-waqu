@@ -43,7 +43,8 @@ export function hubAmbience(night: boolean): string[] {
 }
 
 /** Effects a day on the river uses all the time: fetched when the day starts so the first of each isn't late. */
-export const PLAY_SOUNDS = ['tongue_thwip', 'slurp', 'perfect_sparkle', 'aww_missed', 'warn_pulse', 'warn_pop', 'lasso_whirl', 'rope_snap', 'exhaust_puff', 'door_open', 'door_close', 'day_start', 'day_complete', 'day_fail', 'driver_call', 'driver_cheer', 'driver_grumble', 'phone_ring'];
+export const PLAY_SOUNDS = ['tongue_thwip', 'slurp', 'perfect_sparkle', 'aww_missed', 'warn_pulse', 'warn_pop', 'lasso_whirl', 'rope_snap', 'exhaust_puff', 'door_open', 'door_close', 'day_start', 'day_complete', 'day_fail', 'driver_call', 'driver_cheer', 'driver_grumble', 'phone_ring',
+  'gull', 'gust', 'ice_crack', 'leaf_rustle', 'thunder', 'firecracker', 'owl_hoot', 'owl_hoot_2', 'owl_hmm', 'letter_open', 'deliver_unhappy'];
 
 type SylSet = 'soft' | 'beak' | 'bleat' | 'click';
 const SYL: Record<SylSet, string[]> = {

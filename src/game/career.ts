@@ -1,7 +1,7 @@
 // The frog's working life outside a single day: career totals, the work log, river news, the money
 // book, ranks and achievements. Everything here is worked out from finished days and kept in the save.
 import { GEAR, STARTER_ITEMS, gearMax, item, type GearId } from './catalog';
-import { DAYS } from './config';
+import { DAYS, YEAR_END } from './config';
 import type { SaveData } from './game';
 import type { DayResult } from './hq';
 import { letterId, letterText } from './lines';
@@ -194,6 +194,18 @@ export function upgradeSave(raw: unknown): SaveData {
   s.cleared = o.cleared === true || !!s.stamps[DAYS.length]?.[0];
   // the furthest stop the route map has shown opening; older saves have seen what they have
   s.seen.map = int(seen.map, s.day, 1, s.day);
+
+  const fails = isObj(o.fails) ? o.fails : {};
+  s.fails = Object.fromEntries(dayKeys(fails).map((k) => [+k, int(fails[k], 0, 0, 99)]).filter(([, n]) => n > 0)) as Record<number, number>;
+  const assist = isObj(o.assist) ? o.assist : {};
+  s.assist = Object.fromEntries(dayKeys(assist).filter((k) => assist[k] === true).map((k) => [+k, true])) as Record<number, boolean>;
+  const days = (v: unknown, max: number) => [...new Set(list(v).filter((d): d is number => isNum(d) && Number.isInteger(d) && d >= 1 && d <= max))].sort((a, b) => a - b);
+  s.skipped = days(o.skipped, DAYS.length).filter((d) => !s.stamps[d]?.[0]);
+  s.story = days(o.story, YEAR_END);
+  s.secret = int(o.secret, 0, 0, 2);
+  if (s.story.length >= YEAR_END && !s.secret) s.secret = 1;
+  // (a save that got past the year's end before there was an ending sees it after its next day at HQ)
+  s.ending = o.ending === true;
   return s;
 }
 

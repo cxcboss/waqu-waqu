@@ -71,6 +71,19 @@ export interface SaveData {
   seq: number;
   /** The last day has been passed: every stop on the route is done. */
   cleared: boolean;
+  // ---- the chapters (save v3)
+  /** Runs failed in a row on each day not passed yet: after two the river can be slowed, after three the day skipped. */
+  fails: Record<number, number>;
+  /** Days being run on the slowed-down river. */
+  assist: Record<number, boolean>;
+  /** Days skipped after failing them: open the next day, but earn no stamps. */
+  skipped: number[];
+  /** The old turtle's letters picked up on the river, by the day they were found on (1–30). */
+  story: number[];
+  /** The hidden day, 第0号快递: 0 not found yet, 1 open (all thirty letters read), 2 delivered. */
+  secret: number;
+  /** The year's ending has been shown (after day 30 was first passed). */
+  ending: boolean;
 }
 
 const SAVE_KEY = 'waqu.save.v1';

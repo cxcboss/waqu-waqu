@@ -56,7 +56,32 @@ export interface DayResult {
   bestTrip: number;
   /** An urgent parcel made it within the day-2 challenge time. */
   fastUrgent: boolean;
+  /** The chapters' mechanics (see DayFeats); missing on results from before them. */
+  feats?: DayFeats;
   extra?: DayExtra;
+}
+
+/** How the day went with the chapters' mechanics. */
+export interface DayFeats {
+  /** Parcels handed over broken, melted or gone cold. */
+  spoiled: number;
+  /** Parcels that needed care (fragile, chilled, hot), and how many of them arrived fine. */
+  careful: number;
+  careOk: number;
+  /** Returns to collect, and how many made it back to the truck. */
+  returns: number;
+  returned: number;
+  /** Times the bear was woken, parcels the gull got away with, pecks from the goose. */
+  woke: number;
+  snatched: number;
+  pecked: number;
+  /** Chased-up parcels that came too late, and the tips from the ones in time. */
+  nagLate: number;
+  nagTips: number;
+  /** Knocks fragile parcels took from hard landings. */
+  knocks: number;
+  /** The run was on the slowed-down help. */
+  assist: boolean;
 }
 
 /** More about the day, for the career totals and the river news (see career.ts). */
@@ -68,6 +93,8 @@ export interface DayExtra {
   rescued: number;
   /** The id of the lost letter picked up on the road, if any (see LETTERS in lines.ts). */
   letter: string | null;
+  /** The old turtle's letter found on the river today (its number, 1–30), if any. */
+  story?: number | null;
   /** Every parcel: who got it (`to`), who it was for (`owner`), and how it ended. */
   parcels: { to: string; owner: string; species: string; state: 'delivered' | 'wrong' | 'wet' | 'missed'; urgent: boolean }[];
 }
