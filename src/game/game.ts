@@ -5,7 +5,7 @@ import { Audio } from '../engine/audio';
 import { Telemetry, type TelemetryOptions } from '../engine/telemetry';
 import type { Ctx, Platform } from '../platform/types';
 import { Album } from './album';
-import { upgradeSave, type Achievement, type AlbumPhoto, type Career, type DayLog, type Entry, type Note, type Room, type Wear } from './career';
+import { stampCount, upgradeSave, type Achievement, type AlbumPhoto, type Career, type DayLog, type Entry, type Note, type Rank, type Room, type Wear } from './career';
 import { item, type GearId } from './catalog';
 import { DAYS } from './config';
 import { Loader } from './loading';
@@ -18,6 +18,11 @@ export interface Scene {
   down?(x: number, y: number, id: number): void;
   move?(x: number, y: number, id: number): void;
   up?(x: number, y: number, id: number): void;
+  /**
+   * The system took a touch away (a phone call, an OS gesture, the browser scrolling): drop whatever
+   * it was doing without acting on it. Scenes without one get `up` at a point that hits nothing.
+   */
+  cancel?(id: number): void;
   /** Wheel scroll in design pixels. */
   wheelBy?(dy: number): void;
   /** Called when the app goes to the background. */
@@ -53,12 +58,14 @@ export interface SaveData {
   /** Achievements reached, with when. */
   ach: Record<string, number>;
   album: AlbumPhoto[];
-  /** Lost letters found, by their text. */
+  /** Lost letters found, by id (see LETTERS in lines.ts). */
   letters: string[];
   /** What's been looked at already, for the red dots. */
   seen: { notes: number; letters: number; ach: number };
   /** Counter for note and photo ids. */
   seq: number;
+  /** The last day has been passed: every stop on the route is done. */
+  cleared: boolean;
 }
 
 const SAVE_KEY = 'waqu.save.v1';
@@ -83,8 +90,11 @@ export class Game {
   save: SaveData;
   album: Album;
   scene: Scene | null = null;
-  /** Achievements just reached, shown one after another over whatever screen is up. */
-  private medals: { a: Achievement; t: number; d: number }[] = [];
+  /**
+   * A rank-up and achievements just reached, shown one after another over whatever screen is up
+   * (held back while a day is being played). `first` starts a batch, which gets the fanfare.
+   */
+  private medals: { a: Achievement | null; rank: Rank | null; t: number; d: number; shown: boolean; first: boolean }[] = [];
   ready = false;
   private acc = 0;
   private last = 0;
@@ -136,7 +146,7 @@ export class Game {
     const s = this.save;
     this.tm.log('open', {
       ...this.platform.deviceInfo(), ...entry, visit: this.tm.visits,
-      unlocked: s.day, coins: s.coins, sound: s.sound, stamps: Object.values(s.stamps).flat().filter(Boolean).length,
+      unlocked: s.day, coins: s.coins, sound: s.sound, stamps: stampCount(s),
     });
     this.platform.onError((msg, where) => {
       this.tm.log('error', { msg, where, scene: this.scene?.id ?? null });
@@ -154,15 +164,18 @@ export class Game {
           this.audio.unlock();
           this.loader.down(x, y, t.id);
         } else if (kind === 'move') this.loader.move(x, y, t.id);
-        else this.loader.up(x, y, t.id);
+        else if (kind === 'end') this.loader.up(x, y, t.id);
         return;
       }
+      const sc = this.scene;
       if (kind === 'start') {
         this.audio.unlock();
         this.audio.kick();
-        this.scene?.down?.(x, y, t.id);
-      } else if (kind === 'move') this.scene?.move?.(x, y, t.id);
-      else this.scene?.up?.(x, y, t.id);
+        sc?.down?.(x, y, t.id);
+      } else if (kind === 'move') sc?.move?.(x, y, t.id);
+      else if (kind === 'end') sc?.up?.(x, y, t.id);
+      else if (sc?.cancel) sc.cancel(t.id);
+      else sc?.up?.(NaN, NaN, t.id);
     });
     this.platform.onWheel?.((dy) => {
       if (this.ready && !this.fade) this.scene?.wheelBy?.(dy * (this.W / this.cssW));
@@ -313,44 +326,63 @@ export class Game {
   }
 
   readSave(): SaveData {
-    const base = { day: 1, coins: 0, best: {}, sound: true, tips: {}, stamps: {} } as unknown as SaveData;
     try {
       const raw = this.platform.storageGet(SAVE_KEY);
-      if (raw) return upgradeSave({ ...base, ...JSON.parse(raw) });
+      // upgradeSave fills in and repairs whatever it's given, even something that isn't a save
+      if (raw) return upgradeSave(JSON.parse(raw));
     } catch {
       /* corrupted save: start fresh */
     }
-    return upgradeSave(base);
+    return upgradeSave({});
   }
 
   writeSave() {
     this.platform.storageSet(SAVE_KEY, JSON.stringify(this.save));
   }
 
-  /** Shows a ribbon for each newly reached achievement. */
-  celebrate(list: Achievement[]) {
+  /** Shows a ribbon for a rank-up, then one for each newly reached achievement. */
+  celebrate(list: Achievement[], rank: Rank | null = null) {
+    const first = !this.medals.length;
+    const add = (a: Achievement | null, r: Rank | null) =>
+      this.medals.push({ a, rank: r, t: this.medals.length ? -0.2 : -0.1, d: MEDAL_T, shown: false, first: first && !this.medals.length });
+    if (rank) add(null, rank);
     for (const a of list) {
-      this.medals.push({ a, t: this.medals.length ? -0.2 : 0, d: MEDAL_T });
+      add(a, null);
       this.tm.log('ach', { id: a.id, scene: this.scene?.id ?? null });
     }
-    if (list.length) this.audio.play('upgrade', { delay: 0.1 });
   }
 
   private stepMedals(dt: number) {
     const m = this.medals[0];
-    // a queue of several goes by quicker
-    if (m && this.medals.length > 2) m.d = Math.min(m.d, 1.8);
-    if (m && (m.t += dt) > m.d) {
-      this.medals.shift();
-      if (this.medals.length) this.audio.play('rating_good', { volume: 0.7 });
+    if (!m) return;
+    // never over a day on the river: held (and started over) until the next screen
+    if (this.scene?.id === 'play' || !this.ready) {
+      m.t = Math.min(m.t, 0);
+      m.shown = false;
+      return;
     }
+    // a queue of several goes by quicker
+    if (this.medals.length > 2) m.d = Math.min(m.d, 1.8);
+    m.t += dt;
+    if (m.t >= 0 && !m.shown) {
+      m.shown = true;
+      if (m.first) this.audio.play('upgrade');
+      else this.audio.play('rating_good', { volume: 0.7 });
+    }
+    if (m.t > m.d) this.medals.shift();
   }
 
   private renderMedals(ctx: Ctx) {
     const m = this.medals[0];
-    if (!m || m.t < 0) return;
-    const a = m.a;
-    const k = Math.min(1, m.t / 0.3) * Math.min(1, (m.d - m.t) / 0.3);
+    if (!m || m.t < 0 || !m.shown) return;
+    if (m.rank) return this.renderRibbon(ctx, m.t, m.d, '升职啦', m.rank.name, m.rank.perk || '新的职级工牌');
+    const a = m.a!;
+    const reward = [`+${a.coins} 金币`, a.reward ? item(a.reward)?.name : ''].filter(Boolean).join(' · ');
+    this.renderRibbon(ctx, m.t, m.d, '成就达成', a.name, reward);
+  }
+
+  private renderRibbon(ctx: Ctx, t: number, d: number, head: string, name: string, sub: string) {
+    const k = Math.min(1, t / 0.3) * Math.min(1, (d - t) / 0.3);
     const w = 470, h = 104;
     const x = 750 - (w + 16) * (1 - Math.pow(1 - k, 3)) + (1 - k) * 40, y = this.safeT + 196;
     ctx.save();
@@ -362,10 +394,9 @@ export class Game {
     ctx.lineWidth = 2.5;
     ctx.stroke();
     text(ctx, '★', x + 56, y + h / 2 + 2, 36, { color: P.white, bold: true });
-    text(ctx, '成就达成', x + 104, y + 28, 20, { align: 'left', color: P.orangeDeep, bold: true });
-    text(ctx, a.name, x + 104, y + 58, 32, { align: 'left', bold: true, maxWidth: w - 120 });
-    const reward = [`+${a.coins} 金币`, a.reward ? item(a.reward)?.name : ''].filter(Boolean).join(' · ');
-    text(ctx, reward, x + 104, y + 86, 20, { align: 'left', color: P.inkSoft, maxWidth: w - 120 });
+    text(ctx, head, x + 104, y + 28, 20, { align: 'left', color: P.orangeDeep, bold: true });
+    text(ctx, name, x + 104, y + 58, 32, { align: 'left', bold: true, maxWidth: w - 120 });
+    text(ctx, sub, x + 104, y + 86, 20, { align: 'left', color: P.inkSoft, maxWidth: w - 120 });
     ctx.restore();
   }
 

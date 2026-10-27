@@ -4,6 +4,7 @@ import { GEAR, STARTER_ITEMS, gearMax, item, type GearId } from './catalog';
 import { DAYS } from './config';
 import type { SaveData } from './game';
 import type { DayResult } from './hq';
+import { letterId, letterText } from './lines';
 import { mixupLine, openedLine, soakedLine } from './stories';
 import { rng, shuffle } from '../engine/math';
 
@@ -104,27 +105,93 @@ export const emptyCareer = (): Career => ({
   byResident: {},
 });
 
-/** Fills in whatever an older save doesn't have yet (v1 saves only knew days, coins and stamps). */
-export function upgradeSave(s: SaveData): SaveData {
-  s.name = typeof s.name === 'string' && s.name ? s.name : '小呱';
-  s.since = s.since || Date.now();
-  s.gear = Object.assign({ bag: 1, shoe: 1, fin: 1 }, s.gear);
-  s.owned = Array.isArray(s.owned) ? s.owned.filter((id) => item(id)) : [];
+/** Days the frog has worked: each day finished at least once (a retry of a day is not another day). */
+export const daysWorked = (s: SaveData) => Object.keys(s.best).length;
+
+/** Nothing played yet: no day finished, no stamp, nothing in the work log (old saves may only have some of these). */
+export const firstDay = (s: SaveData) => !s.log.length && !Object.keys(s.best).length && !Object.keys(s.stamps).length;
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isStr = (v: unknown): v is string => typeof v === 'string';
+/** A whole number between lo and hi, or `d` for anything else. */
+const int = (v: unknown, d: number, lo = 0, hi = Number.MAX_SAFE_INTEGER) => (isNum(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : d);
+const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+/** Keys of a by-day record that are real days. */
+const dayKeys = (v: unknown) => (isObj(v) ? Object.keys(v).filter((k) => /^\d+$/.test(k) && +k >= 1 && +k <= DAYS.length) : []);
+const GRADE_LETTERS = 'SABCD';
+const NOTE_KINDS: NoteKind[] = ['story', 'mixup', 'soaked', 'letter', 'stamp', 'rank', 'ach'];
+
+/**
+ * Turns whatever was in storage into a save the game can trust: fills in what older saves don't have
+ * yet (v1 saves only knew days, coins and stamps) and repairs anything broken or out of range, so a
+ * bad value can't crash a screen or open days that don't exist.
+ */
+export function upgradeSave(raw: unknown): SaveData {
+  const o: Obj = isObj(raw) ? raw : {};
+  const s = o as unknown as SaveData;
+  s.day = int(o.day, 1, 1, DAYS.length);
+  s.coins = int(o.coins, 0);
+  s.sound = typeof o.sound === 'boolean' ? o.sound : true;
+  s.tips = Object.fromEntries(Object.entries(isObj(o.tips) ? o.tips : {}).filter(([, v]) => typeof v === 'boolean')) as Record<string, boolean>;
+  const oldBest = isObj(o.best) ? o.best : {};
+  s.best = Object.fromEntries(dayKeys(oldBest).filter((k) => isStr(oldBest[k]) && GRADE_LETTERS.includes(oldBest[k] as string) && (oldBest[k] as string).length === 1).map((k) => [+k, oldBest[k]])) as Record<number, string>;
+  const hadStamps = isObj(o.stamps);
+  const oldStamps = hadStamps ? (o.stamps as Obj) : {};
+  s.stamps = Object.fromEntries(dayKeys(oldStamps).filter((k) => Array.isArray(oldStamps[k])).map((k) => {
+    const a = oldStamps[k] as unknown[];
+    return [+k, [0, 1, 2].map((i) => a[i] === true)];
+  })) as Record<number, boolean[]>;
+
+  s.name = isStr(o.name) && o.name.trim() ? o.name.trim() : '小呱';
+  s.since = isNum(o.since) && o.since > 0 ? o.since : Date.now();
+  const gear = isObj(o.gear) ? o.gear : {};
+  s.gear = Object.fromEntries(GEAR.map((g) => [g.id, int(gear[g.id], 1, 1, gearMax(g.id))])) as Record<GearId, number>;
+  s.owned = [...new Set(list(o.owned).filter((id): id is string => isStr(id) && !!item(id)))];
   for (const id of STARTER_ITEMS) if (!s.owned.includes(id)) s.owned.push(id);
-  s.wear = Object.assign({ hat: null, neck: null }, s.wear);
-  const frames = Array.isArray(s.room?.frames) ? s.room.frames : [];
-  s.room = { frames: Array.from({ length: FRAME_HOOKS }, (_, i) => frames[i] ?? null), hidden: Array.isArray(s.room?.hidden) ? s.room.hidden : [] };
-  s.career = Object.assign(emptyCareer(), s.career);
-  s.log = Array.isArray(s.log) ? s.log : [];
-  s.notes = Array.isArray(s.notes) ? s.notes : [];
-  s.ledger = Array.isArray(s.ledger) ? s.ledger : [];
-  s.ach = s.ach && typeof s.ach === 'object' ? s.ach : {};
-  s.album = Array.isArray(s.album) ? s.album : [];
-  s.letters = Array.isArray(s.letters) ? s.letters : [];
-  s.seen = Object.assign({ notes: 0, letters: 0, ach: 0 }, s.seen);
-  s.seq = s.seq || 0;
+  const wear = isObj(o.wear) ? o.wear : {};
+  const worn = (v: unknown, kind: string) => (isStr(v) && s.owned.includes(v) && item(v)?.kind === kind ? v : null);
+  s.wear = { hat: worn(wear.hat, 'hat'), neck: worn(wear.neck, 'neck') };
+
+  s.album = list(o.album).filter((a): a is AlbumPhoto => isObj(a) && isStr(a.id) && isStr(a.caption) && isNum(a.day) && isStr(a.kind) && isNum(a.at));
+  const photos = new Set(s.album.map((a) => a.id));
+  const room = isObj(o.room) ? o.room : {};
+  const frames = list(room.frames);
+  s.room = {
+    // a frame holds a photo still in the album, in a frame the frog owns
+    frames: Array.from({ length: FRAME_HOOKS }, (_, i) => {
+      const f = frames[i];
+      if (!isObj(f) || !isStr(f.photo) || !photos.has(f.photo)) return null;
+      return { photo: f.photo, frame: isStr(f.frame) && item(f.frame)?.kind === 'frame' && s.owned.includes(f.frame) ? f.frame : STARTER_ITEMS[0] };
+    }),
+    hidden: list(room.hidden).filter((id): id is string => isStr(id) && !!item(id)),
+  };
+
+  const career = isObj(o.career) ? o.career : {};
+  const k = emptyCareer();
+  for (const key of Object.keys(k) as (keyof Career)[]) if (key !== 'byResident') (k[key] as number) = isNum(career[key]) ? Math.max(0, career[key] as number) : 0;
+  const byRes = isObj(career.byResident) ? career.byResident : {};
+  for (const [name, e] of Object.entries(byRes)) if (isObj(e) && isNum(e.n) && isStr(e.species)) k.byResident[name] = { n: Math.max(0, e.n), species: e.species };
+  s.career = k;
+  s.log = list(o.log).filter((e): e is DayLog => isObj(e) && isNum(e.day) && isNum(e.n) && isNum(e.at) && isStr(e.grade) && Array.isArray(e.stamps)).slice(0, LOG_KEEP);
+  s.notes = list(o.notes).filter((n): n is Note => isObj(n) && isNum(n.id) && isNum(n.at) && isStr(n.text) && NOTE_KINDS.includes(n.kind as NoteKind)).slice(0, NOTES_KEEP);
+  s.ledger = list(o.ledger).filter((e): e is Entry => isObj(e) && isNum(e.at) && isStr(e.text) && isNum(e.amount)).slice(0, LEDGER_KEEP);
+  const ach = isObj(o.ach) ? o.ach : {};
+  s.ach = Object.fromEntries(Object.entries(ach).filter(([id, at]) => isNum(at) && ACHIEVEMENTS.some((a) => a.id === id))) as Record<string, number>;
+  // letters are kept by id; older saves kept their words, and anything that isn't a letter goes
+  s.letters = [...new Set(list(o.letters).filter(isStr).map(letterId).filter((id): id is string => !!id))];
+  const seen = isObj(o.seen) ? o.seen : {};
+  s.seen = { notes: int(seen.notes, 0), letters: int(seen.letters, 0), ach: int(seen.ach, 0) };
+  // note and photo ids come from this counter: never hand out one that's already taken
+  const used = [...s.notes.map((n) => n.id), ...s.album.map((a) => Number(a.id.replace(/^p/, '')) || 0)];
+  s.seq = Math.max(int(o.seq, 0), ...used, 0);
+
   // a day passed before later days existed (or before the unlock was saved) still opens the next one
-  for (let d = DAYS.length - 1; d >= 1; d--) if (s.stamps?.[d]?.[0]) { s.day = Math.max(s.day, d + 1); break; }
+  for (let d = DAYS.length - 1; d >= 1; d--) if (s.stamps[d]?.[0]) { s.day = Math.max(s.day, d + 1); break; }
+  // the very first saves had no stamps: a grade there meant the day was finished, which opened the next
+  if (!hadStamps) for (const d of Object.keys(s.best).map(Number)) s.day = Math.max(s.day, Math.min(d + 1, DAYS.length));
+  s.cleared = o.cleared === true || !!s.stamps[DAYS.length]?.[0];
   return s;
 }
 
@@ -139,14 +206,19 @@ export interface Rank {
   pay: number;
 }
 
+/**
+ * Every rank has its own staff card (badge_rank0…6, shown in the hall). The pay share is the total
+ * for that rank, not on top of the last one, and the perk line says what changes. The top rank
+ * takes every stamp there is.
+ */
 export const RANKS: Rank[] = [
   { name: '实习快递员', need: 0, perk: '', pay: 0 },
-  { name: '正式快递员', need: 8, perk: '工牌换成正式的', pay: 0 },
+  { name: '正式快递员', need: 8, perk: '换上正式工牌', pay: 0 },
   { name: '熟练快递员', need: 20, perk: '底薪 +10%', pay: 0.1 },
-  { name: '优秀快递员', need: 35, perk: '底薪 +10%', pay: 0.1 },
+  { name: '优秀快递员', need: 35, perk: '底薪 +15%', pay: 0.15 },
   { name: '金牌快递员', need: 55, perk: '底薪 +20%，金色工牌', pay: 0.2 },
-  { name: '河湾传奇', need: 80, perk: '底薪 +20%', pay: 0.2 },
-  { name: '快递之王', need: 93, perk: '底薪 +20%', pay: 0.2 },
+  { name: '河湾传奇', need: 75, perk: '底薪 +25%', pay: 0.25 },
+  { name: '快递之王', need: DAYS.length * 3, perk: '底薪 +30%', pay: 0.3 },
 ];
 
 export const stampCount = (s: SaveData) => Object.values(s.stamps).flat().filter(Boolean).length;
@@ -195,7 +267,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'thrown1', name: '坐稳了', desc: '被甩出屏幕一次（也算一种经历）', goal: 1, value: (s) => c(s).thrown, coins: 10 },
   { id: 'letter1', name: '拾信人', desc: '捡到一封遗失的信', goal: 1, value: (s) => s.letters.length, coins: 30 },
   { id: 'letter3', name: '信使', desc: '集齐 3 封不一样的遗失的信', goal: 3, value: (s) => s.letters.length, coins: 60 },
-  { id: 'runs10', name: '老员工', desc: '上班满 10 天', goal: 10, value: (s) => c(s).runs, coins: 50 },
+  { id: 'runs10', name: '老员工', desc: '上班满 10 天', goal: 10, value: (s) => daysWorked(s), coins: 50 },
   { id: 'album10', name: '摄影师', desc: '相册里收藏 10 张照片', goal: 10, value: (s) => s.album.length, coins: 50, reward: 'neck_camera' },
   { id: 'home1', name: '安家落户', desc: '家里摆上第一件家具', goal: 1, value: decos, coins: 20 },
   { id: 'hats3', name: '时髦青蛙', desc: '拥有 3 顶帽子', goal: 3, value: hats, coins: 40 },
@@ -286,7 +358,7 @@ export function recordDay(
       const e = (k.byResident[p.to] ??= { n: 0, species: p.species });
       e.n++;
     }
-    if (ex.letter && !s.letters.includes(ex.letter)) s.letters.push(ex.letter);
+    if (ex.letter && letterText(ex.letter) && !s.letters.includes(ex.letter)) s.letters.push(ex.letter);
   }
 
   const stampCoins = o.fresh.filter(Boolean).length * FIRST_STAMP_COINS;
@@ -315,7 +387,7 @@ export function recordDay(
     if (wrong) addNote(s, 'mixup', mixupLine(wrong.to, rand), r.day, now);
     const wet = ex.parcels.find((p) => p.state === 'wet');
     if (wet) addNote(s, 'soaked', soakedLine(wet.owner, rand), r.day, now);
-    if (ex.letter) addNote(s, 'letter', `在路边捡到一封遗失的信：${ex.letter}`, r.day, now);
+    if (ex.letter && letterText(ex.letter)) addNote(s, 'letter', `在路边捡到一封遗失的信：${letterText(ex.letter)}`, r.day, now);
   }
   const names = ['准时下班', '干得漂亮', '今日挑战'];
   const got = o.fresh.map((f, i) => (f ? names[i] : '')).filter(Boolean);

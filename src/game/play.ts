@@ -1,17 +1,17 @@
 import { INK, P } from '../art/palette';
 import { K, TILE_H, boxSprite } from '../art/sprites';
-import { button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
+import { breakPieces, button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
 import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
 import type { Data } from '../engine/telemetry';
 import type { Canvas, Ctx } from '../platform/types';
 import { RESIDENT } from './cast';
 import { MAX_SLOTS, gearEffects, type GearEffects } from './catalog';
-import { SIZE_INFO, TUNING } from './config';
+import { DAYS, SIZE_INFO, TUNING } from './config';
 import type { Game, Scene } from './game';
 import { HqScene, type DayResult, type Photo } from './hq';
 import { buildLevel, dayConfig, type House, type Level, type Order, type Plat } from './level';
-import { HURRY_LINES, KICK_LINES, OFFWORK_LINES, dealLine } from './lines';
+import { HURRY_LINES, KICK_LINES, LETTERS, OFFWORK_LINES, dealLine } from './lines';
 import { drawHouse, houseSprites, updateResident, type ResidentView } from './resident';
 import { MapScene, drawStamp } from './map';
 
@@ -127,7 +127,7 @@ type HintKey = 'go' | 'refill' | 'call' | 'egg' | 'road' | 'swim' | 'rescue' | '
 type Step = 'intro' | 'pick' | 'aim' | 'go' | 'deliver' | 'refill' | 'rescue' | null;
 
 /** The drive home after everything is handed out: camera pans to the truck, it drives off. */
-interface Offwork { truck: Plat; t: number; line: string; baseY: number; drive: number; panX: number; panY: number; horn: boolean; card: boolean }
+interface Offwork { truck: Plat; t: number; line: string; baseY: number; drive: number; panX: number; panY: number; horn: boolean; card: boolean; lines?: string[] }
 
 const codeSeg = (o: Order): Seg => ({ code: o.code, color: o.house.color });
 const frac = (v: number) => v - Math.floor(v);
@@ -186,12 +186,6 @@ const HURRY_AT = 6;
 /** The leap gauge hangs on this long after the frog swims out of reach, so it doesn't flicker at the edge. */
 const GAUGE_GRACE = 0.35;
 
-const LETTERS = [
-  '“给河湾的快递员：谢谢你每天都来。——住在桥洞的老乌龟”',
-  '“如果你捡到这封信，说明你很会偷懒。——猫头鹰经理”',
-  '“明天的荷叶会更大一点。——一只路过的鹭”',
-];
-
 export class PlayScene implements Scene {
   readonly id = 'play';
   private lv: Level;
@@ -200,6 +194,8 @@ export class PlayScene implements Scene {
   private slowT = 0;
   private slowCd = 0;
   private time = 0;
+  /** Seconds the river has actually been running: urgent countdowns use it, so they stop while it does. */
+  private runT = 0;
   private frog: Frog;
   private bag: Order[] = [];
   private aim: { id: number; sx: number; sy: number; x: number; y: number; t: number } | null = null;
@@ -208,7 +204,10 @@ export class PlayScene implements Scene {
   private photos: Photo[] = [];
   private shots: Shot[] = [];
   private hintsDone = new Set<HintKey>();
-  private hint: { key: HintKey; line: Seg[]; sub?: string; t: number; dur: number; warn?: boolean } | null = null;
+  /** The hint caption; `low` once it's placed: just above the tray, or (false) under the top bar. */
+  private hint: { key: HintKey; line: Seg[]; sub?: string; t: number; dur: number; warn?: boolean; low?: boolean } | null = null;
+  /** Where the hint caption is drawn: it eases across when it has to make way for the frog. */
+  private capY = 0;
   private step: Step = 'intro';
   private stepT = 0;
   /** Lily the aim step points at. */
@@ -319,10 +318,14 @@ export class PlayScene implements Scene {
   private frogCue: { pose: string; from: number; until: number } | null = null;
   /** What the shop gear adds (bag slots, jump, swim). */
   private gear: GearEffects;
-  /** For the career totals at HQ: farthest landed jump, the lost letter if picked up. */
+  /** For the career totals at HQ: farthest landed jump, the lost letter's id if picked up. */
   private extra = { far: 0, letter: null as string | null };
 
-  constructor(private game: Game, readonly day: number) {
+  readonly day: number;
+
+  constructor(private game: Game, day: number) {
+    // only real days: the result is saved under this number
+    this.day = day = clamp(Math.round(day) || 1, 1, DAYS.length);
     const cfg = dayConfig(day);
     this.lv = buildLevel(cfg, game.H);
     void game.sprites.ensure(houseSprites(this.lv.houses));
@@ -398,6 +401,7 @@ export class PlayScene implements Scene {
   update(dt: number) {
     if (this.paused || this.leaving) return;
     this.time += dt;
+    if (!this.frozen() && !this.ended && !this.off) this.runT += dt;
     this.stepT += dt;
     this.shakeT = Math.max(0, this.shakeT - dt);
     this.honkT = Math.max(0, this.honkT - dt);
@@ -405,7 +409,7 @@ export class PlayScene implements Scene {
     this.dizzyT = Math.max(0, this.dizzyT - dt);
     if (this.driver && (this.driver.t += dt) > this.driver.dur) this.driver = null;
     // the swim wheel slides in while the frog is in the water
-    this.wheelA = approach(this.wheelA, this.frog.state === 'swim' ? 1 : 0, 10, dt);
+    this.wheelA = approach(this.wheelA, this.frog.state === 'swim' && !this.ended ? 1 : 0, 10, dt);
     for (const p of this.puffs) {
       p.t += dt;
       if (p.t < 0) continue;
@@ -459,6 +463,7 @@ export class PlayScene implements Scene {
 
     this.updateFrog(dt);
     this.updateBuffer(dt);
+    if (!this.ended) this.repairStep();
     this.updateFloaters(dt);
     this.updateTongue(dt);
     this.tiredT = Math.max(0, this.tiredT - dt);
@@ -493,6 +498,7 @@ export class PlayScene implements Scene {
     if (this.banner && (this.banner.t += dt) > this.banner.dur) this.banner = null;
     if (this.toast && (this.toast.t += dt) > 2.2) this.toast = null;
     if (this.hint && (this.hint.t += dt) > this.hint.dur) this.hint = null;
+    if (this.hint) this.placeHint(dt);
     if (this.shakeCard && (this.shakeCard.t += dt) > 0.4) this.shakeCard = null;
   }
 
@@ -540,6 +546,49 @@ export class PlayScene implements Scene {
     this.stepT = 0;
   }
 
+  /**
+   * Each tutorial step waits for something that only makes sense in one spot: picking needs the frog
+   * on the truck with room in the bag, delivering needs it on a house with parcels, and so on. If the
+   * frog ends up somewhere else anyway, the tutorial moves on rather than holding the river still forever.
+   */
+  private repairStep() {
+    const s = this.step;
+    if (s !== 'pick' && s !== 'aim' && s !== 'deliver' && s !== 'refill') return;
+    const f = this.frog;
+    const on = f.state === 'stand' ? f.on : null;
+    const onTruck = on?.kind === 'truck';
+    const more = this.lv.orders.some((o) => o.state === 'pool');
+    // where the lesson goes on from: deliver what's in the bag, or head back for more
+    const next: Step = this.bag.length ? (this.refilled ? null : 'go') : more && !onTruck && !this.floaters.length && !this.tongue ? 'refill' : null;
+    let to: Step | undefined;
+    if (s === 'pick') {
+      if (!onTruck || !this.truckHasRoom()) to = next;
+    } else if (s === 'aim') {
+      if (!this.bag.length) to = onTruck && this.truckHasRoom() ? 'pick' : next;
+      else if (f.state !== 'stand') to = 'go';
+    } else if (s === 'deliver') {
+      if (!this.cod && (on?.kind !== 'house' || !this.bag.length)) to = next;
+    } else if (this.bag.length) to = next;
+    if (to === undefined || to === s) return;
+    this.log('step_fix', { from: s, to, state: f.state, on: on?.kind ?? null, bag: this.bag.length });
+    if (s === 'refill' && this.hint?.key === 'refill') this.hint = null;
+    this.setStep(to);
+  }
+
+  /** Whether any parcel on the truck's row of cards still goes in the bag. */
+  private truckHasRoom() {
+    const used = this.slotsUsed();
+    return this.cargo().slice(0, 6).some((o) => used + SIZE_INFO[o.size].slots <= this.cfg.bagSlots);
+  }
+
+  /** Lets go of a pull in progress, and of one pressed or released in mid-air, without jumping. */
+  private dropGesture() {
+    this.aim = null;
+    this.early = null;
+    this.queued = null;
+    this.stopCharge();
+  }
+
   private placeTruck() {
     this.lv.truck.y = this.camY + this.H * TUNING.truckAnchor + Math.sin(this.time * 0.55 + 2.1) * 26;
   }
@@ -574,7 +623,7 @@ export class PlayScene implements Scene {
         else this.land(j.x1, j.y1);
       }
     } else if (f.state === 'board') this.updateBoard(dt);
-    else if (f.state === 'swim' && this.step !== 'rescue' && !this.cod) this.updateSwim(dt);
+    else if (f.state === 'swim' && this.step !== 'rescue' && !this.cod && !this.ended) this.updateSwim(dt);
     f.give = Math.max(0, f.give - dt * 2.2);
     // satchel swing spring
     f.swingV += (-60 * f.swing - 6 * f.swingV) * dt;
@@ -793,6 +842,8 @@ export class PlayScene implements Scene {
   private standOn(p: Plat, x: number, y: number, how: How) {
     const f = this.frog;
     const dist = f.jump?.dist ?? 0;
+    // reeled in by the driver's rope: the hard landing on the bed (updateBoard adds the rest of it)
+    const hauled = !!f.board?.yank;
     // the road rules (wait for the truck, or exhaust) are sorted out once the frog has settled
     this.roadSpot = null;
     this.puffed = false;
@@ -863,7 +914,7 @@ export class PlayScene implements Scene {
     } else {
       p.press = impact * 0.5;
       this.fx.push({ kind: 'dust', x, y, t: 0, dur: 0.5, size: impact });
-      if (p.kind === 'truck') au.play('land_truck', { volume: 0.6 + impact * 0.4 });
+      if (p.kind === 'truck') au.play('land_truck', { volume: hauled ? 1 : 0.6 + impact * 0.4 });
       else au.play('land_house', { volume: 0.6 + impact * 0.4, rate: 1.1 - impact * 0.15 });
     }
     if (dist > 260) {
@@ -882,9 +933,12 @@ export class PlayScene implements Scene {
       }
       this.doneHint('refill');
       if (this.step === 'refill') {
-        // back at the truck: pick the next parcels, as many as the bag takes
+        // back at the truck: pick the next parcels, as many as the bag takes (if any still go in)
         this.refilled = true;
-        this.setStep('pick');
+        const pick = this.truckHasRoom();
+        this.setStep(pick ? 'pick' : null);
+        // only the cards respond now: a pull carried over from the air would leave the truck behind
+        if (pick) this.dropGesture();
       }
     } else if (p.kind === 'house' && this.bag.length) {
       if (this.slowCd <= 0) {
@@ -895,6 +949,7 @@ export class PlayScene implements Scene {
       if (this.step === 'go' && this.bag.some((o) => o.house === h)) {
         this.setStep('deliver');
         this.hint = null;
+        this.dropGesture();
       } else if (this.cfg.tutorial && !this.bag.some((o) => o.house === h)) {
         const waits = this.lv.orders.filter((o) => o.house === h && (o.state === 'pool' || o.state === 'bag'));
         const line: Seg[] = waits.length ? ['这家等的是 ', ...waits.map(codeSeg), '，你的是 ', codeSeg(this.bag[0])] : ['这家没有包裹，你的是 ', codeSeg(this.bag[0])];
@@ -1006,7 +1061,7 @@ export class PlayScene implements Scene {
       this.fx.push({ kind: 'dust', x: tx, y: t.y + 40, t: 0, dur: 0.6, size: 1.1 });
       this.popups.push({ text: '咚！', x: tx - 110, y: t.y - 10, t: 0, color: P.orangeDeep });
       this.fx.push({ kind: 'say', x: 0, y: 0, t: -0.35, dur: 1.1, label: '晕乎乎…' });
-      au.play('land_truck', { volume: 1 });
+      // the thud itself already played in standOn, once
       au.play('frog_croak', { volume: 0.6, rate: 0.75, delay: 0.3 });
       this.game.platform.vibrate(60);
     }
@@ -1448,6 +1503,8 @@ export class PlayScene implements Scene {
     const f = this.frog;
     const len = Math.hypot(dx, dy);
     if (f.state !== 'stand') return;
+    // while the tutorial wants a card tapped (or the till is open) the frog stays put
+    if (this.step === 'intro' || this.step === 'pick' || this.step === 'deliver' || this.step === 'rescue' || this.cod) return;
     if (len < TUNING.deadDrag) {
       // a tap (or a nudge) where a pull was wanted: what was under the finger says what the player was after
       const n = ++this.tally.taps;
@@ -1518,7 +1575,9 @@ export class PlayScene implements Scene {
 
   private checkUrgent() {
     for (const o of this.bag) {
-      if (o.urgent && !o.late && this.time > o.deadline) {
+      if (!o.urgent || o.late) continue;
+      if (!o.deadline) this.startUrgent(o);
+      else if (this.runT > o.deadline) {
         o.late = true;
         this.log('urgent_late', { code: o.code });
         this.showToast('加急件超时了，还是要送到哦');
@@ -1574,9 +1633,10 @@ export class PlayScene implements Scene {
       this.showHint('go', ['跳到挂着 ', codeSeg(goal), ' 的房子，送出包裹'], { dur: 5, sub: '河水一直在流，别落到红线下面' });
     }
     // day 1: with nothing in the bag and parcels still on the truck, the way back stays marked until the frog is there
-    if (this.cfg.tutorial && !this.bag.length && f.state === 'stand' && !onTruck && (this.step === 'go' || this.step === null) && this.lv.orders.some((o) => o.state === 'pool')) this.setStep('refill');
+    // (parcels still floating, or on the tongue, are on their way back to the bag: no refill yet)
+    if (this.cfg.tutorial && !this.bag.length && !this.floaters.length && !this.tongue && f.state === 'stand' && !onTruck && (this.step === 'go' || this.step === null) && this.lv.orders.some((o) => o.state === 'pool')) this.setStep('refill');
     if (this.step === 'refill' && f.state === 'stand') this.showHint('refill', '跳回【运输车】，取下一个包裹', { dur: 999, sub: '车上还有包裹等着送，别忘了' });
-    if (onTruck && this.truckCards().some((c) => c.order.urgent)) this.showHint('urgent', '【红标签】是加急件，倒计时内送到有奖金', { dur: 5 });
+    if (onTruck && this.truckCards().some((c) => c.order.urgent)) this.showHint('urgent', '【红标签】是加急件，倒计时内送到有奖金', { dur: 5, sub: '它的房子出现在屏幕上，才开始倒计时' });
     if (onTruck && this.truckCards().some((c) => c.order.size === 2)) this.showHint('heavy', '【大件】很重，背着它跳不远', { dur: 5 });
   }
 
@@ -1648,8 +1708,12 @@ export class PlayScene implements Scene {
     e.got = true;
     this.log('egg');
     this.hint = null;
-    this.extra.letter = pick(LETTERS, Math.random);
-    this.showHint('egg', '捡到一封【遗失的信】！', { dur: 5, sub: this.extra.letter });
+    // one the frog hasn't found yet, while there are any
+    const found = this.game.save.letters;
+    const fresh = LETTERS.filter((l) => !found.includes(l.id));
+    const letter = pick(fresh.length ? fresh : LETTERS, Math.random);
+    this.extra.letter = letter.id;
+    this.showHint('egg', '捡到一封【遗失的信】！', { dur: 5, sub: letter.text });
     this.queueShot('egg', '捡到一封遗失的信！', 8, 0.1);
     this.popups.push({ text: '发现彩蛋！', x: e.x - 60, y: e.y - 60, t: 0, color: P.orangeDeep });
     this.game.audio.play('paper_flip');
@@ -1814,6 +1878,9 @@ export class PlayScene implements Scene {
     this.endT = 0;
     this.aim = null;
     this.stopCharge();
+    // nothing left to steer: the swim wheel and the leap gauge go with the hints
+    this.stick = null;
+    this.gauge = null;
     this.game.audio.setMusic(null);
     this.bubbles?.stop(0.3);
     this.bubbles = null;
@@ -1861,7 +1928,9 @@ export class PlayScene implements Scene {
       falls: this.stats.falls,
       wrongNames: orders.filter((o) => o.state === 'wrong' && o.deliveredTo).map((o) => o.deliveredTo!.name),
       photos: this.pickPhotos(),
-      codTotal: orders.filter((o) => o.cod).length,
+      codTotal: orders.filter((o) => o.cod && o.state === 'delivered').length,
+      codOrders: orders.filter((o) => o.cod).length,
+      rope: this.ropeUsed,
       codRight: this.stats.codRight,
       codTips: this.stats.codTips,
       codLoss: this.stats.codLoss,
@@ -1918,12 +1987,8 @@ export class PlayScene implements Scene {
     this.fly(o);
     o.state = 'bag';
     if (!o.pickedAt) o.pickedAt = this.time;
-    if (o.urgent && !o.deadline) {
-      // Enough time for the house to come down to the frog, plus a margin. Kept if it's put back.
-      const ahead = Math.max(0, this.H * 0.45 - this.sy(o.house.plat.y));
-      o.deadline = this.time + Math.max(TUNING.urgentSeconds, ahead / this.cfg.speed + 16);
-    }
     this.bag.push(o);
+    if (o.urgent && !o.deadline) this.startUrgent(o);
     this.log('pickup', { code: o.code, size: o.size, urgent: o.urgent, cod: !!o.cod, used: this.slotsUsed() });
     if (o.urgent) this.game.audio.play('urgent_alert', { delay: 0.25 });
     // off the cargo stack and into the frog's satchel
@@ -1941,6 +2006,16 @@ export class PlayScene implements Scene {
         this.aimTarget = this.findAimTarget(o.house);
       }
     }
+  }
+
+  /**
+   * An urgent parcel's countdown starts once its house has come into view (right away if it already
+   * has), so one picked up early isn't timed while its house is still far up the river.
+   */
+  private startUrgent(o: Order) {
+    if (this.sy(o.house.plat.y) < this.game.safeT + 160) return;
+    o.urgentAt = this.runT;
+    o.deadline = this.runT + TUNING.urgentSeconds;
   }
 
   /** On the truck, a parcel tapped in the satchel goes back onto the cargo stack. */
@@ -1994,7 +2069,7 @@ export class PlayScene implements Scene {
       this.trip++;
       this.stats.bestTrip = Math.max(this.stats.bestTrip, this.trip);
       const ch = this.cfg.challenge;
-      if (o.urgent && this.time - o.pickedAt <= (ch.kind === 'urgentFast' ? ch.sec : 20)) this.stats.fastUrgent = true;
+      if (o.urgent && o.deadline && this.runT - o.urgentAt <= (ch.kind === 'urgentFast' ? ch.sec : 20)) this.stats.fastUrgent = true;
       const n = this.lv.orders.filter((x) => x.state === 'delivered').length;
       if (n === 1) this.queueShot('first', '第一单送达！', 4, T + 0.3);
       if (o.urgent && !o.late) this.queueShot('urgent', '加急件准时送达！', 5, T + 0.3);
@@ -2239,7 +2314,7 @@ export class PlayScene implements Scene {
       if (!c || !hit(c.rect, x, y, 10) || this.ended) return;
       if (this.trayMode === 'pickup') {
         if (c.where === 'truck') this.pickup(c.order);
-        else if (this.step !== 'pick') this.putBack(c.order);
+        else this.putBack(c.order);
       } else if (this.trayMode === 'deliver' && this.frog.on?.house) this.deliver(c.order, this.frog.on.house);
       return;
     }
@@ -2256,6 +2331,17 @@ export class PlayScene implements Scene {
     this.aim = null;
     if (this.frog.state === 'stand') this.startJump(x - a.sx, y - a.sy, a.t, a.sx, a.sy);
     this.stopCharge();
+  }
+
+  /** The system took the touch away: let go of whatever it held without jumping or tapping anything. */
+  cancel(id: number) {
+    if (this.stick && this.stick.id === id) this.stick = null;
+    if (this.aim && this.aim.id === id) {
+      this.aim = null;
+      this.stopCharge();
+    }
+    if (this.early && this.early.id === id) this.early = null;
+    this.pressed = null;
   }
 
   /** Closes the briefing card; day 1 goes on into the hands-on tutorial. */
@@ -2356,7 +2442,8 @@ export class PlayScene implements Scene {
       this.chargeMax = false;
       this.predicted = false;
     }
-    const soon = this.bag.some((o) => o.urgent && !o.late && o.deadline - this.time <= 10);
+    // the last ten seconds tick, but not while the river (and so the countdown) stands still
+    const soon = !this.frozen() && this.bag.some((o) => o.urgent && !o.late && o.deadline && o.deadline - this.runT <= 10);
     if (soon && !this.tick && !this.ended) this.tick = au.loop('urgent_tick_loop', { volume: 0.6 });
     if ((!soon || this.ended) && this.tick) {
       this.tick.stop(0.2);
@@ -2406,13 +2493,51 @@ export class PlayScene implements Scene {
   // ---------------------------------------------------------------- hints, photos
 
   private showHint(key: HintKey, line: string | Seg[], o: { dur?: number; sub?: string; warn?: boolean; again?: boolean } = {}) {
-    if (this.hintsDone.has(key) || this.hint?.key === key) return;
+    if (this.ended || this.hintsDone.has(key) || this.hint?.key === key) return;
     // a standing tutorial hint only gives way to emergencies
     if (this.hint && this.hint.dur > 50 && key !== 'swim' && key !== 'warn' && key !== 'wrongHouse') return;
     this.hint = { key, line: typeof line === 'string' ? segs(line) : line, sub: o.sub, t: 0, dur: o.dur ?? 5, warn: o.warn };
     if (!o.again) this.hintsDone.add(key);
     const n = (this.tally.hints[key] = (this.tally.hints[key] ?? 0) + 1);
     if (n <= 3) this.log('hint', { key });
+  }
+
+  /**
+   * The two places a hint caption can go: under the top bar (and under the urgent card when one is
+   * showing), or low, just above the tray and the red line, over river the frog has already left behind.
+   */
+  private hintSpots(sub: boolean) {
+    const h = sub ? 136 : 92;
+    const top = this.game.safeT + (this.bag.some((o) => o.urgent) ? 214 : 132);
+    const ty = this.trayY();
+    // clear of the tray, the swim wheel and the countdown pill, and above the red line
+    let floor = Math.min(this.trayMode === 'pickup' ? ty - 292 : this.trayMode === 'deliver' ? ty - 118 : ty - 66, this.H * TUNING.warnLine - 24);
+    if (this.wheelA > 0.01) floor = Math.min(floor, ty - 144);
+    if (this.callT !== null) floor = Math.min(floor, ty - 208);
+    return { h, top, low: floor - 14 - h };
+  }
+
+  /**
+   * Puts the hint caption where it won't hide what matters: low, unless the frog (or its leap gauge) is
+   * down there, in which case under the top bar. Once placed it only moves when the frog comes under it.
+   */
+  private placeHint(dt: number) {
+    const h = this.hint!;
+    const s = this.hintSpots(!!h.sub);
+    const f = this.frog;
+    const fy = (f.jump ? this.sy(f.jump.y1) : this.sy(f.y)) - f.z;
+    let top = fy - 130, bot = fy + 30;
+    const g = this.gaugeAt();
+    if (g) {
+      top = Math.min(top, g.y - 84);
+      bot = Math.max(bot, g.y + 46);
+    }
+    const covers = (y: number) => bot > y - 16 && top < y + s.h + 16;
+    if (h.low === undefined) {
+      h.low = !covers(s.low);
+      this.capY = h.low ? s.low : s.top;
+    } else if (covers(h.low ? s.low : s.top) && !covers(h.low ? s.top : s.low)) h.low = !h.low;
+    this.capY = approach(this.capY, h.low ? s.low : s.top, 14, dt);
   }
 
   private doneHint(key: HintKey) {
@@ -2501,6 +2626,9 @@ export class PlayScene implements Scene {
       this.drawWarn(ctx);
       this.drawHud(ctx);
       this.drawWheel(ctx);
+      // the leap gauge goes over everything: the frog's chance to get out depends on seeing it
+      ctx.translate(this.camX, this.panY);
+      this.drawGauge(ctx);
       ctx.restore();
     }
     if (this.cod && !this.paused) this.drawCod(ctx);
@@ -2514,12 +2642,18 @@ export class PlayScene implements Scene {
     const on = f.state === 'stand' ? f.on : null;
     this.trayMode = this.ended || this.cod ? 'bag' : on?.kind === 'truck' ? 'pickup' : on?.kind === 'house' && this.bag.length ? 'deliver' : 'bag';
     const y = this.trayY();
+    const n = this.bag.length;
     if (this.trayMode === 'deliver') {
-      this.cards = this.bag.slice(0, 4).map((order, i) => ({ order, where: 'bag', rect: { x: 146 + i * 118, y: y - 62, w: 108, h: 124 } }));
+      // every parcel in the bag (up to six), smaller when there are many so they all fit beside the satchel
+      const w = Math.min(108, Math.floor((578 - (n - 1) * 10) / n)), h = Math.round((w * 124) / 108);
+      this.cards = this.bag.map((order, i) => ({ order, where: 'bag', rect: { x: 146 + i * (w + 10), y: y - h / 2, w, h } }));
       return;
     }
-    // the satchel's contents, small, beside the backpack button; on the truck, the cargo above
-    this.cards = this.bag.slice(0, 4).map((order, i) => ({ order, where: 'bag', rect: { x: 146 + i * 92, y: y - 49, w: 84, h: 98 } }));
+    // the satchel's contents, small, beside the backpack button (bunched up clear of the swim wheel
+    // while it's out); on the truck, the cargo above
+    const right = this.trayMode === 'bag' && this.wheelA > 0.01 ? 494 : 724;
+    const gap = n > 1 ? Math.min(92, (right - 146 - 84) / (n - 1)) : 92;
+    this.cards = this.bag.map((order, i) => ({ order, where: 'bag', rect: { x: 146 + i * gap, y: y - 49, w: 84, h: 98 } }));
     if (this.trayMode === 'pickup') {
       const ty = this.truckRowY();
       this.cargo().slice(0, 6).forEach((order, i) => this.cards.push({ order, where: 'truck', rect: { x: 34 + i * 114, y: ty - 60, w: 104, h: 120 } }));
@@ -2610,16 +2744,19 @@ export class PlayScene implements Scene {
     if (f.board?.yank) this.drawRope(ctx, f.board.truck);
     this.drawTongue(ctx);
     for (const e of this.fx) if (e.t >= 0 && e.kind !== 'ripple' && e.kind !== 'floatBox' && e.kind !== 'sink') this.drawFx(ctx, e);
+    const g = this.gaugeAt();
     for (const p of this.popups) {
       if (p.t < 0) continue;
       const k = p.t / 1.2;
-      text(ctx, p.text, p.x, this.sy(p.y) - 40 * easeOutCubic(k), 34, { color: p.color, bold: true, alpha: 1 - k * k });
+      let y = this.sy(p.y) - 40 * easeOutCubic(k);
+      // lifted over the leap gauge instead of across it
+      if (g && Math.abs(p.x - g.x) < 84 + p.text.length * 17 && y > g.y - 104 && y < g.y + 64) y = g.y - 104;
+      text(ctx, p.text, p.x, y, 34, { color: p.color, bold: true, alpha: 1 - k * k });
     }
     this.drawPuffs(ctx);
     this.drawDizzy(ctx);
     this.drawDriver(ctx);
     this.drawLeapTarget(ctx);
-    this.drawGauge(ctx);
   }
 
   /** While parcels are adrift: the tongue's reach round the frog, with a notch pointing at each one out of it. */
@@ -2706,13 +2843,26 @@ export class PlayScene implements Scene {
     ctx.restore();
   }
 
-  /** The leap gauge over the swimming frog once tapped up: green in the middle, a needle swinging across. */
-  private drawGauge(ctx: Ctx) {
+  /**
+   * Where the leap gauge is (its middle): over the swimming frog, or under it when the frog is so high
+   * that the gauge would end up under the top bar, the lifeline tag or the urgent card.
+   */
+  private gaugeAt() {
     const f = this.frog;
+    if (!this.gauge || f.state !== 'swim') return null;
+    const x = clamp(f.x, 90, 660), fy = this.sy(f.y);
+    const t = this.game.safeT;
+    const ceil = x - 84 < 190 && this.bag.some((o) => o.urgent) ? t + 212 : x + 84 > 560 ? t + 130 : t + 88;
+    return fy - 118 - 84 >= ceil ? { x, y: fy - 118 } : { x, y: fy + 100 };
+  }
+
+  /** The leap gauge by the swimming frog once tapped up: green in the middle, a needle swinging across. */
+  private drawGauge(ctx: Ctx) {
     const g = this.gauge;
-    if (!g || f.state !== 'swim') return;
+    const at = this.gaugeAt();
+    if (!g || !at) return;
     const R = 62;
-    const x = clamp(f.x, 90, 660), y = Math.max(this.game.safeT + 170, this.sy(f.y) - 118);
+    const { x, y } = at;
     const zone = this.gaugeZone();
     const reach = !!this.leapTarget();
     const ang = (v: number) => Math.PI + v * Math.PI;
@@ -2749,7 +2899,17 @@ export class PlayScene implements Scene {
     ctx.strokeStyle = INK;
     ctx.lineWidth = 2;
     ctx.stroke();
-    text(ctx, !reach ? '够不着' : inside ? '点！' : '看准…', x, y + 28, 26, { bold: true, color: inside ? P.lilyDeep : P.white });
+    // the word on a little tag of its own, readable over water and lily pads alike
+    const label = !reach ? '够不着' : inside ? '点！' : '看准…';
+    ctx.font = font(26, true);
+    const lw = ctx.measureText(label).width + 24;
+    roundRect(ctx, x - lw / 2, y + 12, lw, 34, 17);
+    ctx.fillStyle = inside ? P.gold : P.cream;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    text(ctx, label, x, y + 30, 26, { bold: true, color: !reach ? P.inkSoft : INK });
     ctx.restore();
   }
 
@@ -2980,7 +3140,14 @@ export class PlayScene implements Scene {
     const x = t.x + honk, y = this.sy(t.y) + Math.sin(this.time * 13) * 0.8;
     drawTruckBase(ctx, x, y, -this.camY);
     sp.draw(ctx, 'truck_blue', x, y);
-    text(ctx, '蛙趣', x, y + 173 * K + 0.5, 11, { bold: true });
+    // the name plate on the tailgate, drawn over the painted one at a size that can be read
+    roundRect(ctx, x - 44, y + 173 * K - 13, 72, 26, 7);
+    ctx.fillStyle = P.cream;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    text(ctx, '蛙趣', x - 8, y + 173 * K + 1, 18, { bold: true, color: P.blue });
     // cargo = the shared pool of parcels still waiting
     const pool = this.lv.orders.filter((o) => o.state === 'pool' && !o.house.passed).slice(0, 5);
     // stacked on the inner half of the bed, the half that's on screen
@@ -3576,7 +3743,13 @@ export class PlayScene implements Scene {
         ctx.font = font(30, true);
         const w = ctx.measureText(e.label ?? '').width + 36;
         // kept on screen when the frog is near an edge
-        const bx = clamp(f.x + 54, w / 2 + 12, 738 - w / 2), by = Math.max(this.game.safeT + 130, this.sy(f.y) - f.z - 128);
+        let bx = clamp(f.x + 54, w / 2 + 12, 738 - w / 2), by = Math.max(this.game.safeT + 152, this.sy(f.y) - f.z - 128);
+        const g = this.gaugeAt();
+        if (g) {
+          // beside the leap gauge rather than across it
+          bx = g.x + 92 + w <= 738 ? g.x + 92 + w / 2 : g.x - 92 - w / 2;
+          by = g.y - 36;
+        }
         ctx.globalAlpha = a;
         ctx.translate(bx, by);
         ctx.scale(pop, pop);
@@ -3839,8 +4012,9 @@ export class PlayScene implements Scene {
     ctx.fillRect(43, ty + 27, 5, 18);
     ctx.fillRect(53, ty + 27, 5, 18);
     pressOut(ctx, this.pressed === 'pause', () => ellipse(ctx, 50, ty + 36, 23, 23));
-    text(ctx, `第${this.day}天`, 118, ty + 37, 30, { bold: true });
-    const x0 = 200, x1 = 532, ly = ty + 36;
+    text(ctx, `第${this.day}天`, 86, ty + 37, 30, { bold: true, align: 'left' });
+    // clear of a two-digit day, and the van stops short of the postmark at the end of the route
+    const x0 = 212, x1 = 520, ly = ty + 36;
     const prog = clamp(-this.camY / this.cfg.length, 0, 1);
     ctx.save();
     ctx.strokeStyle = 'rgba(74,59,48,0.35)';
@@ -3894,14 +4068,18 @@ export class PlayScene implements Scene {
     ctx.restore();
     // delivered count
     const handed = this.lv.orders.filter((o) => o.state === 'delivered' || o.state === 'wrong').length;
-    sp.draw(ctx, 'box0', 618, ly + 14, 0.95);
-    text(ctx, `${handed}/${this.lv.orders.length}`, 690, ly + 2, 30, { bold: true });
+    const count = `${handed}/${this.lv.orders.length}`;
+    ctx.font = font(30, true);
+    const cw = ctx.measureText(count).width;
+    sp.draw(ctx, 'box0', 716 - cw - 26, ly + 14, 0.95);
+    text(ctx, count, 716, ly + 2, 30, { bold: true, align: 'right' });
 
     this.drawUrgentCard(ctx, ty + 84);
 
     // Power gauge while aiming
     if (this.aim && this.frog.state === 'stand') {
-      const gx = 696, gy0 = H * 0.42, gh = H * 0.24;
+      // on the left edge when the frog is on the right (on the truck), so it never covers the frog
+      const gx = this.frog.x > 560 ? 14 : 696, gy0 = H * 0.42, gh = H * 0.24;
       panel(ctx, gx, gy0, 40, gh, { r: 18, shadow: false });
       const inner = { x: gx + 10, y: gy0 + 12, w: 20, h: gh - 24 };
       roundRect(ctx, inner.x, inner.y, inner.w, inner.h, 9);
@@ -3932,16 +4110,19 @@ export class PlayScene implements Scene {
     this.drawTray(ctx);
 
     if (this.callT !== null && !this.off && this.frog.state !== 'board') this.drawCall(ctx);
+    if (!this.off && !this.ended && this.step !== 'intro') this.drawLifeline(ctx);
     // hint bubble
     if (this.hint && !this.paused && (!this.step || this.step === 'go' || this.step === 'refill')) this.drawHint(ctx);
-    if (!this.off && !this.ended && this.step !== 'intro') this.drawLifeline(ctx);
     if (this.toast) {
       const a = Math.min(1, this.toast.t * 6) * (this.toast.t > 1.8 ? (2.2 - this.toast.t) / 0.4 : 1);
       ctx.save();
       ctx.globalAlpha = a;
       ctx.font = '26px WK';
       const w = Math.max(220, ctx.measureText(this.toast.text).width + 60);
-      const y = this.trayY() - (this.trayMode === 'pickup' ? 350 : this.callT !== null ? 270 : 190);
+      let y = this.trayY() - (this.trayMode === 'pickup' ? 372 : this.callT !== null ? 270 : 190);
+      // over a hint caption that's down here
+      const h = this.hint;
+      if (h?.low && y < this.capY + (h.sub ? 136 : 92) + 8 && y + 56 > this.capY - 8) y = this.capY - 70;
       panel(ctx, 375 - w / 2, y, w, 56, { r: 28, fill: P.cream });
       text(ctx, this.toast.text, 375, y + 29, 26);
       ctx.restore();
@@ -3972,10 +4153,13 @@ export class PlayScene implements Scene {
   }
 
   private drawUrgentCard(ctx: Ctx, y: number) {
-    const urgent = this.bag.filter((o) => o.urgent).sort((a, b) => a.deadline - b.deadline)[0];
+    // the one running out first, then one whose house hasn't shown up yet (its clock still full), then a late one
+    const due = (o: Order) => (o.late ? 2e9 : o.deadline || 1e9);
+    const urgent = this.bag.filter((o) => o.urgent).sort((a, b) => due(a) - due(b))[0];
     if (!urgent) return;
     const sp = this.game.sprites;
-    const left = Math.ceil(urgent.deadline - this.time);
+    const started = urgent.deadline > 0;
+    const left = Math.max(0, started ? Math.ceil(urgent.deadline - this.runT) : TUNING.urgentSeconds);
     ctx.save();
     ctx.translate(26, y);
     ctx.rotate(-0.04);
@@ -3996,8 +4180,8 @@ export class PlayScene implements Scene {
     sp.draw(ctx, `avatar_${urgent.house.species}`, 38, 66, 0.82);
     codeTag(ctx, 100, 54, urgent.code, urgent.house.color, 0.85);
     const late = urgent.late;
-    const s = late ? '超时' : `0:${String(Math.max(0, left)).padStart(2, '0')}`;
-    text(ctx, s, 104, 88, 26, { color: late || left <= 10 ? P.red : INK, bold: true });
+    const s = late ? '超时' : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    text(ctx, s, 104, 88, 26, { color: late || (started && left <= 10) ? P.red : started ? INK : P.inkSoft, bold: true });
     ctx.restore();
   }
 
@@ -4006,7 +4190,8 @@ export class PlayScene implements Scene {
     const cy = this.trayY();
     if (this.trayMode === 'deliver') {
       const first = this.cards[0]?.rect ?? { x: 146, y: cy - 62, w: 108, h: 124 };
-      const tw = Math.max(this.cards.length * 118 + 14, 330);
+      const last = this.cards[this.cards.length - 1]?.rect ?? first;
+      const tw = Math.max(last.x + last.w - first.x + 24, 330);
       panel(ctx, first.x - 12, first.y - 52, tw, first.h + 64, { r: 16, fill: '#EFE3C8' });
       text(ctx, `交给 ${this.frog.on!.house!.name}`, first.x + 2, first.y - 26, 24, { align: 'left', bold: true, maxWidth: tw - 30 });
     } else if (this.trayMode === 'pickup') {
@@ -4111,16 +4296,18 @@ export class PlayScene implements Scene {
     codeTag(ctx, x + w * 0.76, y + 30 * k, o.code, o.house.color, 1.05 * k);
     sp.draw(ctx, boxSprite(o.size, o.urgent, o.cod), x + w / 2, y + h - 10 * k, (o.size === 0 ? 1.15 : o.size === 1 ? 1 : 0.9) * k);
     if (o.urgent || o.cod) {
+      // a label stuck on the parcel's lid, below the avatar and inside the card
       const label = o.urgent ? '急' : `到付¥${o.cod!.price}`;
       ctx.font = font(18 * k, true);
-      const bw = ctx.measureText(label).width + 12 * k;
-      roundRect(ctx, x - 6, y + h * 0.5 - 12 * k, bw, 24 * k, 6);
+      const bw = Math.min(w - 10, ctx.measureText(label).width + 14 * k);
+      const ly = y + 66 * k;
+      roundRect(ctx, x + w / 2 - bw / 2, ly - 12 * k, bw, 24 * k, 6);
       ctx.fillStyle = o.urgent ? P.red : P.gold;
       ctx.fill();
       ctx.strokeStyle = INK;
       ctx.lineWidth = 1.8;
       ctx.stroke();
-      text(ctx, label, x - 6 + bw / 2, y + h * 0.5 + 1, 18 * k, { color: o.urgent ? P.white : INK, bold: true });
+      text(ctx, label, x + w / 2, ly + 1, 18 * k, { color: o.urgent ? P.white : INK, bold: true, maxWidth: bw - 8 });
     }
     if (o.dunks) this.drawDunks(ctx, x + 8 * k, y + h - 16 * k, o.dunks, k);
     if (down) {
@@ -4149,10 +4336,10 @@ export class PlayScene implements Scene {
     ctx.restore();
   }
 
-  /** A small tag under the top bar: whether today's lifeline is still there. */
+  /** A small tag under the right end of the top bar: whether today's lifeline is still there. */
   private drawLifeline(ctx: Ctx) {
     const left = this.ropeUsed ? 0 : 1;
-    const x = 20, y = this.game.safeT + 88, w = 168, h = 36;
+    const w = 168, h = 36, x = 730 - w, y = this.game.safeT + 88;
     ctx.save();
     ctx.globalAlpha *= left ? 0.95 : 0.55;
     roundRect(ctx, x, y, w, h, 18);
@@ -4173,10 +4360,10 @@ export class PlayScene implements Scene {
 
   private drawHint(ctx: Ctx) {
     const h = this.hint!;
+    // shown since the last update (by a tap): placed now, so it doesn't flash up somewhere else first
+    if (h.low === undefined) this.placeHint(0);
     const a = Math.min(1, h.t * 5) * (h.t > h.dur - 0.3 ? Math.max(0, (h.dur - h.t) / 0.3) : 1);
-    // below the top bar, or below the urgent card when one is showing
-    const urgent = this.bag.some((o) => o.urgent);
-    this.drawCaption(ctx, h.line, h.sub, this.game.safeT + (urgent ? 214 : 98), a, h.warn);
+    this.drawCaption(ctx, h.line, h.sub, this.capY, a, h.warn);
   }
 
   /** Big caption card used by the tutorial and the hints: one line of rich text and an optional smaller line. */
@@ -4371,6 +4558,25 @@ export class PlayScene implements Scene {
       ctx.lineWidth = 2;
       ctx.stroke();
       if (icon === 'code') codeTag(ctx, 128, ry, 7, P.tealDeep, 1.4);
+      else if (icon === 'flag') {
+        // a pennant for a new chapter of the route
+        ctx.beginPath();
+        ctx.moveTo(116, ry + 26);
+        ctx.lineTo(116, ry - 26);
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(118, ry - 26);
+        ctx.lineTo(148, ry - 14);
+        ctx.lineTo(118, ry - 2);
+        ctx.closePath();
+        ctx.fillStyle = P.red;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
       else if (icon === 'cod') {
         ctx.save();
         ctx.translate(128, ry);
@@ -4381,7 +4587,7 @@ export class PlayScene implements Scene {
         const [dx, dy, sc] = ICONS[icon] ?? [0, 0, 0.6];
         sp.draw(ctx, icon, 128 + dx, ry + dy, sc);
       }
-      rich(ctx, segs(line), 196, ry, 34, { left: true });
+      rich(ctx, segs(line), 196, ry, 34, { left: true, maxWidth: 486 });
     });
     // the day's third stamp, so it's known before setting off
     const cy = y0 + ch - 150;
@@ -4414,9 +4620,14 @@ export class PlayScene implements Scene {
     ctx.translate(-375, -(y0 + h / 2));
     panel(ctx, x0, y0, w, h, { r: 26 });
     text(ctx, '到付件 · 收款找零', 375, y0 + 58, 40, { bold: true });
-    sp.draw(ctx, `avatar_${c.h.species}`, x0 + 92, y0 + 150, 1.15);
-    text(ctx, `${c.h.name}付了`, x0 + 150, y0 + 150, 30, { align: 'left' });
-    this.drawBill(ctx, x0 + 420, y0 + 150, paid);
+    // avatar, who paid, and the banknote, as one row centred on the card with room between them
+    const who = `${c.h.name}付了`;
+    ctx.font = font(30);
+    const ww = ctx.measureText(who).width;
+    const rx = 375 - (76 + 18 + ww + 40 + 172) / 2;
+    sp.draw(ctx, `avatar_${c.h.species}`, rx + 38, y0 + 150, 1.15);
+    text(ctx, who, rx + 76 + 18, y0 + 150, 30, { align: 'left' });
+    this.drawBill(ctx, rx + 76 + 18 + ww + 40 + 86, y0 + 150, paid);
     rich(ctx, segs(`货款【¥${price}】，要找回多少？`), 375, y0 + 238, 34, { bold: true });
     if (this.cfg.tutorial && c.pick === null) text(ctx, '找零 = 付的钱 − 货款', 375, y0 + 284, 24, { color: P.inkSoft });
     c.btns = c.opts.map((v, i) => {
@@ -4427,8 +4638,8 @@ export class PlayScene implements Scene {
       const down = this.pressed === `chg${i}`;
       pressIn(ctx, r, down);
       panel(ctx, r.x, r.y, r.w, r.h, { r: 18, fill, stitch: done && isRight ? P.lilyDeep : done && chosen ? P.red : undefined });
-      // a little stack of coins beside the amount
-      for (let j = 0; j < Math.min(v, 6); j++) sp.draw(ctx, 'coin', r.x + 48, r.y + 96 - j * 10, 0.85, 0.6);
+      // a little stack of coins beside the amount, the same for every option (its height isn't the answer)
+      for (let j = 0; j < 3; j++) sp.draw(ctx, 'coin', r.x + 48, r.y + 96 - j * 10, 0.85, 0.6);
       text(ctx, `¥${v}`, r.x + 120, r.y + r.h / 2 + 2, 46, { bold: true, color: done && isRight ? P.lilyDeep : done && chosen ? P.red : INK });
       pressOut(ctx, down, () => roundRect(ctx, r.x, r.y, r.w, r.h, 18));
       return r;
@@ -4479,15 +4690,18 @@ export class PlayScene implements Scene {
     const o = this.off!;
     if (o.t < CARD_AT) return;
     const k = Math.min(1, (o.t - CARD_AT) / 0.45);
-    const lines = wrapText(ctx, o.line, 42, 500, true);
+    const lines = (o.lines ??= evenLines(ctx, o.line, 42, 470));
     const h = 150 + lines.length * 62 + 70;
     ctx.save();
     ctx.globalAlpha = k;
     ctx.translate(375, this.H * 0.42 + (1 - easeOutCubic(k)) * 70);
     ctx.rotate(-0.02);
-    panel(ctx, -295, -h / 2, 590, h, { r: 24 });
-    text(ctx, '“', -238, -h / 2 + 58, 96, { color: P.orange, bold: true });
-    text(ctx, '”', 238, -h / 2 + 140 + (lines.length - 1) * 62, 96, { color: P.orange, bold: true });
+    panel(ctx, -310, -h / 2, 620, h, { r: 24 });
+    // the quote marks hug the first and the last line, however long they are
+    ctx.font = font(42, true);
+    const w0 = ctx.measureText(lines[0]).width, w1 = ctx.measureText(lines[lines.length - 1]).width;
+    text(ctx, '“', -Math.min(266, w0 / 2 + 26), -h / 2 + 58, 96, { color: P.orange, bold: true });
+    text(ctx, '”', Math.min(266, w1 / 2 + 26), -h / 2 + 140 + (lines.length - 1) * 62, 96, { color: P.orange, bold: true });
     lines.forEach((l, i) => text(ctx, l, 0, -h / 2 + 110 + i * 62, 42, { bold: true }));
     // countdown ring with the seconds left, then the tap line
     const left = Math.max(0, OFF_END - o.t);
@@ -4584,4 +4798,50 @@ export function drawTruckBase(ctx: Ctx, x: number, y: number, odo: number) {
     }
     ctx.stroke();
   }
+}
+
+/**
+ * A sentence on as few lines as wrapText needs, but evened out: lines of about the same length, broken
+ * right after a comma or a stop where one is near enough, so a word isn't split to leave one or two
+ * characters on a line of their own.
+ */
+export function evenLines(ctx: Ctx, s: string, size: number, maxWidth: number): string[] {
+  const lines = wrapText(ctx, s, size, maxWidth, true);
+  const k = lines.length;
+  if (k < 2) return lines;
+  ctx.save();
+  ctx.font = font(size, true);
+  const pc = breakPieces(s);
+  const n = pc.length;
+  const target = ctx.measureText(s).width / k;
+  // cost[j][i]: the best way to set the first i pieces on j lines, and where its last line starts
+  const cost = Array.from({ length: k + 1 }, () => new Array<number>(n + 1).fill(Infinity));
+  const from = Array.from({ length: k + 1 }, () => new Array<number>(n + 1).fill(0));
+  cost[0][0] = 0;
+  for (let j = 1; j <= k; j++) {
+    for (let i = j; i <= n; i++) {
+      for (let p = j - 1; p < i; p++) {
+        if (cost[j - 1][p] === Infinity) continue;
+        const w = ctx.measureText(pc.slice(p, i).join('').trim()).width;
+        if (w > maxWidth) continue;
+        const stop = i < n && /[，。！？；：…）]$/.test(pc[i - 1]);
+        // a rough guard for words: a line shouldn't end on a counting word (一, 第…) waiting for what it counts
+        const split = i < n && /[一第每几这那]$/.test(pc[i - 1]);
+        const c = cost[j - 1][p] + (w - target) ** 2 - (stop ? (target * 0.8) ** 2 : 0) + (split ? (target * 0.5) ** 2 : 0);
+        if (c < cost[j][i]) {
+          cost[j][i] = c;
+          from[j][i] = p;
+        }
+      }
+    }
+  }
+  ctx.restore();
+  if (cost[k][n] === Infinity) return lines;
+  const out: string[] = [];
+  for (let j = k, i = n; j > 0; j--) {
+    const p = from[j][i];
+    out.unshift(pc.slice(p, i).join('').trim());
+    i = p;
+  }
+  return out;
 }

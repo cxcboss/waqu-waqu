@@ -71,8 +71,13 @@ export interface Order {
   /** Times it has gone into the river; the third time it's ruined and washed away. */
   dunks: number;
   state: OrderState;
-  /** Set on the first pickup and kept, so putting an urgent parcel back doesn't restart its clock. */
+  /**
+   * An urgent parcel's countdown, on the play scene's river clock (which stands still while the
+   * river does): it starts once the parcel is in the bag and its house is on screen, and is kept
+   * if the parcel is put back. 0 until then; `urgentAt` is when it started.
+   */
   deadline: number;
+  urgentAt: number;
   pickedAt: number;
   late: boolean;
   deliveredTo: House | null;
@@ -101,6 +106,11 @@ export function dayConfig(day: number): DayConfig {
 /** Builds one day's river. Same seed, same river. `H` is the screen height in design units. */
 export function buildLevel(cfg: DayConfig, H: number): Level {
   const r = rng(cfg.seed);
+  // How many rows fit, and so how many draws `r` makes, depends on the screen height. The parcels and
+  // the houses' own looks draw from streams of their own, so a day brings the same parcels to the same
+  // neighbours on every phone.
+  const ro = rng((cfg.seed ^ 0x9e3779b9) >>> 0);
+  const rh = rng((cfg.seed ^ 0x85ebca6b) >>> 0);
   const { riverL, riverR } = TUNING;
   const plats: Plat[] = [];
   const houses: House[] = [];
@@ -158,7 +168,7 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
 
   const house = (i: number, hy: number) => {
     const geo = HOUSE[types[i]];
-    const hx = side === 0 ? riverL + 128 + r() * 14 : riverR - 128 - r() * 14;
+    const hx = side === 0 ? riverL + 128 + rh() * 14 : riverR - 128 - rh() * 14;
     const p = plat('house', hx, hy, geo.rx * K, geo.ry * K, { variant: i });
     const pt = ([x, y]: [number, number]) => ({ x: x * K, y: y * K });
     const d = geo.door;
@@ -167,8 +177,8 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
       name: who[i].name, species: who[i].id, plat: p,
       resident: pt(geo.spot), spot: pt(geo.spot), porch: pt(geo.porch), plateAt: pt(geo.plate),
       door: { x: d.x * K, y: d.y * K, w: d.w * K, h: d.h * K }, top: geo.top * K,
-      res: newResident(r()),
-      react: null, hold: null, passed: false, phase: r() * 6,
+      res: newResident(rh()),
+      react: null, hold: null, passed: false, phase: rh() * 6,
     };
     p.house = h;
     plats.push(p);
@@ -215,29 +225,29 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
   bridgeGaps(plats, cfg, yEnd + H);
 
   // Orders: the first house always has one (the tutorial walks you there), the rest spread out.
-  const houseOrder = [0, ...shuffle(houses.slice(1).map((h) => h.id), r)];
+  const houseOrder = [0, ...shuffle(houses.slice(1).map((h) => h.id), ro)];
   const orders: Order[] = [];
   for (let i = 0; i < cfg.orders; i++) {
     const h = houses[houseOrder[i % houseOrder.length]];
     orders.push({
-      id: i, code: 0, house: h, size: cfg.sizes[Math.floor(r() * cfg.sizes.length)], urgent: false, cod: null, codOk: null, dunks: 0,
-      state: 'pool', deadline: 0, pickedAt: 0, late: false, deliveredTo: null,
+      id: i, code: 0, house: h, size: cfg.sizes[Math.floor(ro() * cfg.sizes.length)], urgent: false, cod: null, codOk: null, dunks: 0,
+      state: 'pool', deadline: 0, urgentAt: 0, pickedAt: 0, late: false, deliveredTo: null,
     });
   }
   // Early days count up the river: the first house waits for 1, the next for 2, and so on.
   // From day 4 on the codes are shuffled, so every card has to be read.
   if (cfg.ordered) orders.slice().sort((a, b) => a.house.id - b.house.id || a.id - b.id).forEach((o, i) => (o.code = i + 1));
   else {
-    const codes = shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], r);
+    const codes = shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], ro);
     orders.forEach((o, i) => (o.code = codes[i % codes.length]));
   }
   // Urgent parcels go to houses that are not the very first ones, so there's time to plan.
-  const urgentCandidates = shuffle(orders.filter((o) => o.house.id >= 2), r);
+  const urgentCandidates = shuffle(orders.filter((o) => o.house.id >= 2), ro);
   urgentCandidates.slice(0, cfg.urgent).forEach((o) => (o.urgent = true));
   // Cash on delivery goes to plain parcels past the first two houses; on day 1 that's after the basics.
-  const codCandidates = shuffle(orders.filter((o) => o.house.id >= 2 && !o.urgent), r);
+  const codCandidates = shuffle(orders.filter((o) => o.house.id >= 2 && !o.urgent), ro);
   for (const o of codCandidates.slice(0, cfg.cod)) {
-    const price = cfg.codNote === 10 ? 3 + Math.floor(r() * 6) : 11 + Math.floor(r() * 7);
+    const price = cfg.codNote === 10 ? 3 + Math.floor(ro() * 6) : 11 + Math.floor(ro() * 7);
     o.cod = { price, paid: cfg.codNote };
   }
 

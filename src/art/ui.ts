@@ -187,9 +187,13 @@ export function richWidth(ctx: Ctx, line: Seg[], size: number, bold = false) {
   return w;
 }
 
-/** Draws one line of segments centered on x (or starting at x with `left`). */
-export function rich(ctx: Ctx, line: Seg[], x: number, y: number, size: number, o: { color?: string; hl?: string; bold?: boolean; left?: boolean } = {}) {
+/** Draws one line of segments centered on x (or starting at x with `left`), smaller if it's wider than `maxWidth`. */
+export function rich(ctx: Ctx, line: Seg[], x: number, y: number, size: number, o: { color?: string; hl?: string; bold?: boolean; left?: boolean; maxWidth?: number } = {}) {
   const bold = !!o.bold;
+  if (o.maxWidth) {
+    const w = richWidth(ctx, line, size, bold);
+    if (w > o.maxWidth) size = Math.max(12, Math.floor((size * o.maxWidth) / w));
+  }
   ctx.save();
   let cx = o.left ? x : x - richWidth(ctx, line, size, bold) / 2;
   ctx.textAlign = 'left';
@@ -216,18 +220,25 @@ export function rich(ctx: Ctx, line: Seg[], x: number, y: number, size: number, 
   ctx.restore();
 }
 
-/** Breaks a sentence into lines no wider than maxWidth (character by character, as Chinese allows). */
+/**
+ * The pieces a line of text may be broken between: one Chinese character each, but a number or a latin
+ * word stays whole, an opening bracket or quote sticks to what follows it, and closing punctuation to
+ * what comes before it (so no line starts with '。' or ends with '“').
+ */
+const BREAKS = /[（“‘《「【(¥$+−]*(?:[0-9A-Za-z]+(?:[.:,/'-][0-9A-Za-z]+)*%?|—+|…+|[\s\S])[，。！？、；：…）”’》」】,.!?;:)]*/gu;
+export const breakPieces = (s: string) => s.match(BREAKS) ?? [];
+
+/** Breaks a sentence into lines no wider than maxWidth, between the pieces above. */
 export function wrapText(ctx: Ctx, s: string, size: number, maxWidth: number, bold = false): string[] {
   ctx.save();
   ctx.font = font(size, bold);
   const out: string[] = [];
   let cur = '';
-  for (const ch of s) {
-    // keep closing punctuation on the line it belongs to
-    if (cur && ctx.measureText(cur + ch).width > maxWidth && !'，。！？、…）”'.includes(ch)) {
-      out.push(cur);
-      cur = ch;
-    } else cur += ch;
+  for (const p of breakPieces(s)) {
+    if (cur && ctx.measureText(cur + p).width > maxWidth) {
+      out.push(cur.trimEnd());
+      cur = p.trimStart();
+    } else cur += p;
   }
   if (cur) out.push(cur);
   ctx.restore();

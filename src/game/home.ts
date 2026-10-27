@@ -11,6 +11,7 @@ import { DAYS } from './config';
 import type { Game, Scene } from './game';
 import { HallScene } from './hall';
 import { HubScene } from './hub';
+import { LETTERS, letterText } from './lines';
 import { Scroller, Taps, Toast, dialog, dot, drawDressedFrog, header, iconAt, pill, shortDate, tabs } from './menu';
 import { ShopScene } from './shop';
 
@@ -21,7 +22,7 @@ type Modal =
   | { kind: 'letters' }
   | { kind: 'decor' };
 
-export const ALL_LETTERS = 3;
+export const ALL_LETTERS = LETTERS.length;
 
 export class HomeScene implements Scene {
   readonly id = 'home';
@@ -639,7 +640,7 @@ export class HomeScene implements Scene {
     this.area(ctx, d, d.y + 90);
     let y = d.y + 110;
     for (let i = 0; i < ALL_LETTERS; i++) {
-      const l = s.letters[i];
+      const l = s.letters[i] ? letterText(s.letters[i]) : '';
       ctx.save();
       const lines = l ? wrapText(ctx, l, 26, d.w - 140) : [];
       ctx.restore();
