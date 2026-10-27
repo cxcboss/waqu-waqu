@@ -249,7 +249,7 @@ const LATER: Later[] = [
   L('峡谷入口', 54, 9, 9, 1, 1, 20, MIX, noFall, '急流带里荷叶晃得厉害', { rapids: 2 }, ['rapids']),
   L('河狸的水坝', 56, 9, 9, 1, 1, 20, MIX, { kind: 'returns', label: '退货件全部收回' }, '河狸修了水坝，还有退货要收', { dam: 2, return: 2, rapids: 1 }, ['dam', 'return']),
   L('下雨了', 58, 9, 10, 2, 1, 20, MIX, noWet, '雨天石头滑，别泡了包裹', { slip: 6, rain: 1, rapids: 1 }, ['slip']),
-  L('漩涡湾', 60, 10, 10, 2, 2, 20, MIX, fast(20), '漩涡卷着荷叶转，看准再跳', { whirl: 3, slip: 3, rain: 1 }, ['whirl']),
+  L('漩涡湾', 58, 10, 10, 2, 2, 20, MIX, fast(20), '漩涡卷着荷叶转，看准再跳', { whirl: 2, slip: 2, rain: 1 }, ['whirl']),
   L('暴雨夜班', 64, 10, 10, 3, 2, 20, [1, 2, 2, 1], noWrong, '超难关：暴雨夜，送对五成就算过', { storm: 1, rain: 1, slip: 3, whirl: 1 }, ['storm']),
   // 秋 · 枫叶溪
   L('枫叶飘落', 54, 9, 9, 1, 1, 20, MIX, noFall, '落叶只能踩一次', { leaf: 8 }, ['leaf']),
@@ -267,7 +267,7 @@ const LATER: Later[] = [
   L('港口初到', 58, 10, 10, 1, 1, 20, MIX, noFall, '港口有栈桥和渡船', { pier: 3, ferry: 3 }, ['pier', 'ferry']),
   L('起重机', 60, 10, 10, 2, 1, 20, [1, 1, 2, 2], multi(2), '跳上吊钩荡过去', { hook: 3, pier: 2, ferry: 2 }, ['hook']),
   L('海鸥来了', 62, 10, 10, 2, 2, 20, MIX, { kind: 'noSnatch', label: '包裹没被海鸥叼走' }, '海鸥会来叼包裹，点它赶走', { gull: 1, pier: 2, ferry: 2 }, ['gull']),
-  L('年货大集', 64, 10, 10, 2, 3, 20, MIX, { kind: 'noPeck', label: '没被大鹅啄下水' }, '大鹅看门，催单件别拖', { goose: 2, nag: 3, pier: 2, gull: 1 }, ['goose', 'nag']),
+  L('年货大集', 62, 10, 10, 2, 2, 20, MIX, { kind: 'noPeck', label: '没被大鹅啄下水' }, '大鹅看门，催单件别拖', { goose: 2, nag: 3, pier: 2, gull: 1 }, ['goose', 'nag']),
   L('除夕最后一单', 66, 10, 10, 3, 3, 20, [0, 1, 1, 2], allIn, '除夕夜最后一班，把包裹都送到', { fireworks: 1, ferry: 2, hook: 2, pier: 2 }, ['fireworks']),
   // 早春 · 环河联运: no new mechanics, the year's ones two by two, and everything on the last day
   L('冰河解冻', 60, 10, 10, 2, 2, 20, MIX, intact('易碎件一个都不碎'), '浮冰上送易碎件，脚下要稳', { floe: 6, thin: 2, fragile: 3 }),
