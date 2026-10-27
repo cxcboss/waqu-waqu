@@ -236,7 +236,7 @@ const GOOSE_OFF = 3.5;
 /** 双十一's restock arrives this far along the route. */
 const RESTOCK_AT = 0.45;
 /** Seconds between gulls. */
-const GULL_GAP: [number, number] = [12, 18];
+const GULL_GAP: [number, number] = [15, 24];
 /** The goose starts back for its post this long before it's on guard again. */
 const GOOSE_BACK = 0.7;
 /** How long a resident's call over the roof stays up. */
@@ -5683,15 +5683,16 @@ export class PlayScene implements Scene {
     let size = 42;
     const lw = richWidth(ctx, line, size, true);
     if (lw > 640) size = Math.floor((size * 640) / lw);
-    ctx.font = font(28);
-    const sw = sub ? ctx.measureText(sub).width : 0;
+    // the smaller line can mark a word or two too (【顶着风】)
+    const subLine = sub ? segs(sub) : null;
+    const sw = subLine ? richWidth(ctx, subLine, 28) : 0;
     const w = clamp(Math.max(richWidth(ctx, line, size, true), sw) + 80, 380, 710);
     const h = sub ? 136 : 92;
     // the owl manager peeking over the card to say its word
     if (owl) this.game.sprites.draw(ctx, 'owl', 375 - w / 2 + 60, y + 34, 0.38, 0.38, -0.08);
     panel(ctx, 375 - w / 2, y, w, h, { r: 22, fill: warn ? '#FBE6DE' : P.paper, stitch: warn ? P.red : P.gold });
     rich(ctx, line, 375, y + 47, size, { bold: true, color: warn ? P.red : INK, hl: warn ? P.red : P.orangeDeep });
-    if (sub) text(ctx, sub, 375, y + 102, 28, { color: warn ? P.red : P.inkSoft, maxWidth: w - 40 });
+    if (subLine) rich(ctx, subLine, 375, y + 102, 28, { color: warn ? P.red : P.inkSoft, hl: warn ? P.red : P.orangeDeep, maxWidth: w - 40 });
     ctx.restore();
   }
 
