@@ -1,8 +1,10 @@
 // Shared pieces for the screens outside work (home page, HQ hall, the frog's home, the shop):
-// tap targets, a scrolling list, the header bar, paper tabs, dialogs and the dressed-up frog.
+// tap targets, a scrolling list, the header bar, paper tabs, dialogs, round icon buttons and the
+// dressed-up frog. Pictograms come from the kit's icon set (src/art/kit/icons.ts).
+import { grainFill, icon, ICON_NAMES, ribbon, shade, tint, type IconName } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { K, type SpriteBank } from '../art/sprites';
-import { ellipse, hit, panel, pressIn, pressOut, roundRect, text, type Rect } from '../art/ui';
+import { ellipse, font, hit, panel, pressIn, pressOut, roundRect, text, type Rect } from '../art/ui';
 import { approach, clamp } from '../engine/math';
 import type { Ctx } from '../platform/types';
 import type { Wear } from './career';
@@ -136,75 +138,163 @@ export class Scroller {
   }
 }
 
-/** A short message in a pill near the top. */
+/** A short message in a pill near the top, with an optional pictogram before it. */
 export class Toast {
-  private msg: { text: string; t: number } | null = null;
-  show(s: string) {
-    this.msg = { text: s, t: 0 };
+  private msg: { text: string; t: number; icon?: IconName; secs: number } | null = null;
+  /** Shows `s` for `secs` seconds (the last 0.4 of them fading out). */
+  show(s: string, icon?: IconName, secs = 2.4) {
+    this.msg = { text: s, t: 0, icon, secs };
   }
   update(dt: number) {
-    if (this.msg && (this.msg.t += dt) > 2.4) this.msg = null;
+    if (this.msg && (this.msg.t += dt) > this.msg.secs) this.msg = null;
   }
   render(ctx: Ctx, y: number) {
     const m = this.msg;
     if (!m) return;
-    const a = Math.min(1, m.t * 6) * (m.t > 2 ? (2.4 - m.t) / 0.4 : 1);
+    const a = Math.min(1, m.t * 6) * (m.t > m.secs - 0.4 ? (m.secs - m.t) / 0.4 : 1);
     ctx.save();
     ctx.globalAlpha = a;
-    ctx.font = '28px WK';
-    const w = Math.min(700, Math.max(240, ctx.measureText(m.text).width + 64));
-    panel(ctx, 375 - w / 2, y, w, 60, { r: 30, fill: P.cream });
-    text(ctx, m.text, 375, y + 31, 28, { maxWidth: w - 40 });
+    ctx.font = font(28);
+    const iw = m.icon ? 44 : 0;
+    const w = Math.min(700, Math.max(240, ctx.measureText(m.text).width + 64 + iw));
+    // it drops in from a little higher
+    const yy = y - (1 - Math.min(1, m.t * 6)) * 12;
+    panel(ctx, 375 - w / 2, yy, w, 60, { r: 30, fill: P.cream, grain: true });
+    if (m.icon) icon(ctx, m.icon, 375 - w / 2 + 40, yy + 30, 36);
+    text(ctx, m.text, 375 + iw / 2, yy + 31, 28, { maxWidth: w - 40 - iw });
     ctx.restore();
   }
 }
 
-/** Round button with a label, used for small actions. */
-export function pill(ctx: Ctx, taps: Taps, id: string, x: number, y: number, w: number, h: number, label: string, o: { fill?: string; color?: string; size?: number; disabled?: boolean } = {}) {
+/** Round button with a label (or a pictogram and a label), used for small actions. */
+export function pill(ctx: Ctx, taps: Taps, id: string, x: number, y: number, w: number, h: number, label: string, o: { fill?: string; color?: string; size?: number; disabled?: boolean; icon?: IconName } = {}) {
   const r = { x, y, w, h };
   const down = taps.add(id, r, 6);
   pressIn(ctx, r, down);
   ctx.save();
-  if (o.disabled) ctx.globalAlpha = 0.45;
-  roundRect(ctx, x, y, w, h, h / 2);
-  ctx.fillStyle = o.fill ?? P.cream;
+  if (o.disabled) ctx.globalAlpha *= 0.45;
+  const fill = o.fill ?? P.cream;
+  roundRect(ctx, x, y + 3, w, h, h / 2);
+  ctx.fillStyle = shade(fill, 0.16);
   ctx.fill();
+  roundRect(ctx, x, y, w, h, h / 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  grainFill(ctx, 0.3);
   ctx.strokeStyle = INK;
   ctx.lineWidth = 2;
   ctx.stroke();
-  text(ctx, label, x + w / 2, y + h / 2 + 1, o.size ?? 24, { bold: true, color: o.color ?? INK, maxWidth: w - 20 });
+  const size = o.size ?? 24;
+  if (o.icon) {
+    const is = Math.min(h * 0.62, size * 1.5);
+    ctx.font = font(size, true);
+    const tw = label ? Math.min(ctx.measureText(label).width, w - is - 34) : 0;
+    const left = x + w / 2 - (is + (label ? 6 + tw : 0)) / 2;
+    icon(ctx, o.icon, left + is / 2, y + h / 2, is);
+    if (label) text(ctx, label, left + is + 6 + tw / 2, y + h / 2 + 1, size, { bold: true, color: o.color ?? INK, maxWidth: w - is - 34 });
+  } else text(ctx, label, x + w / 2, y + h / 2 + 1, size, { bold: true, color: o.color ?? INK, maxWidth: w - 20 });
   ctx.restore();
   pressOut(ctx, down, () => roundRect(ctx, x, y, w, h, h / 2));
 }
 
-/** The coin count in a pill. */
-export function coinPill(ctx: Ctx, sp: SpriteBank, x: number, y: number, coins: number, flash = 0) {
-  const w = 150, h = 56;
-  panel(ctx, x, y, w, h, { r: 28, shadow: false, fill: flash > 0 ? '#FCEBC0' : P.paper });
-  sp.draw(ctx, 'coin', x + 32, y + 28, 0.62 * (1 + flash * 0.25));
-  text(ctx, String(coins), x + w - 20, y + 29, 28, { bold: true, align: 'right' });
+/**
+ * Round icon button centred on (cx, cy), `d` across (speaker, pause, close…). Its tap area is padded
+ * to at least 88 units. `dot` adds the red "something new" dot. Returns whether it's held down.
+ */
+export function iconButton(ctx: Ctx, taps: Taps, id: string, cx: number, cy: number, d: number, name: IconName, o: { fill?: string; dot?: boolean; disabled?: boolean } = {}) {
+  const r = { x: cx - d / 2, y: cy - d / 2, w: d, h: d };
+  const down = taps.add(id, r, Math.max(6, (88 - d) / 2));
+  const fill = o.fill ?? P.cream;
+  const circle = (y: number, rad: number) => {
+    ctx.beginPath();
+    ctx.arc(cx, y, rad, 0, Math.PI * 2);
+  };
+  pressIn(ctx, r, down);
+  ctx.save();
+  if (o.disabled) ctx.globalAlpha *= 0.5;
+  circle(cy + 4, d / 2);
+  ctx.fillStyle = shade(fill, 0.2);
+  ctx.fill();
+  circle(cy, d / 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = tint(fill, 0.4);
+  ctx.globalAlpha *= 0.55;
+  ctx.beginPath();
+  ctx.ellipse(cx - d * 0.1, cy - d * 0.2, d * 0.3, d * 0.16, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  circle(cy, d / 2);
+  grainFill(ctx, 0.3);
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+  circle(cy, d / 2 - 6);
+  ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = P.kraft;
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  icon(ctx, name, cx, cy, d * 0.56, { faded: o.disabled });
+  ctx.restore();
+  if (o.dot) dot(ctx, cx + d * 0.36, cy - d * 0.36);
+  pressOut(ctx, down, () => circle(cy, d / 2));
+  return down;
 }
 
-/** Header bar: a back button, the screen's name and the coin count. */
-export function header(ctx: Ctx, game: Game, taps: Taps, title: string, o: { back?: string; flash?: number } = {}) {
+/**
+ * The coin count in a pill, `w` wide (150 by default; six digits still fit). With `right` the pill's
+ * right edge is at x and it grows to the left to fit the number.
+ */
+export function coinPill(ctx: Ctx, _sp: SpriteBank, x: number, y: number, coins: number, flash = 0, o: { w?: number; right?: boolean } = {}) {
+  const h = 56, s = String(coins);
+  ctx.save();
+  ctx.font = font(28, true);
+  const tw = ctx.measureText(s).width;
+  ctx.restore();
+  const w = o.w ?? (o.right ? Math.max(150, tw + 80) : 150);
+  const left = o.right ? x - w : x;
+  panel(ctx, left, y, w, h, { r: 28, shadow: false, fill: flash > 0 ? '#FCEBC0' : P.paper, grain: true });
+  icon(ctx, 'coin', left + 31, y + 28, 38 * (1 + flash * 0.25));
+  text(ctx, s, left + w - 20, y + 29, 28, { bold: true, align: 'right', maxWidth: w - 74 });
+}
+
+/**
+ * Header bar, the same on every screen: a back button, the screen's name (with an optional pictogram)
+ * and the coin count, which grows to the left for big numbers.
+ */
+export function header(ctx: Ctx, game: Game, taps: Taps, title: string, o: { back?: string; flash?: number; icon?: IconName } = {}) {
   const top = game.safeT;
-  panel(ctx, 16, top + 10, 718, 76, { r: 22 });
-  const br = { x: 26, y: top + 20, w: 130, h: 56 };
-  const down = taps.add('back', br, 8);
+  panel(ctx, 16, top + 10, 718, 76, { r: 22, grain: true });
+  const br = { x: 26, y: top + 20, w: 132, h: 56 };
+  const down = taps.add('back', br, 10);
   pressIn(ctx, br, down);
+  roundRect(ctx, br.x, br.y + 3, br.w, br.h, 28);
+  ctx.fillStyle = shade(P.cream, 0.16);
+  ctx.fill();
   roundRect(ctx, br.x, br.y, br.w, br.h, 28);
   ctx.fillStyle = P.cream;
   ctx.fill();
+  grainFill(ctx, 0.3);
   ctx.strokeStyle = INK;
   ctx.lineWidth = 2;
   ctx.stroke();
-  text(ctx, `‹ ${o.back ?? '主页'}`, br.x + br.w / 2, br.y + 29, 26, { bold: true });
+  icon(ctx, 'back', br.x + 30, br.y + 28, 30);
+  text(ctx, o.back ?? '主页', br.x + 80, br.y + 29, 26, { bold: true, maxWidth: 82 });
   pressOut(ctx, down, () => roundRect(ctx, br.x, br.y, br.w, br.h, 28));
-  text(ctx, title, 375, top + 49, 34, { bold: true, maxWidth: 300 });
-  coinPill(ctx, game.sprites, 574, top + 20, game.save.coins, o.flash ?? 0);
+  if (o.icon) {
+    ctx.save();
+    ctx.font = font(34, true);
+    const tw = Math.min(ctx.measureText(title).width, 250);
+    ctx.restore();
+    icon(ctx, o.icon, 375 - tw / 2 - 2, top + 48, 44);
+    text(ctx, title, 375 + 24, top + 49, 34, { bold: true, maxWidth: 250 });
+  } else text(ctx, title, 375, top + 49, 34, { bold: true, maxWidth: 300 });
+  coinPill(ctx, game.sprites, 724, top + 20, game.save.coins, o.flash ?? 0, { right: true });
 }
 
-/** A row of paper tabs; `dots` puts a red dot on a tab. Registers `${prefix}${i}`. */
 /** Draws a painted sprite centred on (x, y) with its longer side `size` long; false while it isn't loaded. */
 export function iconAt(ctx: Ctx, sp: SpriteBank, name: string, x: number, y: number, size: number, alpha = 1) {
   if (!sp.has(name)) return false;
@@ -214,37 +304,93 @@ export function iconAt(ctx: Ctx, sp: SpriteBank, name: string, x: number, y: num
   return true;
 }
 
-/** Paper tabs; `icons` are sprite names drawn beside each label when painted. */
-export function tabs(ctx: Ctx, taps: Taps, prefix: string, x: number, y: number, w: number, labels: string[], sel: number, dots: boolean[] = [], icons?: { sp: SpriteBank; names: string[] }) {
+/** The painted tab and category pictures, now drawn from the icon set. */
+const TAB_CODE: Record<string, IconName> = {
+  tab_record: 'clipboard', tab_log: 'logbook', tab_album: 'album', tab_honour: 'trophy', tab_news: 'newspaper',
+  cat_gear: 'bag', cat_hat: 'hat', cat_neck: 'scarf', cat_deco: 'sofa', cat_frame: 'frame',
+};
+const isIcon = (n: string): n is IconName => (ICON_NAMES as string[]).includes(n);
+
+/** The paper sheet that tabs sit on. */
+export function sheet(ctx: Ctx, x: number, y: number, w: number, h: number, fill: string = P.paper) {
+  roundRect(ctx, x, y, w, h, 18);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  grainFill(ctx, 0.35);
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+}
+
+/**
+ * Folder tabs along the top of a sheet; `dots` puts a red dot on a tab. Registers `${prefix}${i}`.
+ * `icons.names` are icon names (or the old painted tab_* / cat_* names, which map to icons).
+ * With `o.sheet` the tabs draw the sheet under them as well (its top at y + 58, `h` tall) and the chosen
+ * tab joins it like a real folder tab; without it the caller draws its own sheet afterwards.
+ */
+export function tabs(
+  ctx: Ctx, taps: Taps, prefix: string, x: number, y: number, w: number, labels: string[], sel: number, dots: boolean[] = [],
+  icons?: { sp?: SpriteBank; names: string[] }, o: { sheet?: { h: number; x?: number; w?: number; fill?: string } } = {},
+) {
   const n = labels.length;
   const tw = w / n;
-  for (let i = 0; i < n; i++) {
+  const rectOf = (i: number) => {
     const on = i === sel;
-    const r = { x: x + i * tw + 3, y: on ? y - 8 : y, w: tw - 6, h: on ? 70 : 62 };
+    return { x: x + i * tw + 3, y: on ? y - 8 : y, w: tw - 6, h: on ? (o.sheet ? 66 : 70) : 62 };
+  };
+  // a folder tab: sides leaning in a little, round top corners, open at the bottom
+  const shape = (r: Rect, close: boolean) => {
+    const rr = 16, lean = 4;
+    ctx.beginPath();
+    ctx.moveTo(r.x, r.y + r.h);
+    ctx.lineTo(r.x + lean * 0.4, r.y + rr);
+    ctx.arcTo(r.x + lean, r.y, r.x + rr + lean, r.y, rr);
+    ctx.lineTo(r.x + r.w - rr - lean, r.y);
+    ctx.arcTo(r.x + r.w - lean, r.y, r.x + r.w - lean * 0.4, r.y + rr, rr);
+    ctx.lineTo(r.x + r.w, r.y + r.h);
+    if (close) ctx.closePath();
+  };
+  const drawTab = (i: number) => {
+    const on = i === sel;
+    const r = rectOf(i);
     const down = taps.add(`${prefix}${i}`, r, 2);
     pressIn(ctx, r, down);
     ctx.save();
-    ctx.beginPath();
-    const rr = 16;
-    ctx.moveTo(r.x, r.y + r.h);
-    ctx.lineTo(r.x, r.y + rr);
-    ctx.arcTo(r.x, r.y, r.x + rr, r.y, rr);
-    ctx.lineTo(r.x + r.w - rr, r.y);
-    ctx.arcTo(r.x + r.w, r.y, r.x + r.w, r.y + rr, rr);
-    ctx.lineTo(r.x + r.w, r.y + r.h);
-    ctx.fillStyle = on ? P.paper : P.kraftTop;
+    shape(r, true);
+    ctx.fillStyle = on ? (o.sheet?.fill ?? P.paper) : P.kraftTop;
     ctx.fill();
+    grainFill(ctx, on ? 0.35 : 0.45);
+    // the chosen tab runs into the sheet, hiding the sheet's edge under it
+    if (on && o.sheet) ctx.fillRect(r.x + 1.2, r.y + r.h - 6, r.w - 2.4, 9);
+    shape(r, false);
     ctx.strokeStyle = INK;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = on ? 2.2 : 2;
+    ctx.lineJoin = 'round';
     ctx.stroke();
-    const painted = icons && icons.sp.has(icons.names[i]);
-    if (painted) iconAt(ctx, icons.sp, icons.names[i], r.x + 30, r.y + r.h / 2 + 1, on ? 46 : 40);
-    text(ctx, labels[i], r.x + r.w / 2 + (painted ? 22 : 0), r.y + 32, on ? 28 : 25, { bold: on, color: on ? INK : P.inkSoft, maxWidth: r.w - (painted ? 60 : 14) });
+    // the others sit a little in the sheet's shade
+    if (!on) {
+      ctx.fillStyle = 'rgba(74,59,48,0.08)';
+      ctx.fillRect(r.x + 2, r.y + r.h - 12, r.w - 4, 12);
+    }
+    const name = icons?.names[i];
+    const code = name ? (isIcon(name) ? name : TAB_CODE[name]) : undefined;
+    const size = on ? 46 : 40;
+    const cy = r.y + (on ? 34 : 31);
+    let shown = false;
+    if (code) {
+      icon(ctx, code, r.x + 32, cy, size);
+      shown = true;
+    } else if (name && icons?.sp) shown = iconAt(ctx, icons.sp, name, r.x + 30, cy, size);
+    text(ctx, labels[i], r.x + r.w / 2 + (shown ? 22 : 0), cy + 1, on ? 28 : 25, { bold: on, color: on ? INK : P.inkSoft, maxWidth: r.w - (shown ? 64 : 14) });
     if (dots[i]) dot(ctx, r.x + r.w - 14, r.y + 12);
     ctx.restore();
     pressOut(ctx, down, () => roundRect(ctx, r.x, r.y, r.w, r.h, 12));
-  }
+  };
+  for (let i = 0; i < n; i++) if (i !== sel) drawTab(i);
+  if (o.sheet) sheet(ctx, o.sheet.x ?? x - 8, y + 58, o.sheet.w ?? w + 16, o.sheet.h, o.sheet.fill);
+  if (sel >= 0 && sel < n) drawTab(sel);
 }
+
 
 /** The little red "something new" dot. */
 export function dot(ctx: Ctx, x: number, y: number, r = 9) {
@@ -256,8 +402,11 @@ export function dot(ctx: Ctx, x: number, y: number, r = 9) {
   ctx.stroke();
 }
 
-/** Dims the screen and draws a dialog panel; returns its rect. Taps outside it register as `${id}Out`. */
-export function dialog(ctx: Ctx, game: Game, taps: Taps, id: string, w: number, h: number, t: number): Rect {
+/**
+ * Dims the screen and draws a dialog panel; returns its rect. Taps outside it register as `${id}Out`.
+ * `o.title` hangs a ribbon banner with the dialog's name across its top edge.
+ */
+export function dialog(ctx: Ctx, game: Game, taps: Taps, id: string, w: number, h: number, t: number, o: { title?: string } = {}): Rect {
   const H = game.H;
   ctx.save();
   ctx.globalAlpha = Math.min(1, t * 5) * 0.55;
@@ -271,7 +420,8 @@ export function dialog(ctx: Ctx, game: Game, taps: Taps, id: string, w: number, 
   ctx.translate(375, y + h / 2);
   ctx.scale(s, s);
   ctx.translate(-375, -(y + h / 2));
-  panel(ctx, x, y, w, h, { r: 24 });
+  panel(ctx, x, y, w, h, { r: 24, grain: true });
+  if (o.title) ribbon(ctx, 375, y + 2, Math.min(w - 160, 380), o.title, { h: 54 });
   // a dialog swallows taps on itself
   taps.add(`${id}In`, { x, y, w, h });
   return { x, y, w, h };

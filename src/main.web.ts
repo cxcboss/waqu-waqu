@@ -16,7 +16,9 @@ const game = new Game(new WebPlatform(), { toggle: tm === 'on' || tm === 'off' ?
 const n = Math.floor(Number(q.get('day')));
 const asked = n >= 1 ? Math.min(n, DAYS.length) : 0;
 const day = asked && (dev || tm === 'off' || asked <= game.save.day) ? asked : 0;
-void game.start(() => (day >= 1 ? new PlayScene(game, day) : new HubScene(game)), day >= 1 ? { jump: day } : {});
+// ?art=1 on a dev server opens the art board (every piece of the code-drawn kit; &tod=night picks the hour)
+if (dev && q.get('art') === '1') void import('./game/artboard').then((m) => game.start(() => new m.ArtboardScene(game, q.get('tod'))));
+else void game.start(() => (day >= 1 ? new PlayScene(game, day) : new HubScene(game)), day >= 1 ? { jump: day } : {});
 (window as unknown as { __game: Game }).__game = game;
 // the page's own splash gives way to the game's loading screen once that has drawn
 requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('boot')?.remove()));
