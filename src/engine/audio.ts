@@ -1,12 +1,36 @@
 import type { Platform } from '../platform/types';
 
-/** One entry of public/audio/manifest.json (made by the sound thread). */
+/**
+ * How a sound is mixed (see docs/audio.md): music and ambience beds, ordinary effects, interface clicks,
+ * character voices, warnings, and jingles, which duck the music and never play over each other.
+ */
+export type SoundKind = 'music' | 'amb' | 'sfx' | 'ui' | 'voice' | 'warn' | 'jingle';
+
+/** One entry of public/audio/manifest.json (written by tools/audio/build.py). */
 interface SoundDef {
   file: string;
-  group?: string;
+  /** Plays another entry's file with its own volume, rate and filter: a variant that costs no download. */
+  of?: string;
+  kind?: SoundKind;
   loop: boolean;
   volume: number;
   variants?: string[];
+  duration?: number;
+  /** Loop region in seconds, counted from the first sound in the file (music and ambience). */
+  loopAt?: [number, number];
+  /** Where a track starts the first time it plays, if not at its loop region (an intro). */
+  from?: number;
+  rate?: number;
+  /** Low-pass corner in Hz (muffled variants). */
+  lowpass?: number;
+  /** Decoded right after loading; everything else is fetched the first time it's asked for. */
+  preload?: boolean;
+  /** The same id again sooner than this (seconds) is skipped. */
+  gap?: number;
+  /** At most this many copies at once; the oldest makes room. */
+  voices?: number;
+  /** Ambience: one-shots dropped in at random while this bed plays, every `every` seconds. */
+  spots?: { ids: string[]; every: [number, number]; volume?: number };
 }
 
 export interface LoopHandle {
@@ -14,150 +38,540 @@ export interface LoopHandle {
   setRate(rate: number): void;
 }
 
+/** A one-shot that can still be cut short. */
+export interface SoundHandle {
+  stop(fade?: number): void;
+}
+
+export interface AudioSettings {
+  music: boolean;
+  sfx: boolean;
+  /** 0–1 on top of the switches. */
+  musicVolume: number;
+  sfxVolume: number;
+}
+
+/** A playing source and what it needs to be stopped and counted. */
+interface Voice {
+  id: string;
+  src: AudioBufferSourceNode;
+  gain: GainNode;
+  /** Context time when it's done (Infinity for loops). */
+  end: number;
+  stopped: boolean;
+}
+
+/** The background track that is playing or fading out. */
+interface Track {
+  id: string;
+  /** The entry whose file it plays (itself, or the one it's a variant `of`). */
+  file: string;
+  src: AudioBufferSourceNode;
+  gain: GainNode;
+  filter: BiquadFilterNode | null;
+  /** Context time at which the loop region (or the intro) started, to work out the position. */
+  start: number;
+  from: number;
+  loop: [number, number];
+  rate: number;
+  /** Context time when a fading track has finished fading (Infinity while it plays). */
+  end: number;
+}
+
+/** Same id within this long is one sound (two copies at once just sound louder, and can clip). */
+const GAP = 0.04;
+const VOICES = 4;
+const MAX_VOICES = 28;
+/** Decoded tracks kept: the one playing and the one before it, so going back and forth doesn't decode again. */
+const KEEP_MUSIC = 2;
+const KEEP_AMB = 4;
+/** A sound that only just got decoded on first use still plays if it's no later than this. */
+const LATE = 0.18;
+/** Music level while a jingle plays over it. */
+const DUCK_JINGLE = 0.35;
+const DUCK_ON = 0.4;
+const MAX_RATE = 2; // the WeChat context takes 0 < playbackRate <= 2
+
 /**
- * Manifest-driven sound player on Web Audio (browser AudioContext, or
- * wx.createWebAudioContext in the mini game). Effects are decoded up front;
- * music is decoded when first needed and only the current tracks are kept.
+ * Manifest-driven sound player on Web Audio (browser AudioContext, or wx.createWebAudioContext in the
+ * mini game). Only the effects marked `preload` are decoded up front; everything else, music and ambience
+ * included, is fetched when a scene first asks for it, and only the last couple of tracks stay decoded.
+ *
+ * Mix: effects → sfx bus; ambience → amb bus; music → music bus → duck; music and ambience then share the
+ * underwater low-pass; everything ends in a limiter so stacked sounds can't clip. Works without AudioParam
+ * automation (not documented for WeChat): fades are then stepped from `update()` each frame.
  */
 export class Audio {
-  enabled = true;
+  private set: AudioSettings = { music: true, sfx: true, musicVolume: 1, sfxVolume: 1 };
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private sfxBus: GainNode | null = null;
+  private ambBus: GainNode | null = null;
   private musicBus: GainNode | null = null;
+  private duckGain: GainNode | null = null;
+  private under: BiquadFilterNode | null = null;
+  /** setTargetAtTime and friends work; when false, fades run in `update()`. */
+  private auto = true;
+  private ramps = new Map<AudioParam, { to: number; tc: number }>();
   private defs: Record<string, SoundDef> = {};
   private buffers = new Map<string, AudioBuffer>();
   private loading = new Map<string, Promise<AudioBuffer | null>>();
-  private music: { id: string; src: AudioBufferSourceNode; gain: GainNode; start: number; loop: [number, number] } | null = null;
+  /** Most recently used last, for dropping old music and ambience. */
+  private used: string[] = [];
+  private voices: Voice[] = [];
+  private lastPlay = new Map<string, number>();
+  private base = 'audio/';
+  private ready = false;
+
+  private music: Track | null = null;
+  private fading: Track[] = [];
   private wantMusic: string | null = null;
+  /** When the wanted track was asked for, so the old one doesn't hang on forever if the new one never loads. */
+  private wantAt = 0;
+  /** Where each track was when it last stopped, to carry on from there next time. */
+  private pos = new Map<string, number>();
   /** Where the track stopped when the game was paused, to pick up from there. */
   private paused: { id: string; at: number } | null = null;
-  private base = 'audio/';
+  /** Jingles playing or queued: the next one waits for the last to end. */
+  private jingles: Voice[] = [];
+  private ducked = false;
+  private wet = false;
+
+  private amb = new Map<string, { loop: LoopHandle; next: number; def: SoundDef }>();
+  private wantAmb: string[] = [];
 
   constructor(private platform: Platform) {}
 
-  /** Fetches the manifest and decodes all effects and ambience. Never throws. */
+  /** Back-compat: true while either music or effects are on. */
+  get enabled() {
+    return this.set.music || this.set.sfx;
+  }
+  set enabled(on: boolean) {
+    this.configure({ music: on, sfx: on });
+  }
+
+  get settings(): Readonly<AudioSettings> {
+    return this.set;
+  }
+
+  /** Creates the context and the mix, without fetching anything (so the first tap can already unlock it). */
+  init() {
+    if (this.ctx) return;
+    const ctx = (this.ctx = this.platform.createAudioContext());
+    if (!ctx) return;
+    const probe = ctx.createGain();
+    try {
+      this.auto = typeof probe.gain.setTargetAtTime === 'function' && typeof probe.gain.cancelScheduledValues === 'function';
+      if (this.auto) probe.gain.setTargetAtTime(1, ctx.currentTime, 0.1);
+    } catch {
+      this.auto = false;
+    }
+    this.master = ctx.createGain();
+    // a limiter at the end: two loud sounds landing together turn down instead of clipping
+    let out: AudioNode = ctx.destination;
+    try {
+      if (typeof ctx.createDynamicsCompressor === 'function') {
+        const lim = ctx.createDynamicsCompressor();
+        lim.threshold.value = -8;
+        lim.knee.value = 6;
+        lim.ratio.value = 12;
+        lim.attack.value = 0.003;
+        lim.release.value = 0.2;
+        lim.connect(ctx.destination);
+        out = lim;
+        // the compressor adds its own make-up gain (about +4.5 dB with these settings); take it back off
+        this.master.gain.value = 0.6;
+      }
+    } catch {
+      out = ctx.destination;
+    }
+    this.master.connect(out);
+    this.sfxBus = ctx.createGain();
+    this.sfxBus.connect(this.master);
+    this.musicBus = ctx.createGain();
+    this.duckGain = ctx.createGain();
+    this.ambBus = ctx.createGain();
+    this.musicBus.connect(this.duckGain);
+    // music and ambience go through the underwater low-pass (wide open on land) if the context has filters
+    let world: AudioNode = this.master;
+    try {
+      if (typeof ctx.createBiquadFilter === 'function') {
+        this.under = ctx.createBiquadFilter();
+        this.under.type = 'lowpass';
+        this.under.frequency.value = 20000;
+        this.under.Q.value = 0.5;
+        this.under.connect(this.master);
+        world = this.under;
+      }
+    } catch {
+      this.under = null;
+    }
+    this.duckGain.connect(world);
+    this.ambBus.connect(world);
+    this.applySettings(true);
+  }
+
+  /** Fetches the manifest and decodes the effects marked `preload`. Never throws. */
   async load(base = 'audio/') {
     this.base = base;
-    this.ctx = this.platform.createAudioContext();
+    this.init();
     if (!this.ctx) return;
-    this.master = this.ctx.createGain();
-    this.master.gain.value = this.enabled ? 1 : 0;
-    this.master.connect(this.ctx.destination);
-    this.sfxBus = this.ctx.createGain();
-    this.sfxBus.connect(this.master);
-    this.musicBus = this.ctx.createGain();
-    this.musicBus.gain.value = 0.6;
-    this.musicBus.connect(this.master);
     try {
-      const raw = await this.platform.loadBinary(base + 'manifest.json');
-      const json = JSON.parse(new TextDecoder().decode(raw));
+      const json = await this.platform.loadJson<{ sounds: Record<string, SoundDef> }>(base + 'manifest.json');
       this.defs = json.sounds;
     } catch (e) {
       console.warn('audio manifest failed', e);
       return;
     }
-    const ids = Object.keys(this.defs).filter((id) => !id.startsWith('bgm_'));
+    this.ready = true;
+    // the scene on screen may already want its music and ambience
+    if (this.wantMusic) this.setMusic(this.wantMusic);
+    if (this.wantAmb.length) this.setAmbience(this.wantAmb);
+    const ids = Object.keys(this.defs).filter((id) => this.defs[id].preload);
     // a few at a time, so the sounds don't crowd out the pictures the first screen is still fetching
     for (let i = 0; i < ids.length; i += 3) await Promise.all(ids.slice(i, i + 3).map((id) => this.buffer(id)));
   }
 
+  /** Starts fetching sounds a scene is about to need (a track for the next screen, a shop's effects). */
+  preload(ids: string[]) {
+    for (const id of ids) void this.buffer(id);
+  }
+
+  /** The entry whose file an id plays: itself, or the one it's a variant of. */
+  private fileOf(id: string) {
+    return this.defs[id]?.of ?? id;
+  }
+
   private buffer(id: string): Promise<AudioBuffer | null> {
-    const have = this.buffers.get(id);
-    if (have) return Promise.resolve(have);
-    const pending = this.loading.get(id);
+    const key = this.fileOf(id);
+    const have = this.buffers.get(key);
+    if (have) {
+      this.touch(key);
+      return Promise.resolve(have);
+    }
+    const pending = this.loading.get(key);
     if (pending) return pending;
-    const def = this.defs[id];
+    const def = this.defs[key];
     if (!def || !this.ctx) return Promise.resolve(null);
+    const ctx = this.ctx;
     const p = this.platform
       .loadBinary(this.base + def.file)
-      .then((data) => decode(this.ctx!, data))
+      .then((data) => decode(ctx, data))
       .then((buf) => {
-        this.buffers.set(id, buf);
-        this.loading.delete(id);
+        this.buffers.set(key, buf);
+        this.loading.delete(key);
+        this.touch(key);
         return buf;
       })
       .catch((e) => {
-        console.warn('audio failed', id, e);
-        this.loading.delete(id);
+        console.warn('audio failed', key, e);
+        this.loading.delete(key);
         return null;
       });
-    this.loading.set(id, p);
+    this.loading.set(key, p);
     return p;
   }
 
-  /** Must run inside a touch handler: browsers only start audio after a gesture. */
-  unlock() {
-    if (this.ctx && this.ctx.state !== 'running') {
-      this.ctx.resume().then(() => this.kick(), () => undefined);
+  /** Marks a decoded file as just used, and lets go of music and ambience nobody has used for a while. */
+  private touch(key: string) {
+    const i = this.used.indexOf(key);
+    if (i >= 0) this.used.splice(i, 1);
+    this.used.push(key);
+    const kind = this.defs[key]?.kind;
+    if (kind !== 'music' && kind !== 'amb') return;
+    const keep = kind === 'music' ? KEEP_MUSIC : KEEP_AMB;
+    const same = this.used.filter((k) => this.defs[k]?.kind === kind);
+    const busy = new Set([this.music?.file, ...this.fading.map((t) => t.file), ...[...this.amb.keys()].map((k) => this.fileOf(k))]);
+    for (const k of same.slice(0, Math.max(0, same.length - keep))) {
+      if (busy.has(k)) continue;
+      this.buffers.delete(k);
+      this.used.splice(this.used.indexOf(k), 1);
     }
+  }
+
+  // ---------------------------------------------------------------- context state
+
+  /** Runs inside a touch handler (both press and release: phones only count the release as a gesture). */
+  unlock() {
+    this.init();
+    const ctx = this.ctx;
+    if (ctx && ctx.state !== 'running') ctx.resume().then(() => this.kick(), () => undefined);
   }
 
   suspend() {
     this.ctx?.suspend().catch(() => undefined);
   }
 
+  /** Back from the background, a phone call or Siri ('interrupted' on iPhone). */
   resume() {
-    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => undefined);
+    const ctx = this.ctx;
+    if (ctx && ctx.state !== 'running') ctx.resume().then(() => this.kick(), () => undefined);
   }
 
+  private get live() {
+    return !!this.ctx && this.ready && this.ctx.state === 'running';
+  }
+
+  /** Steps the fades when the context can't automate them, and drops ambience one-shots in. Call every frame. */
+  update(dt: number) {
+    if (!this.auto && this.ramps.size) {
+      const k = (tc: number) => 1 - Math.exp(-dt / Math.max(0.001, tc));
+      for (const [param, r] of this.ramps) {
+        const v = param.value + (r.to - param.value) * k(r.tc);
+        if (Math.abs(r.to - v) < 1e-4) {
+          param.value = r.to;
+          this.ramps.delete(param);
+        } else param.value = v;
+      }
+    }
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    // the new track never arrived: let the old one go rather than play the wrong music forever
+    if (this.wantMusic !== (this.music?.id ?? null) && this.music && now - this.wantAt > 3) this.fadeOutMusic(0.4);
+    if (this.fading.length) this.fading = this.fading.filter((t) => t.end > now);
+    if (this.voices.length) this.voices = this.voices.filter((v) => !v.stopped && v.end > now);
+    if (this.jingles.length) {
+      this.jingles = this.jingles.filter((v) => !v.stopped && v.end > now);
+      if (!this.jingles.length) this.applyDuck();
+    }
+    for (const a of this.amb.values()) {
+      const s = a.def.spots;
+      if (!s || now < a.next) continue;
+      a.next = now + s.every[0] + Math.random() * (s.every[1] - s.every[0]);
+      this.play(s.ids[Math.floor(Math.random() * s.ids.length)], { volume: (s.volume ?? 1) * (0.6 + Math.random() * 0.4), jitter: true });
+    }
+  }
+
+  /** Moves a parameter smoothly to `to` (time constant `tc` seconds), with or without automation. */
+  private ramp(param: AudioParam, to: number, tc: number) {
+    if (this.auto && this.ctx) {
+      const now = this.ctx.currentTime;
+      try {
+        param.cancelScheduledValues(now);
+        param.setValueAtTime(param.value, now);
+        param.setTargetAtTime(to, now, tc);
+        return;
+      } catch {
+        this.auto = false;
+      }
+    }
+    if (tc <= 0) {
+      param.value = to;
+      this.ramps.delete(param);
+    } else this.ramps.set(param, { to, tc });
+  }
+
+  // ---------------------------------------------------------------- settings
+
+  /** Music and effects switches and volumes (ambience counts as effects). */
+  configure(s: Partial<AudioSettings>) {
+    const was = { ...this.set };
+    Object.assign(this.set, s);
+    this.applySettings(false);
+    // switched off: stop (and stop fetching); switched back on: carry on where it was
+    if (was.music && !this.set.music) this.fadeOutMusic(0.1);
+    if (was.sfx !== this.set.sfx) this.setAmbience(this.wantAmb);
+    if (!was.music && this.set.music) this.kick();
+  }
+
+  /** Old single switch: both at once. */
   setEnabled(on: boolean) {
-    this.enabled = on;
-    if (this.master && this.ctx) this.master.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.05);
+    this.configure({ music: on, sfx: on });
   }
 
-  /** Plays a one-shot effect. Variants rotate at random; `jitter` adds a little pitch spread. */
-  play(id: string, o: { rate?: number; volume?: number; jitter?: boolean; delay?: number } = {}) {
-    if (!this.ctx || !this.enabled || this.ctx.state !== 'running') return;
+  private applySettings(now: boolean) {
+    const { music, sfx, musicVolume, sfxVolume } = this.set;
+    const tc = now ? 0 : 0.05;
+    if (this.musicBus) this.ramp(this.musicBus.gain, music ? clamp01(musicVolume) : 0, tc);
+    if (this.sfxBus) this.ramp(this.sfxBus.gain, sfx ? clamp01(sfxVolume) : 0, tc);
+    if (this.ambBus) this.ramp(this.ambBus.gain, sfx ? clamp01(sfxVolume) : 0, tc);
+  }
+
+  // ---------------------------------------------------------------- effects
+
+  /**
+   * Plays a one-shot effect. Variants rotate at random; `jitter` adds a little pitch spread. The same id
+   * again within a few hundredths of a second is skipped, and each id has a cap on copies at once.
+   * Jingles (manifest kind 'jingle') duck the music and wait for the previous jingle to finish.
+   */
+  play(id: string, o: { rate?: number; volume?: number; jitter?: boolean; delay?: number } = {}): SoundHandle | null {
+    return this.playAs(id, o, false);
+  }
+
+  /** A short musical sting over the current track (day start, chapter clear …): ducks the music like a jingle. */
+  stinger(id: string, o: { volume?: number; delay?: number } = {}): SoundHandle | null {
+    return this.playAs(id, o, true);
+  }
+
+  private playAs(id: string, o: { rate?: number; volume?: number; jitter?: boolean; delay?: number }, sting: boolean): SoundHandle | null {
+    const ctx = this.ctx;
+    if (!ctx || !this.live || !this.set.sfx) return null;
     const def = this.defs[id];
-    if (!def) return;
+    if (!def) return null;
+    const now = ctx.currentTime;
+    const at = now + (o.delay ?? 0);
+    const last = this.lastPlay.get(id);
+    if (last !== undefined && Math.abs(at - last) < (def.gap ?? GAP)) return null;
+    this.lastPlay.set(id, at);
     const pool = [id, ...(def.variants || [])];
     const pickId = pool[Math.floor(Math.random() * pool.length)];
-    const buf = this.buffers.get(pickId) || this.buffers.get(id);
-    if (!buf) return;
-    const src = this.ctx.createBufferSource();
+    const buf = this.buffers.get(this.fileOf(pickId)) ?? this.buffers.get(this.fileOf(id));
+    if (!buf) {
+      // not fetched yet: fetch it now and play it if it's still in time
+      void this.buffer(pickId).then((b) => {
+        if (b && this.live && ctx.currentTime - at < LATE) {
+          this.lastPlay.delete(id);
+          this.playAs(id, { ...o, delay: Math.max(0, at - ctx.currentTime) }, sting);
+        }
+      });
+      return null;
+    }
+    const pdef = this.defs[pickId] ?? def;
+    const rate = (o.rate ?? 1) * (pdef.rate ?? 1) * (o.jitter ? 0.94 + Math.random() * 0.12 : 1);
+    const vol = pdef.volume * (o.volume ?? 1);
+    if (sting || def.kind === 'jingle') return this.jingle(id, buf, at, rate, vol);
+    return this.handle(this.start(id, buf, at, rate, vol, def.voices ?? VOICES));
+  }
+
+  private start(id: string, buf: AudioBuffer, at: number, rate: number, vol: number, cap: number, bus = this.sfxBus!): Voice {
+    const ctx = this.ctx!;
+    const same = this.voices.filter((v) => v.id === id && !v.stopped);
+    if (same.length >= cap) this.stopVoice(same[0], 0.03);
+    if (this.voices.length >= MAX_VOICES) this.stopVoice(this.voices[0], 0.03);
+    const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.playbackRate.value = (o.rate ?? 1) * (o.jitter ? 0.94 + Math.random() * 0.12 : 1);
-    const g = this.ctx.createGain();
-    g.gain.value = (this.defs[pickId]?.volume ?? def.volume) * (o.volume ?? 1);
-    src.connect(g).connect(this.sfxBus!);
-    src.start(this.ctx.currentTime + (o.delay ?? 0));
+    setRate(src, rate);
+    const g = ctx.createGain();
+    g.gain.value = vol;
+    src.connect(g).connect(bus);
+    src.start(at);
+    const v: Voice = { id, src, gain: g, end: at + buf.duration / clampRate(rate), stopped: false };
+    this.voices.push(v);
+    return v;
+  }
+
+  private stopVoice(v: Voice, fade = 0.06) {
+    if (v.stopped || !this.ctx) return;
+    v.stopped = true;
+    this.ramp(v.gain.gain, 0, fade / 3);
+    try {
+      v.src.stop(this.ctx.currentTime + fade + 0.02);
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  private handle(v: Voice): SoundHandle {
+    return { stop: (fade = 0.06) => this.stopVoice(v, fade) };
+  }
+
+  /** A jingle (fanfare, chime, stinger): ducks the music while it plays and queues after the one before. */
+  private jingle(id: string, buf: AudioBuffer, at: number, rate: number, vol: number): SoundHandle | null {
+    const now = this.ctx!.currentTime;
+    const busy = this.jingles.reduce((m, v) => Math.max(m, v.end), 0);
+    // two in a row play one after the other instead of over each other (but don't wait for ever)
+    const when = Math.max(at, busy - 0.08);
+    if (when - now > 3) return null;
+    const v = this.start(id, buf, when, rate, vol, Infinity);
+    this.jingles.push(v);
+    this.applyDuck();
+    return this.handle(v);
+  }
+
+  /** Stops a jingle that's still ringing (a new track is starting; tapping on past the day's end card). */
+  private cutJingles(fade = 0.3) {
+    for (const v of this.jingles) this.stopVoice(v, fade);
+    this.jingles = [];
+    this.applyDuck();
   }
 
   /**
-   * Starts a sound that can be stopped early: loops (ambience) or, with `once`,
-   * a one-shot like the charge-up. Returns null while audio isn't ready yet.
+   * Starts a sound that can be stopped early: loops (ambience) or, with `once`, a one-shot like the
+   * charge-up. Returns null while the sound isn't loaded yet (asking starts the download; ask again).
    */
   loop(id: string, o: { volume?: number; rate?: number; fadeIn?: number; once?: boolean } = {}): LoopHandle | null {
     const ctx = this.ctx;
-    const buf = this.buffers.get(id);
     const def = this.defs[id];
-    if (!ctx || !buf || !def || ctx.state !== 'running') return null;
+    if (!ctx || !def || !this.live) return null;
+    const buf = this.buffers.get(this.fileOf(id));
+    if (!buf) {
+      void this.buffer(id);
+      return null;
+    }
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.loop = !o.once;
-    const [a, b] = loopPoints(buf);
+    const [a, b] = loopRegion(buf, def).loop;
     src.loopStart = a;
     src.loopEnd = b;
-    src.playbackRate.value = o.rate ?? 1;
+    setRate(src, (o.rate ?? 1) * (def.rate ?? 1));
     const g = ctx.createGain();
     const vol = def.volume * (o.volume ?? 1);
-    g.gain.value = o.fadeIn ? 0.0001 : vol;
-    if (o.fadeIn) g.gain.setTargetAtTime(vol, ctx.currentTime, o.fadeIn / 3);
-    src.connect(g).connect(this.sfxBus!);
-    src.start(ctx.currentTime, o.once ? 0 : a);
+    g.gain.value = o.fadeIn ? 0 : vol;
+    if (o.fadeIn) this.ramp(g.gain, vol, o.fadeIn / 3);
+    src.connect(g).connect(def.kind === 'amb' ? this.ambBus! : this.sfxBus!);
+    // start somewhere inside a long bed, so a scene change doesn't always restart the same birdsong
+    const from = o.once ? 0 : def.kind === 'amb' ? a + Math.random() * (b - a) : a;
+    src.start(ctx.currentTime, from);
     let stopped = false;
     return {
       stop: (fade = 0.08) => {
         if (stopped) return;
         stopped = true;
-        g.gain.setTargetAtTime(0.0001, ctx.currentTime, fade / 3);
-        src.stop(ctx.currentTime + fade + 0.05);
+        this.ramp(g.gain, 0, fade / 3);
+        try {
+          src.stop(ctx.currentTime + fade + 0.05);
+        } catch {
+          /* already stopped */
+        }
       },
       setRate: (r: number) => {
-        if (!stopped) src.playbackRate.setTargetAtTime(r, ctx.currentTime, 0.03);
+        if (stopped) return;
+        if (this.auto) {
+          try {
+            src.playbackRate.setTargetAtTime(clampRate(r), ctx.currentTime, 0.03);
+            return;
+          } catch {
+            /* fall through */
+          }
+        }
+        setRate(src, r);
       },
     };
+  }
+
+  /**
+   * Says something in a character's babble ("animalese"): `count` short syllables picked from `ids`, at a
+   * pitch and pace that make the character (see VOICES in game/sound.ts). `bend` raises (or lowers) the
+   * pitch toward the end, like a question or a happy lilt.
+   */
+  babble(ids: string[], o: { pitch?: number; pace?: number; count?: number; bend?: number; volume?: number; delay?: number } = {}) {
+    if (!ids.length) return;
+    const n = Math.max(1, o.count ?? 3);
+    const pitch = o.pitch ?? 1;
+    const step = 0.11 / (o.pace ?? 1);
+    let prev = -1;
+    for (let i = 0; i < n; i++) {
+      let k = Math.floor(Math.random() * ids.length);
+      if (k === prev && ids.length > 1) k = (k + 1) % ids.length;
+      prev = k;
+      const lift = n > 1 ? (o.bend ?? 0) * (i / (n - 1)) ** 2 : 0;
+      const r = pitch * (1 + lift) * (0.96 + Math.random() * 0.08);
+      // each syllable is its own id play, so give it a gap of zero by playing through `start`
+      this.syllable(ids[k], (o.delay ?? 0) + i * step * (0.85 + Math.random() * 0.3), r, (o.volume ?? 1) * (i === n - 1 ? 1 : 0.85));
+    }
+  }
+
+  private syllable(id: string, delay: number, rate: number, volume: number) {
+    const ctx = this.ctx;
+    const def = this.defs[id];
+    if (!ctx || !def || !this.live || !this.set.sfx) return;
+    const buf = this.buffers.get(this.fileOf(id));
+    if (!buf) {
+      void this.buffer(id);
+      return;
+    }
+    this.start(id, buf, ctx.currentTime + delay, rate, def.volume * volume, 6);
   }
 
   /**
@@ -166,15 +580,15 @@ export class Audio {
    */
   tone(volume = 0.06): { setPitch(hz: number): void; stop(): void } | null {
     const ctx = this.ctx;
-    if (!ctx || ctx.state !== 'running' || !this.sfxBus) return null;
+    if (!ctx || !this.live || !this.sfxBus || !this.set.sfx) return null;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     osc.type = 'triangle';
     const sub = ctx.createOscillator();
     sub.type = 'sine';
     const g = ctx.createGain();
-    g.gain.value = 0.0001;
-    g.gain.setTargetAtTime(volume, now, 0.03);
+    g.gain.value = 0;
+    this.ramp(g.gain, volume, 0.03);
     const g2 = ctx.createGain();
     g2.gain.value = 0.5;
     osc.connect(g);
@@ -186,88 +600,184 @@ export class Audio {
     return {
       setPitch: (hz: number) => {
         if (stopped) return;
-        osc.frequency.setTargetAtTime(hz, ctx.currentTime, 0.02);
-        sub.frequency.setTargetAtTime(hz / 2, ctx.currentTime, 0.02);
+        this.ramp(osc.frequency, hz, 0.02);
+        this.ramp(sub.frequency, hz / 2, 0.02);
       },
       stop: () => {
         if (stopped) return;
         stopped = true;
-        g.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.03);
+        this.ramp(g.gain, 0, 0.03);
         osc.stop(ctx.currentTime + 0.2);
         sub.stop(ctx.currentTime + 0.2);
       },
     };
   }
 
-  /** Switches the background track (null = silence), crossfading. */
-  setMusic(id: string | null) {
+  // ---------------------------------------------------------------- music
+
+  /**
+   * Switches the background track (null = silence). The old track keeps playing until the new one is
+   * decoded, then they crossfade; each track carries on from where it last stopped (`restart` starts it
+   * over). A variant of the same file (bgm_hq → bgm_hq_low) morphs in place. A jingle still ringing from
+   * the scene before fades out as the new track comes in.
+   */
+  setMusic(id: string | null, o: { restart?: boolean; fade?: number } = {}) {
+    if (this.wantMusic !== id) this.wantAt = this.ctx?.currentTime ?? 0;
     this.wantMusic = id;
     this.paused = null;
+    if (o.restart && id) this.pos.delete(this.fileOf(id));
     if (this.music?.id === id) return;
-    this.fadeOutMusic();
-    if (!id || !this.ctx) return;
+    if (!this.ready || !this.ctx) return;
+    if (!id || !this.set.music) {
+      this.fadeOutMusic(o.fade ?? 0.6);
+      return;
+    }
     void this.buffer(id).then((buf) => {
-      if (!buf || this.wantMusic !== id || this.music?.id === id) return;
-      this.startMusic(id, buf);
-      // keep memory low: drop music buffers that aren't playing
-      for (const key of [...this.buffers.keys()]) if (key.startsWith('bgm_') && key !== id) this.buffers.delete(key);
+      if (!buf || this.wantMusic !== id || this.music?.id === id || !this.live || !this.set.music) return;
+      const old = this.music;
+      // a variant of the same file goes on from the same spot
+      const at = old && old.file === this.fileOf(id) ? this.position(old) : undefined;
+      this.cutJingles(0.3);
+      this.fadeOutMusic(o.fade ?? 0.8);
+      this.startMusic(id, buf, at, o.fade ?? 0.8);
     });
   }
 
-  /** Retries the wanted track after the first tap unlocks audio. */
-  kick() {
-    if (this.wantMusic && !this.music && !this.paused) this.setMusic(this.wantMusic);
+  /** Decodes a track ahead of time (the next scene's), so switching to it is instant. */
+  prefetch(id: string) {
+    if (this.defs[id] && this.set.music) void this.buffer(id);
   }
 
-  /** Stops the music where it is (pause menu); `resumeMusic` carries on from the same spot. */
+  /** Retries the wanted track (and ambience) once the first tap has unlocked audio. */
+  kick() {
+    if (this.wantMusic && !this.music && !this.paused && !this.loading.has(this.fileOf(this.wantMusic))) this.setMusic(this.wantMusic);
+    if (this.wantAmb.some((id) => !this.amb.has(id))) this.setAmbience(this.wantAmb);
+  }
+
+  /** Stops the music (and the ambience beds) where they are (pause menu); `resumeMusic` carries on. */
   pauseMusic() {
     const m = this.music;
+    for (const a of this.amb.values()) a.loop.stop(0.1);
+    this.amb.clear();
     if (!m || !this.ctx) return;
-    const [a, b] = m.loop;
-    const played = (this.ctx.currentTime - m.start) % (b - a);
-    this.paused = { id: m.id, at: a + Math.max(0, played) };
+    this.paused = { id: m.id, at: this.position(m) };
     this.fadeOutMusic(0.08);
   }
 
   resumeMusic() {
     const p = this.paused;
     this.paused = null;
+    if (this.wantAmb.length) this.setAmbience(this.wantAmb);
     if (!p || this.wantMusic !== p.id) return;
-    const buf = this.buffers.get(p.id);
-    if (buf) this.startMusic(p.id, buf, p.at);
+    const buf = this.buffers.get(this.fileOf(p.id));
+    if (buf && this.live && this.set.music) this.startMusic(p.id, buf, p.at, 0.3);
     else this.setMusic(p.id);
   }
 
-  private startMusic(id: string, buf: AudioBuffer, at?: number) {
+  /** Seconds into the file where a track is now. */
+  private position(t: Track) {
+    const played = (this.ctx!.currentTime - t.start) * t.rate;
+    const [a, b] = t.loop;
+    if (t.from + played < b) return t.from + Math.max(0, played);
+    return a + ((t.from + played - a) % (b - a));
+  }
+
+  private startMusic(id: string, buf: AudioBuffer, at: number | undefined, fade: number) {
     const ctx = this.ctx!;
-    if (ctx.state !== 'running') return;
+    if (!this.live) return;
+    const def = this.defs[id];
+    const file = this.fileOf(id);
+    const fdef = this.defs[file] ?? def;
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.loop = true;
-    const [a, b] = loopPoints(buf);
-    src.loopStart = a;
-    src.loopEnd = b;
+    const { loop, lead } = loopRegion(buf, fdef);
+    src.loopStart = loop[0];
+    src.loopEnd = loop[1];
+    const rate = clampRate(def.rate ?? 1);
+    setRate(src, rate);
     const g = ctx.createGain();
-    g.gain.value = 0.0001;
-    g.gain.setTargetAtTime(this.defs[id]?.volume ?? 0.6, ctx.currentTime, at === undefined ? 0.4 : 0.1);
-    src.connect(g).connect(this.musicBus!);
-    const from = at ?? a;
+    g.gain.value = 0;
+    this.ramp(g.gain, def.volume, fade / 3);
+    let filter: BiquadFilterNode | null = null;
+    if (def.lowpass && typeof ctx.createBiquadFilter === 'function') {
+      filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = def.lowpass;
+      filter.Q.value = 0.6;
+      src.connect(filter).connect(g);
+    } else src.connect(g);
+    g.connect(this.musicBus!);
+    // where it left off last time, else its intro (`from`), else the top of the loop
+    let from = at ?? this.pos.get(file) ?? (fdef.from !== undefined ? lead + fdef.from : loop[0]);
+    if (!(from >= 0 && from < loop[1])) from = loop[0];
     src.start(ctx.currentTime, from);
-    // `start` is when the loop region began, so the play position can be worked out later
-    this.music = { id, src, gain: g, start: ctx.currentTime - (from - a), loop: [a, b] };
+    this.music = { id, file, src, gain: g, filter, start: ctx.currentTime, from, loop, rate, end: Infinity };
   }
 
-  private fadeOutMusic(fade = 0.25) {
-    if (!this.music || !this.ctx) return;
-    const { src, gain } = this.music;
-    gain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, fade);
-    src.stop(this.ctx.currentTime + fade * 4.8);
+  private fadeOutMusic(fade = 0.6) {
+    const m = this.music;
+    if (!m || !this.ctx) return;
+    this.pos.set(m.file, this.position(m));
+    this.ramp(m.gain.gain, 0, fade / 3);
+    m.end = this.ctx.currentTime + fade * 1.6 + 0.05;
+    try {
+      m.src.stop(m.end);
+    } catch {
+      /* already stopped */
+    }
+    this.fading.push(m);
     this.music = null;
   }
 
-  /** Lowers the music, e.g. while the frog is in the water. */
+  /** Lowers the music a little (a generic duck; the river uses `underwater`). */
   duck(on: boolean) {
-    if (this.musicBus && this.ctx) this.musicBus.gain.setTargetAtTime(on ? 0.25 : 0.6, this.ctx.currentTime, 0.15);
+    this.ducked = on;
+    this.applyDuck();
+  }
+
+  /** Under the river: music and ambience go muffled and a little quieter; effects stay clear. */
+  underwater(on: boolean) {
+    this.wet = on;
+    if (this.under) this.ramp(this.under.frequency, on ? 650 : 20000, on ? 0.08 : 0.25);
+    this.applyDuck();
+  }
+
+  private applyDuck() {
+    if (!this.duckGain) return;
+    let g = 1;
+    if (this.ducked) g = Math.min(g, DUCK_ON);
+    if (this.wet) g = Math.min(g, this.under ? 0.7 : DUCK_ON);
+    if (this.jingles.length) g = Math.min(g, DUCK_JINGLE);
+    this.ramp(this.duckGain.gain, g, this.jingles.length ? 0.05 : 0.2);
+  }
+
+  // ---------------------------------------------------------------- ambience
+
+  /**
+   * The ambience beds for the scene (see game/sound.ts), crossfading from the last set. Beds with
+   * `spots` in the manifest drop their one-shots in by themselves (thunder in the rain, gulls by the sea).
+   */
+  setAmbience(ids: string[] | string | null) {
+    const list = ids === null ? [] : typeof ids === 'string' ? [ids] : ids;
+    const want = this.ready ? list.filter((id) => this.defs[id]) : list;
+    this.wantAmb = want;
+    if (!this.ready || !this.ctx) return;
+    for (const [id, a] of this.amb) {
+      if (want.includes(id) && this.set.sfx) continue;
+      a.loop.stop(1.5);
+      this.amb.delete(id);
+    }
+    if (!this.set.sfx) return;
+    for (const id of want) {
+      if (this.amb.has(id)) continue;
+      void this.buffer(id).then(() => {
+        if (!this.wantAmb.includes(id) || this.amb.has(id) || !this.set.sfx) return;
+        const loop = this.loop(id, { fadeIn: 2 });
+        const def = this.defs[id];
+        if (loop) this.amb.set(id, { loop, def, next: this.ctx!.currentTime + (def.spots ? def.spots.every[0] * Math.random() : 0) });
+      });
+    }
   }
 }
 
@@ -279,12 +789,31 @@ function decode(ctx: AudioContext, data: ArrayBuffer): Promise<AudioBuffer> {
   });
 }
 
-/** Skips the encoder's silent padding so loops don't click (see the audio README). */
-function loopPoints(buf: AudioBuffer): [number, number] {
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+const clampRate = (r: number) => Math.max(0.1, Math.min(MAX_RATE, r || 1));
+
+/** Sets a source's speed, also where playbackRate is a plain number rather than an AudioParam. */
+function setRate(src: AudioBufferSourceNode, r: number) {
+  const pr = src.playbackRate as AudioParam | number;
+  if (typeof pr === 'object' && pr) pr.value = clampRate(r);
+  else (src as unknown as { playbackRate: number }).playbackRate = clampRate(r);
+}
+
+/**
+ * Loop region of a decoded file: the manifest's `loopAt` counted from the first sample that isn't the
+ * encoder's silent padding (`lead`), or else the whole file with the padding cut off both ends, so loops
+ * don't click.
+ */
+function loopRegion(buf: AudioBuffer, def: SoundDef | undefined): { loop: [number, number]; lead: number } {
   const d = buf.getChannelData(0);
   let a = 0;
   let b = d.length - 1;
   while (a < b && Math.abs(d[a]) < 1e-4) a++;
+  const lead = a / buf.sampleRate;
+  if (def?.loopAt) {
+    const end = Math.min(buf.duration, lead + def.loopAt[1]);
+    return { loop: [Math.min(end - 0.05, lead + def.loopAt[0]), end], lead };
+  }
   while (b > a && Math.abs(d[b]) < 1e-4) b--;
-  return [a / buf.sampleRate, (b + 1) / buf.sampleRate];
+  return { loop: [lead, (b + 1) / buf.sampleRate], lead };
 }

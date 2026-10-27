@@ -36,11 +36,20 @@ export interface Platform {
   /** Mouse wheel / trackpad scroll, in screen pixels (web only). */
   onWheel?(cb: (dy: number) => void): void;
   onVisibility(cb: (visible: boolean) => void): void;
+  /**
+   * Every event the system counts as a user gesture (on phones that's the finger lifting, not landing),
+   * so sound can be unlocked inside it.
+   */
+  onGesture(cb: () => void): void;
 
   createCanvas(w: number, h: number): Canvas;
   loadImage(src: string): Promise<ImageSource>;
-  /** Reads a packaged file (audio, json) as bytes. */
+  /** Reads a packaged file (audio) as bytes. */
   loadBinary(url: string): Promise<ArrayBuffer>;
+  /** Reads a packaged text file (UTF-8). */
+  loadText(url: string): Promise<string>;
+  /** Reads and parses a packaged JSON file (manifests). */
+  loadJson<T = unknown>(url: string): Promise<T>;
   /** Loads a font file and registers it under `family`. Resolves even on failure. */
   loadFont(family: string, url: string): Promise<boolean>;
 

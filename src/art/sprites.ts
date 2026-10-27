@@ -494,8 +494,7 @@ export class SpriteBank {
   private async paintedList(base: string): Promise<Map<string, string>> {
     const out = new Map<string, string>();
     try {
-      const raw = await this.platform.loadBinary(base + 'manifest.json');
-      const list: unknown = JSON.parse(new TextDecoder().decode(raw));
+      const list = await this.platform.loadJson(base + 'manifest.json');
       for (const n of Array.isArray(list) ? list : []) {
         if (typeof n !== 'string') continue;
         const name = n.replace(/\.(png|jpg|jpeg|webp)$/i, '');
