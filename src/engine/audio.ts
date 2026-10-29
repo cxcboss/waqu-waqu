@@ -1,4 +1,4 @@
-import type { Platform } from '../platform/types';
+import type { Platform, Stream } from '../platform/types';
 
 /**
  * How a sound is mixed (see docs/audio.md): music and ambience beds, ordinary effects, interface clicks,
@@ -51,14 +51,27 @@ export interface AudioSettings {
   sfxVolume: number;
 }
 
-/** A playing source and what it needs to be stopped and counted. */
+/** A playing source and what it needs to be stopped, counted and let go of. */
 interface Voice {
   id: string;
   src: AudioBufferSourceNode;
   gain: GainNode;
-  /** Context time when it's done (Infinity for loops). */
+  /** Context time when it's done (sooner once stopped): its nodes are disconnected after that. */
   end: number;
   stopped: boolean;
+}
+
+/** A music track played as a stream (the mini game, see `streamed`): fades are stepped on its volume. */
+interface Song {
+  id: string;
+  file: string;
+  s: Stream;
+  /** Its own level now, where it's heading (0 while fading out) and how fast (time constant, seconds). */
+  level: number;
+  to: number;
+  tc: number;
+  /** The volume last handed to the player, so it's only set when it really changes. */
+  sent: number;
 }
 
 /** The background track that is playing or fading out. */
@@ -86,6 +99,8 @@ const MAX_VOICES = 28;
 const MAX_VOICES_WX = 12;
 /** Least time between two resume() calls from touches in the mini game (each one can restart the audio unit). */
 const WAKE_GAP_WX = 3;
+/** The mini game's overall level: no limiter there, so stacked sounds need the headroom (music streams match it). */
+const MASTER_WX = 0.6;
 /** Decoded tracks kept: the one playing and the one before it, so going back and forth doesn't decode again. */
 const KEEP_MUSIC = 2;
 const KEEP_AMB = 4;
@@ -105,9 +120,12 @@ const MAX_RATE = 2; // the WeChat context takes 0 < playbackRate <= 2
  * underwater low-pass; everything ends in a limiter so stacked sounds can't clip. Works without AudioParam
  * automation (not documented for WeChat): fades are then stepped from `update()` each frame.
  *
- * In the mini game (see docs/audio.md, 微信小游戏): a plain mix (no limiter or filters), fewer voices at once, no
- * automation, sound goes out whatever the context's `state` says, and the context is resumed when it's made and on
- * every return. What it does is written to the remote log (`platform.log`), since problems only show on phones.
+ * In the mini game (see docs/audio.md, 微信小游戏): music is streamed by the system's player (`platform.createStream`)
+ * instead of being decoded, as WeChat's notes advise; the rest is a plain mix (no limiter or filters), fewer voices
+ * at once, no automation and no pitch changes on a playing sound; sound goes out whatever the context's `state`
+ * says, and the context is resumed when it's made and on every return. Every source is disconnected once it has
+ * finished (WeChat's engine keeps connected nodes). What it does is written to the remote log (`platform.log`),
+ * since problems only show on phones.
  */
 export class Audio {
   private set: AudioSettings = { music: true, sfx: true, musicVolume: 1, sfxVolume: 1 };
@@ -141,6 +159,17 @@ export class Audio {
   private wakes = 0;
   /** Lines for the remote log about failed decodes, so a bad file can't fill it. */
   private failNotes = 0;
+  /** Sources started and not yet disconnected (for the remote log: it should stay small). */
+  private alive = 0;
+  /** Loops and tracks that have been told to stop: their nodes are let go of after `at` (context time). */
+  private trash: { at: number; nodes: AudioNode[] }[] = [];
+  /** Music goes through the platform's streams (the mini game), not Web Audio buffers. */
+  private readonly streamed: boolean;
+  private song: Song | null = null;
+  /** Songs fading out; let go of once silent. */
+  private songs: Song[] = [];
+  /** The music duck applied to songs, eased toward `duckLevel()` like the duck gain would be. */
+  private duckNow = 1;
 
   private music: Track | null = null;
   private fading: Track[] = [];
@@ -161,6 +190,7 @@ export class Audio {
 
   constructor(private platform: Platform) {
     this.wx = platform.kind === 'wx';
+    this.streamed = typeof platform.createStream === 'function';
   }
 
   /** Low-pass filters (underwater, muffled tracks): left out of the mini game's plain mix. */
@@ -199,7 +229,7 @@ export class Audio {
     // a limiter at the end: two loud sounds landing together turn down instead of clipping (not in the mini
     // game, where the mix stays as plain as it can be; a little lower instead)
     let out: AudioNode = ctx.destination;
-    if (this.wx) this.master.gain.value = 0.75;
+    if (this.wx) this.master.gain.value = MASTER_WX;
     try {
       if (!this.wx && typeof ctx.createDynamicsCompressor === 'function') {
         const lim = ctx.createDynamicsCompressor();
@@ -275,7 +305,29 @@ export class Audio {
 
   /** Starts fetching sounds a scene is about to need (a track for the next screen, a shop's effects). */
   preload(ids: string[]) {
-    for (const id of ids) void this.buffer(id);
+    for (const id of ids) if (this.decodes(id)) void this.buffer(id);
+  }
+
+  /** Whether a sound is decoded at all: streamed music never is. */
+  private decodes(id: string) {
+    return !(this.streamed && this.defs[this.fileOf(id)]?.kind === 'music');
+  }
+
+  /**
+   * Short of memory: forgets every decoded sound that isn't marked preload or playing right now (it's fetched again
+   * the next time it's asked for), and lets go of finished sources.
+   */
+  trim() {
+    const busy = new Set([this.music?.file, ...this.fading.map((t) => t.file), ...[...this.amb.keys()].map((k) => this.fileOf(k))]);
+    let n = 0;
+    for (const k of [...this.buffers.keys()]) {
+      if (this.defs[k]?.preload || busy.has(k)) continue;
+      this.buffers.delete(k);
+      n++;
+    }
+    this.used = this.used.filter((k) => this.buffers.has(k));
+    if (this.ctx) this.sweep(this.ctx.currentTime);
+    this.note('warn', `trim ${n} -> bufs${this.buffers.size} alive${this.alive}`);
   }
 
   /** The entry whose file an id plays: itself, or the one it's a variant of. */
@@ -344,6 +396,9 @@ export class Audio {
   /** Off to the background, or the system has taken the sound (a call, an alarm). */
   suspend() {
     this.hidden = true;
+    if (this.song) this.song.s.pause();
+    for (const s of this.songs) this.endSong(s);
+    this.songs = [];
     try {
       void this.ctx?.suspend()?.catch(() => undefined);
     } catch {
@@ -354,6 +409,9 @@ export class Audio {
   /** Back from the background, a phone call or Siri ('interrupted' on iPhone). */
   resume() {
     this.hidden = false;
+    // a stream carries on by itself (WeChat's notes: play() again on every return)
+    if (this.song) this.song.s.play();
+    else if (this.streamed) this.kick();
     if (!this.ctx) return;
     // WeChat resumes on every return whatever the state says; a browser only when it's stopped
     if (this.wx || this.ctx.state !== 'running') this.wake();
@@ -392,7 +450,8 @@ export class Audio {
     const ctx = this.ctx;
     if (!ctx) return 'audio none';
     const t = ctx.currentTime;
-    return `audio ${ctx.state} t${Number.isFinite(t) ? t.toFixed(1) : t} ready${+this.ready} voices${this.voices.length} bufs${this.buffers.size} music:${this.music?.id ?? '-'} amb${this.amb.size} ramps${this.ramps.size}${this.hidden ? ' hidden' : ''}`;
+    const song = this.song ? ` song:${this.song.id}@${this.song.s.time.toFixed(0)}s v${this.song.sent.toFixed(2)}${this.songs.length ? '+' + this.songs.length : ''}` : this.streamed ? ' song:-' : '';
+    return `audio ${ctx.state} t${Number.isFinite(t) ? t.toFixed(1) : t} ready${+this.ready} voices${this.voices.length} alive${this.alive} bufs${this.buffers.size}${song} music:${this.music?.id ?? '-'} amb${this.amb.size} ramps${this.ramps.size}${this.hidden ? ' hidden' : ''}`;
   }
 
   private get live() {
@@ -405,6 +464,7 @@ export class Audio {
 
   /** Steps the fades when the context can't automate them, and drops ambience one-shots in. Call every frame. */
   update(dt: number) {
+    if (this.streamed) this.stepSongs(dt);
     if (!this.auto && this.ramps.size) {
       const k = (tc: number) => 1 - Math.exp(-dt / Math.max(0.001, tc));
       for (const [param, r] of this.ramps) {
@@ -419,8 +479,7 @@ export class Audio {
     const now = this.ctx.currentTime;
     // the new track never arrived: let the old one go rather than play the wrong music forever
     if (this.wantMusic !== (this.music?.id ?? null) && this.music && now - this.wantAt > 3) this.fadeOutMusic(0.4);
-    if (this.fading.length) this.fading = this.fading.filter((t) => t.end > now);
-    if (this.voices.length) this.voices = this.voices.filter((v) => !v.stopped && v.end > now);
+    this.sweep(now);
     if (this.jingles.length) {
       this.jingles = this.jingles.filter((v) => !v.stopped && v.end > now);
       if (!this.jingles.length) this.applyDuck();
@@ -431,6 +490,26 @@ export class Audio {
       a.next = now + s.every[0] + Math.random() * (s.every[1] - s.every[0]);
       this.play(s.ids[Math.floor(Math.random() * s.ids.length)], { volume: (s.volume ?? 1) * (0.6 + Math.random() * 0.4), jitter: true });
     }
+  }
+
+  /** Lets go of finished voices, faded tracks and stopped loops: disconnected, so the engine stops carrying them. */
+  private sweep(now: number) {
+    if (this.fading.length) this.fading = this.fading.filter((t) => t.end > now || this.release(t.src, t.gain, t.filter));
+    if (this.voices.length) this.voices = this.voices.filter((v) => v.end + 0.05 > now || this.release(v.src, v.gain));
+    if (this.trash.length) this.trash = this.trash.filter((x) => x.at > now || this.release(...x.nodes));
+  }
+
+  /** Disconnects the nodes of one finished source (the source first); false, for use in a filter. */
+  private release(...nodes: (AudioNode | null)[]): false {
+    this.alive--;
+    for (const n of nodes) {
+      try {
+        n?.disconnect();
+      } catch {
+        /* already disconnected */
+      }
+    }
+    return false;
   }
 
   /** Moves a parameter smoothly to `to` (time constant `tc` seconds), with or without automation. */
@@ -536,10 +615,12 @@ export class Audio {
 
   private start(id: string, buf: AudioBuffer, at: number, rate: number, vol: number, cap: number, bus = this.sfxBus!): Voice {
     const ctx = this.ctx!;
-    const same = this.voices.filter((v) => v.id === id && !v.stopped);
+    const on = this.voices.filter((v) => !v.stopped);
+    const same = on.filter((v) => v.id === id);
     if (same.length >= cap) this.stopVoice(same[0], 0.03);
-    if (this.voices.length >= (this.wx ? MAX_VOICES_WX : MAX_VOICES)) this.stopVoice(this.voices[0], 0.03);
+    if (on.length >= (this.wx ? MAX_VOICES_WX : MAX_VOICES)) this.stopVoice(on[0], 0.03);
     const src = ctx.createBufferSource();
+    this.alive++;
     src.buffer = buf;
     setRate(src, rate);
     const g = ctx.createGain();
@@ -557,8 +638,10 @@ export class Audio {
     if (v.stopped || !this.ctx) return;
     v.stopped = true;
     this.ramp(v.gain.gain, 0, fade / 3);
+    const at = this.ctx.currentTime + fade + 0.02;
+    v.end = Math.min(v.end, at);
     try {
-      v.src.stop(this.ctx.currentTime + fade + 0.02);
+      v.src.stop(at);
     } catch {
       /* already stopped */
     }
@@ -602,12 +685,14 @@ export class Audio {
       return null;
     }
     const src = ctx.createBufferSource();
+    this.alive++;
     src.buffer = buf;
     src.loop = !o.once;
     const [a, b] = loopRegion(buf, def).loop;
     src.loopStart = a;
     src.loopEnd = b;
-    setRate(src, (o.rate ?? 1) * (def.rate ?? 1));
+    const rate = clampRate((o.rate ?? 1) * (def.rate ?? 1));
+    setRate(src, rate);
     const g = ctx.createGain();
     const vol = def.volume * (o.volume ?? 1);
     g.gain.value = o.fadeIn ? 0 : vol;
@@ -618,19 +703,25 @@ export class Audio {
     const from = o.once ? 0 : def.kind === 'amb' ? a + Math.random() * (b - a) : a;
     src.start(ctx.currentTime, from);
     let stopped = false;
+    // a one-shot is let go of when it's done even if nobody stops it
+    const done = { at: o.once ? ctx.currentTime + buf.duration / rate + 0.1 : Infinity, nodes: [src, g] };
+    this.trash.push(done);
     return {
       stop: (fade = 0.08) => {
         if (stopped) return;
         stopped = true;
         this.ramp(g.gain, 0, fade / 3);
+        const at = ctx.currentTime + fade + 0.05;
+        done.at = Math.min(done.at, at + 0.05);
         try {
-          src.stop(ctx.currentTime + fade + 0.05);
+          src.stop(at);
         } catch {
           /* already stopped */
         }
       },
       setRate: (r: number) => {
-        if (stopped) return;
+        // retuning a playing source frame by frame is what WeChat's engine handles worst: it keeps its first speed there
+        if (stopped || this.wx) return;
         if (this.auto) {
           try {
             src.playbackRate.setTargetAtTime(clampRate(r), ctx.currentTime, 0.03);
@@ -736,6 +827,10 @@ export class Audio {
     this.wantMusic = id;
     this.paused = null;
     if (o.restart && id) this.pos.delete(this.fileOf(id));
+    if (this.streamed) {
+      this.setSong(id, o);
+      return;
+    }
     if (this.music?.id === id) return;
     if (!this.ready || !this.ctx) return;
     if (!id || !this.set.music) {
@@ -753,14 +848,15 @@ export class Audio {
     });
   }
 
-  /** Decodes a track ahead of time (the next scene's), so switching to it is instant. */
+  /** Decodes a track ahead of time (the next scene's), so switching to it is instant (streams need nothing). */
   prefetch(id: string) {
-    if (this.defs[id] && this.set.music) void this.buffer(id);
+    if (this.defs[id] && this.set.music && this.decodes(id)) void this.buffer(id);
   }
 
   /** Retries the wanted track (and ambience) once the first tap has unlocked audio. */
   kick() {
-    if (this.wantMusic && !this.music && !this.paused && !this.loading.has(this.fileOf(this.wantMusic))) this.setMusic(this.wantMusic);
+    const on = this.streamed ? this.song : this.music;
+    if (this.wantMusic && !on && !this.paused && !this.loading.has(this.fileOf(this.wantMusic))) this.setMusic(this.wantMusic);
     if (this.wantAmb.some((id) => !this.amb.has(id))) this.setAmbience(this.wantAmb);
   }
 
@@ -769,6 +865,10 @@ export class Audio {
     const m = this.music;
     for (const a of this.amb.values()) a.loop.stop(0.1);
     this.amb.clear();
+    if (this.song) {
+      this.paused = { id: this.song.id, at: this.song.s.time };
+      this.fadeOutSong(0.08);
+    }
     if (!m || !this.ctx) return;
     this.paused = { id: m.id, at: this.position(m) };
     this.fadeOutMusic(0.08);
@@ -779,6 +879,12 @@ export class Audio {
     this.paused = null;
     if (this.wantAmb.length) this.setAmbience(this.wantAmb);
     if (!p || this.wantMusic !== p.id) return;
+    if (this.streamed) {
+      // still fading out: it comes back up where it is; already gone: a new player picks up where it stopped
+      if (!this.songs.some((s) => s.file === this.fileOf(p.id))) this.pos.set(this.fileOf(p.id), p.at);
+      this.setMusic(p.id);
+      return;
+    }
     const buf = this.buffers.get(this.fileOf(p.id));
     if (buf && this.live && this.set.music) this.startMusic(p.id, buf, p.at, 0.3);
     else this.setMusic(p.id);
@@ -799,6 +905,7 @@ export class Audio {
     const file = this.fileOf(id);
     const fdef = this.defs[file] ?? def;
     const src = ctx.createBufferSource();
+    this.alive++;
     src.buffer = buf;
     src.loop = true;
     const { loop, lead } = loopRegion(buf, fdef);
@@ -827,6 +934,10 @@ export class Audio {
   }
 
   private fadeOutMusic(fade = 0.6) {
+    if (this.streamed) {
+      this.fadeOutSong(fade);
+      return;
+    }
     const m = this.music;
     if (!m || !this.ctx) return;
     this.pos.set(m.file, this.position(m));
@@ -854,13 +965,81 @@ export class Audio {
     this.applyDuck();
   }
 
-  private applyDuck() {
-    if (!this.duckGain) return;
+  /** How far the music is turned down now: a duck, under water, a jingle over it. */
+  private duckLevel() {
     let g = 1;
     if (this.ducked) g = Math.min(g, DUCK_ON);
     if (this.wet) g = Math.min(g, this.under ? 0.7 : DUCK_ON);
     if (this.jingles.length) g = Math.min(g, DUCK_JINGLE);
-    this.ramp(this.duckGain.gain, g, this.jingles.length ? 0.05 : 0.2);
+    return g;
+  }
+
+  private applyDuck() {
+    if (!this.duckGain) return;
+    this.ramp(this.duckGain.gain, this.duckLevel(), this.jingles.length ? 0.05 : 0.2);
+  }
+
+  // ---------------------------------------------------------------- streamed music (the mini game)
+
+  /** `setMusic` for streams: a new player per track, faded in by volume; the old one fades out and is let go of. */
+  private setSong(id: string | null, o: { restart?: boolean; fade?: number }) {
+    if (this.song && this.song.id === id) return;
+    if (!this.ready || this.hidden) return;
+    const fade = o.fade ?? 0.8;
+    const def = id ? this.defs[id] : undefined;
+    if (!id || !def || !this.set.music) {
+      this.fadeOutSong(o.fade ?? 0.6);
+      return;
+    }
+    const file = this.fileOf(id);
+    // a variant of the same file (bgm_hq → bgm_hq_low) only changes its level, in place
+    if (this.song && this.song.file === file && !o.restart) {
+      Object.assign(this.song, { id, to: def.volume, tc: fade / 3 });
+      return;
+    }
+    this.cutJingles(0.3);
+    this.fadeOutSong(fade);
+    // back to a track that's still fading out: bring it back up rather than start it over
+    const i = o.restart ? -1 : this.songs.findIndex((s) => s.file === file);
+    if (i >= 0) {
+      this.song = Object.assign(this.songs.splice(i, 1)[0], { id, to: def.volume, tc: fade / 3 });
+      return;
+    }
+    const s = this.platform.createStream!(this.base + (this.defs[file] ?? def).file, { loop: true, from: this.pos.get(file) ?? 0, volume: 0 });
+    this.song = { id, file, s, level: 0, to: def.volume, tc: fade / 3, sent: 0 };
+  }
+
+  private fadeOutSong(fade: number) {
+    const s = this.song;
+    if (!s) return;
+    this.song = null;
+    s.to = 0;
+    s.tc = Math.max(0.01, fade / 3);
+    this.songs.push(s);
+  }
+
+  /** Remembers where a song got to and lets its player go. */
+  private endSong(s: Song) {
+    this.pos.set(s.file, s.s.time);
+    s.s.destroy();
+  }
+
+  /** Eases each song's level (and the duck) and hands the result to its player as its volume. */
+  private stepSongs(dt: number) {
+    const k = (tc: number) => 1 - Math.exp(-dt / Math.max(0.001, tc));
+    this.duckNow += (this.duckLevel() - this.duckNow) * k(this.jingles.length ? 0.05 : 0.2);
+    const bus = this.set.music ? clamp01(this.set.musicVolume) : 0;
+    const all = this.song ? [this.song, ...this.songs] : this.songs;
+    for (const s of all) {
+      s.level += (s.to - s.level) * k(s.tc);
+      if (Math.abs(s.to - s.level) < 1e-3) s.level = s.to;
+      const v = clamp01(s.level * bus * this.duckNow * MASTER_WX);
+      if (Math.abs(v - s.sent) > 0.004 || (v === 0 && s.sent !== 0)) {
+        s.s.volume = v;
+        s.sent = v;
+      }
+    }
+    if (this.songs.length) this.songs = this.songs.filter((s) => s.level > 0.002 || (this.endSong(s), false));
   }
 
   // ---------------------------------------------------------------- ambience
@@ -918,15 +1097,43 @@ function setRate(src: AudioBufferSourceNode, r: number) {
  * don't click.
  */
 function loopRegion(buf: AudioBuffer, def: SoundDef | undefined): { loop: [number, number]; lead: number } {
-  const d = buf.getChannelData(0);
-  let a = 0;
-  let b = d.length - 1;
-  while (a < b && Math.abs(d[a]) < 1e-4) a++;
+  const [a, b] = soundEdges(buf);
   const lead = a / buf.sampleRate;
   if (def?.loopAt) {
     const end = Math.min(buf.duration, lead + def.loopAt[1]);
     return { loop: [Math.min(end - 0.05, lead + def.loopAt[0]), end], lead };
   }
-  while (b > a && Math.abs(d[b]) < 1e-4) b--;
   return { loop: [lead, (b + 1) / buf.sampleRate], lead };
+}
+
+const edges = new WeakMap<AudioBuffer, [number, number]>();
+/** How far the encoder's padding reaches into each end of a file. */
+const EDGE = 1 << 15;
+
+/**
+ * First and last sample that aren't the encoder's silent padding: worked out once per buffer, and only from its two
+ * ends (WeChat's getChannelData copies the whole track out of its engine every time it's asked).
+ */
+function soundEdges(buf: AudioBuffer): [number, number] {
+  let e = edges.get(buf);
+  if (e) return e;
+  const n = buf.length;
+  const k = Math.min(n, EDGE);
+  const head = new Float32Array(k);
+  const tail = new Float32Array(k);
+  try {
+    buf.copyFromChannel(head, 0, 0);
+    buf.copyFromChannel(tail, 0, n - k);
+  } catch {
+    const d = buf.getChannelData(0);
+    head.set(d.subarray(0, k));
+    tail.set(d.subarray(n - k));
+  }
+  let a = 0;
+  while (a < k - 1 && Math.abs(head[a]) < 1e-4) a++;
+  let b = k - 1;
+  while (b > 0 && Math.abs(tail[b]) < 1e-4) b--;
+  e = [a, Math.max(a, n - k + b)];
+  edges.set(buf, e);
+  return e;
 }

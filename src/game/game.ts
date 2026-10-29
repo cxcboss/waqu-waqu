@@ -1,4 +1,5 @@
 import '../art/codeart';
+import { forgetBaked } from '../art/kit';
 import { P } from '../art/palette';
 import { SpriteBank } from '../art/sprites';
 import { ellipse, panel, roundRect, text } from '../art/ui';
@@ -225,6 +226,12 @@ export class Game {
       if (!v) this.tm.hide();
       this.last = this.platform.now();
     });
+    // short of memory (the mini game): let go of decoded sounds and baked pictures, which can all be made again
+    this.platform.onMemoryWarning?.(() => {
+      this.audio.trim();
+      forgetBaked();
+      this.platform.gc?.();
+    });
     this.last = this.platform.now();
     this.platform.requestFrame(this.frame);
 
@@ -287,6 +294,8 @@ export class Game {
     // a photo laid over the game for long-press saving belongs to the screen being left
     this.platform.showImage(null);
     this.platform.log?.('info', `scene ${scene.id}`);
+    // what the last screen made is garbage now: a good moment to collect it
+    this.platform.gc?.();
     if (fade && this.scene) this.fade = { next: scene, t: 0 };
     else this.scene = scene;
   }

@@ -1,6 +1,7 @@
 import { INK, P } from '../art/palette';
 import { craneBeam, damGate, featIcon, goose, gull, padLetter, rapidsFoam, thinCracks, whirlpool, type GateState } from '../art/river';
 import { K, TILE_H, boxSprite } from '../art/sprites';
+import { releaseCanvas } from '../art/kit';
 import { breakPieces, button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
 import { alpha3, approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
@@ -607,7 +608,8 @@ export class PlayScene implements Scene {
     }
     this.updateSound(dt);
 
-    if (!this.ended) {
+    // (`finish` clears `ended` as the scene fades out: nothing may start again then, like a second 收工 that stops the report's music)
+    if (!this.ended && !this.leaving) {
       this.checkHouses();
       this.checkUrgent();
       this.checkDanger(dt);
@@ -3460,7 +3462,7 @@ export class PlayScene implements Scene {
       this.photos.push({ img: c, caption: s.caption, prio: s.prio, kind: s.kind, t: this.time, focus });
       if (this.photos.length > 8) {
         this.photos.sort((a, b) => b.prio - a.prio);
-        this.photos.length = 8;
+        for (const p of this.photos.splice(8)) releaseCanvas(p.img);
       }
     }
   }

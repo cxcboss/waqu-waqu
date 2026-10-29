@@ -13,12 +13,20 @@ let pxFn: () => number = () => 2;
 export function useCanvas(make: (w: number, h: number) => Canvas, pxPerUnit: () => number) {
   maker = make;
   pxFn = pxPerUnit;
-  baked.clear();
-  area = 0;
+  forgetBaked();
 }
 
 /** Canvas pixels per design unit, rounded up to a quarter so a tiny change doesn't re-bake everything. */
 export const pxPerUnit = () => Math.max(1, Math.ceil(pxFn() * 4 - 0.01) / 4);
+
+/**
+ * Shrinks a canvas nobody will draw again, so its pixels are freed now rather than whenever the garbage collector
+ * gets round to it: the mini game's canvases live outside the script's memory, which the collector doesn't count.
+ */
+export function releaseCanvas(c: Canvas) {
+  c.width = 1;
+  c.height = 1;
+}
 
 /** A new offscreen canvas, or null before the platform has said how to make one. */
 export function newCanvas(w: number, h: number): Canvas | null {
@@ -52,6 +60,7 @@ export function drawBaked(ctx: Ctx, key: string, x: number, y: number, b: Bounds
     if (e) {
       baked.delete(key);
       area -= e.c.width * e.c.height;
+      releaseCanvas(e.c);
     }
     const c = newCanvas((b[2] - b[0]) * px, (b[3] - b[1]) * px);
     if (!c) {
@@ -73,6 +82,7 @@ export function drawBaked(ctx: Ctx, key: string, x: number, y: number, b: Bounds
       if (area <= AREA_MAX || n === key) break;
       baked.delete(n);
       area -= old.c.width * old.c.height;
+      releaseCanvas(old.c);
     }
   }
   else {
@@ -89,5 +99,6 @@ export function forgetBaked(prefix = '') {
     if (!n.startsWith(prefix)) continue;
     baked.delete(n);
     area -= e.c.width * e.c.height;
+    releaseCanvas(e.c);
   }
 }

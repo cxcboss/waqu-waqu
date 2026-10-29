@@ -16,6 +16,19 @@ export interface TouchPoint {
   y: number;
 }
 
+/** A long sound the system plays straight from its file, never decoded into memory (the mini game's music). */
+export interface Stream {
+  /** Starts, or carries on after `pause`. */
+  play(): void;
+  pause(): void;
+  /** Seconds into the file (0 until it has started). */
+  readonly time: number;
+  /** 0–1. */
+  volume: number;
+  /** Stops it for good and lets go of the player. */
+  destroy(): void;
+}
+
 export interface ScreenInfo {
   /** CSS size of the main canvas. */
   width: number;
@@ -63,6 +76,16 @@ export interface Platform {
 
   /** Web Audio compatible context, or null when audio is unavailable. */
   createAudioContext(): AudioContext | null;
+  /**
+   * Plays a packaged sound file through the system's player instead of Web Audio: for music in the mini game,
+   * where WeChat's notes say long tracks shouldn't be decoded (memory, and the pause while decoding). Starts
+   * `from` seconds in, at `volume`. Not on the web, where music stays in Web Audio.
+   */
+  createStream?(url: string, o: { loop: boolean; from: number; volume: number }): Stream;
+  /** Hints that now is a good time to collect garbage (between scenes). */
+  gc?(): void;
+  /** The system is short of memory: let go of whatever can be fetched or drawn again. */
+  onMemoryWarning?(cb: () => void): void;
   /**
    * A line for the developer's remote log (the mini game's 实时日志 in the WeChat admin: WE分析 → 性能质量 →
    * 实时日志), for problems that only show on players' phones. Keep it to a handful of lines a minute.

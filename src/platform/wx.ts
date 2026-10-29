@@ -4,7 +4,7 @@
 //   art/    the rest of the art                                                                         subpackage "art"
 //   audio/  sound and music                                                                             subpackage "audio"
 // The game asks for files by their web paths (art/x.webp, audio/…, fonts/x.woff2); `where` maps them to the package.
-import type { Canvas, ImageSource, Platform, SaveResult, ScreenInfo, TouchKind, TouchPoint } from './types';
+import type { Canvas, ImageSource, Platform, SaveResult, ScreenInfo, Stream, TouchKind, TouchPoint } from './types';
 
 // The wx global and its objects, typed loosely: only what's used here.
 declare const wx: any;
@@ -268,6 +268,77 @@ export class WxPlatform implements Platform {
     } catch {
       return null;
     }
+  }
+
+  createStream(url: string, o: { loop: boolean; from: number; volume: number }): Stream {
+    // InnerAudioContext, as WeChat's notes advise for music: played from the file, nothing decoded into memory
+    const a = wx.createInnerAudioContext({ useWebAudioImplement: false });
+    a.loop = o.loop;
+    a.volume = o.volume;
+    let want = true, dead = false, ready = false, seek = o.from > 0.5 ? o.from : 0;
+    const name = url.replace(/^.*\//, '');
+    a.onError?.((e: { errMsg?: string; errCode?: number }) => this.log('warn', `stream ${name} error ${e?.errCode ?? ''} ${String(e?.errMsg ?? '').slice(0, 100)}`));
+    // where it left off last time: a seek once it's playing (startTime would also be where every loop restarts)
+    a.onPlay?.(() => {
+      if (!seek) return;
+      const t = seek;
+      seek = 0;
+      try {
+        a.seek(t);
+      } catch {
+        /* starts from the top */
+      }
+    });
+    void this.where(url).then(
+      (path) => {
+        if (dead) return;
+        a.src = path;
+        ready = true;
+        if (want) a.play();
+      },
+      (e) => this.log('warn', `stream ${name} not found ${String((e as Error)?.message ?? e).slice(0, 80)}`),
+    );
+    return {
+      play: () => {
+        want = true;
+        if (ready && !dead) a.play();
+      },
+      pause: () => {
+        want = false;
+        if (ready && !dead) a.pause();
+      },
+      get time() {
+        return dead ? 0 : Number(a.currentTime) || 0;
+      },
+      get volume() {
+        return a.volume;
+      },
+      set volume(v: number) {
+        if (!dead) a.volume = v;
+      },
+      destroy: () => {
+        if (dead) return;
+        dead = true;
+        try {
+          a.stop();
+          a.destroy();
+        } catch {
+          /* already gone */
+        }
+      },
+    };
+  }
+
+  gc(): void {
+    try {
+      wx.triggerGC?.();
+    } catch {
+      /* not on this client */
+    }
+  }
+
+  onMemoryWarning(cb: () => void): void {
+    wx.onMemoryWarning?.(() => cb());
   }
 
   vibrate(ms: number): void {
