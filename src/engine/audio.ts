@@ -445,7 +445,9 @@ export class Audio {
     setRate(src, rate);
     const g = ctx.createGain();
     g.gain.value = vol;
-    src.connect(g).connect(bus);
+    // one connect per line: the mini game's connect() returns nothing to chain on
+    src.connect(g);
+    g.connect(bus);
     src.start(at);
     const v: Voice = { id, src, gain: g, end: at + buf.duration / clampRate(rate), stopped: false };
     this.voices.push(v);
@@ -511,7 +513,8 @@ export class Audio {
     const vol = def.volume * (o.volume ?? 1);
     g.gain.value = o.fadeIn ? 0 : vol;
     if (o.fadeIn) this.ramp(g.gain, vol, o.fadeIn / 3);
-    src.connect(g).connect(def.kind === 'amb' ? this.ambBus! : this.sfxBus!);
+    src.connect(g);
+    g.connect(def.kind === 'amb' ? this.ambBus! : this.sfxBus!);
     // start somewhere inside a long bed, so a scene change doesn't always restart the same birdsong
     const from = o.once ? 0 : def.kind === 'amb' ? a + Math.random() * (b - a) : a;
     src.start(ctx.currentTime, from);
@@ -594,7 +597,8 @@ export class Audio {
     const g2 = ctx.createGain();
     g2.gain.value = 0.5;
     osc.connect(g);
-    sub.connect(g2).connect(g);
+    sub.connect(g2);
+    g2.connect(g);
     g.connect(this.sfxBus);
     osc.start(now);
     sub.start(now);
@@ -707,7 +711,8 @@ export class Audio {
       filter.type = 'lowpass';
       filter.frequency.value = def.lowpass;
       filter.Q.value = 0.6;
-      src.connect(filter).connect(g);
+      src.connect(filter);
+      filter.connect(g);
     } else src.connect(g);
     g.connect(this.musicBus!);
     // where it left off last time, else its intro (`from`), else the top of the loop

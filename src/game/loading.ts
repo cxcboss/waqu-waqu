@@ -93,9 +93,9 @@ export class Loader {
     this.t += dt;
     this.shownP += (this.host.progress() - this.shownP) * Math.min(1, dt * 6);
     this.tongue = Math.max(0, this.tongue - dt);
-    if (this.finished && !this.entering) {
+    if (this.canGo && !this.entering) {
       // nobody was playing: straight in after a beat; otherwise wait for the button
-      if (!this.touched && this.t - this.finished > 1.1 && (!this.host.mini || this.t > NOTICE_SEC)) this.go();
+      if (!this.touched && this.t - this.finished > 1.1) this.go();
     }
     if (this.dead > 0) {
       this.dead -= dt;
@@ -112,8 +112,13 @@ export class Loader {
     }
   }
 
+  /** Loaded, and (in the mini game) the health notice has been up long enough. */
+  private get canGo() {
+    return !!this.finished && (!this.host.mini || this.t >= NOTICE_SEC);
+  }
+
   private go() {
-    if (this.entering) return;
+    if (this.entering || !this.canGo) return;
     this.entering = true;
     this.host.enter();
   }
@@ -149,7 +154,7 @@ export class Loader {
 
   down(x: number, y: number, id: number) {
     this.touched = true;
-    if (this.finished && this.hitGo(x, y)) {
+    if (this.canGo && this.hitGo(x, y)) {
       this.pressedGo = true;
       return;
     }
@@ -270,7 +275,7 @@ export class Loader {
     else if (foot > this.board().y + this.rows * CELL + 40) drawBaked(ctx, 'loadfoot', 0, foot, [0, -60, 750, 260], (c) => river(c));
 
     // done: say so, loudly
-    if (this.finished && this.touched) {
+    if (this.canGo && this.touched) {
       const w = 420, h = 200, x = 375 - w / 2, y = top + BOARD_TOP + (this.rows * CELL) / 2 - h / 2;
       panel(ctx, x, y, w, h, { r: 26, stitch: P.gold });
       text(ctx, '加载完成！', 375, y + 56, 46, { bold: true, color: P.lilyDeep });
