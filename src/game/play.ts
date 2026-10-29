@@ -124,9 +124,9 @@ const FLY_T = 0.5;
  * Counting out change for a cash-on-delivery parcel: the resident pays with a bill and the frog
  * picks the right change from three. The river holds still meanwhile.
  */
-interface Cod { o: Order; h: House; t: number; opts: number[]; pick: number | null; pickT: number; btns: Rect[] }
+interface Cod { o: Order; h: House; t: number; opts: number[]; btns: Rect[] }
 
-type HintKey = 'go' | 'refill' | 'call' | 'egg' | 'road' | 'swim' | 'rescue' | 'climb' | 'rush' | 'cod' | 'putBack' | 'tired' | 'warn' | 'urgent' | 'heavy' | 'wrongHouse' | 'kick' | `f_${Feat}`;
+type HintKey = 'go' | 'refill' | 'call' | 'egg' | 'road' | 'swim' | 'rescue' | 'climb' | 'rush' | 'cod' | 'putBack' | 'tired' | 'warn' | 'urgent' | 'heavy' | 'wrongHouse' | 'kick' | 'pull' | `f_${Feat}`;
 
 /** A gull after the satchel: coming in, or off again (with a parcel in its beak if it got one). */
 interface Gull { x: number; y: number; t: number; vx: number; vy: number; away: boolean; o: Order | null; dropped: boolean }
@@ -183,6 +183,10 @@ const DIZZY_T = 1.6;
 /** Holding a charge this long makes the frog's legs shake, and this long gives up on the jump. */
 const FOOT_WARN = 3.5;
 const FOOT_T = 5;
+/** Two taps this close together without a pull: the hand shows the pull beside the frog, this long, at most PULL_COACH_MAX times a day. */
+const PULL_COACH_GAP = 3;
+const PULL_COACH_T = 4;
+const PULL_COACH_MAX = 2;
 /** A press made while the frog is still in the air is kept this long (seconds) and used on landing. */
 const BUFFER_T = 0.5;
 /** Jumping off the road behind a truck: it blows exhaust, which slows the frog for a while. */
@@ -390,6 +394,10 @@ export class PlayScene implements Scene {
   /** The swim in progress, summed up when the frog gets out. */
   private swim: { t: number; strokes: number; fails: number; gauges: number; wheel: number | null } | null = null;
   private lastInput = 0;
+  /** When the last tap-without-a-pull was, and the hand showing how to pull (see PULL_COACH_GAP). */
+  private tapAt = -99;
+  private pullCoach: { t: number } | null = null;
+  private pullCoaches = 0;
   /** When the truck last started hauling the frog in, for how long the haul took. */
   private yankAt = 0;
   private wall: number;
@@ -571,10 +579,7 @@ export class PlayScene implements Scene {
 
     for (const fl of this.flights) fl.t += dt;
     this.flights = this.flights.filter((fl) => fl.t < FLY_T);
-    if (this.cod) {
-      this.cod.t += dt;
-      if (this.cod.pick !== null && (this.cod.pickT += dt) > 1.5) this.closeCod();
-    }
+    if (this.cod) this.cod.t += dt;
 
     this.updateFrog(dt);
     this.updateBuffer(dt);
@@ -612,6 +617,7 @@ export class PlayScene implements Scene {
     this.popups = this.popups.filter((p) => p.t < 1.2);
     if (this.banner && (this.banner.t += dt) > this.banner.dur) this.banner = null;
     if (this.toast && (this.toast.t += dt) > 2.2) this.toast = null;
+    if (this.pullCoach && (this.pullCoach.t += dt) > PULL_COACH_T) this.pullCoach = null;
     if (this.hint && (this.hint.t += dt) > this.hint.dur) this.hint = null;
     if (this.hint) this.placeHint(dt);
     if (this.shakeCard && (this.shakeCard.t += dt) > 0.4) this.shakeCard = null;
@@ -1703,8 +1709,12 @@ export class PlayScene implements Scene {
       // a tap (or a nudge) where a pull was wanted: what was under the finger says what the player was after
       const n = ++this.tally.taps;
       if (n <= 20) this.log('tap', { len: Math.round(len), held: r1(held), under: this.findPlat(x, y + this.camY)?.kind ?? 'water', on: f.on?.kind ?? null, step: this.step });
+      // tapping again and again: show how a jump is made (the first day's aim lesson already does)
+      if (this.time - this.tapAt < PULL_COACH_GAP && !this.pullCoach && this.pullCoaches < PULL_COACH_MAX && this.step !== 'aim') this.coachPull();
+      this.tapAt = this.time;
       return;
     }
+    this.endPullCoach();
     const power = clamp(len / TUNING.maxDrag, 0, 1);
     const ux = -dx / len, uy = -dy / len;
     const dist = this.jumpDist(power, ux, uy);
@@ -2936,7 +2946,7 @@ export class PlayScene implements Scene {
     const wrong = new Set<number>();
     for (const v of [price, right + 1, right - 1, right + 2, right - 2]) if (v > 0 && v < paid && v !== right) wrong.add(v);
     const picks = shuffle([...wrong], Math.random).slice(0, 2);
-    this.cod = { o, h, t: -delay - 0.25, opts: shuffle([right, ...picks], Math.random), pick: null, pickT: 0, btns: [] };
+    this.cod = { o, h, t: -delay - 0.25, opts: shuffle([right, ...picks], Math.random), btns: [] };
     this.aim = null;
     this.stopCharge();
     this.game.audio.play('cash_register', { delay: delay + 0.2 });
@@ -2947,8 +2957,6 @@ export class PlayScene implements Scene {
     const { price, paid } = c.o.cod!;
     const ok = c.opts[i] === paid - price;
     this.log('cod', { ok, pick: c.opts[i], right: paid - price, price, paid, sec: r1(c.t) });
-    c.pick = i;
-    c.pickT = 0;
     c.o.codOk = ok;
     const au = this.game.audio;
     if (ok) {
@@ -2964,6 +2972,8 @@ export class PlayScene implements Scene {
       say(au, c.h.species, 'sad', { delay: 0.75, volume: 0.8 });
       this.game.platform.vibrate(40);
     }
+    // the card goes at once and the river moves on; how it went shows over the resident
+    this.closeCod();
   }
 
   private closeCod() {
@@ -2978,6 +2988,9 @@ export class PlayScene implements Scene {
       this.frogCue = { pose: 'frog_cheer', from: this.time, until: this.time + 1 };
     } else {
       this.popups.push({ text: `找错了 -${TUNING.codPenalty}`, x: rx, y: ry - 130, t: 0, color: P.red });
+      // the right change, said once more now the card is gone (quietly: the resident's sigh is the sound)
+      const { price, paid } = c.o.cod!;
+      this.toast = { text: `应该找 ¥${paid - price}（${paid} − ${price}）`, t: 0 };
       h.react = { kind: 'confused', t: 0 };
       this.frogCue = { pose: 'frog_sad', from: this.time, until: this.time + 1 };
     }
@@ -3024,10 +3037,10 @@ export class PlayScene implements Scene {
     }
     if (this.cod) {
       const c = this.cod;
-      if (c.pick === null && c.t > 0.3) {
+      if (c.t > 0.15) {
         c.btns.forEach((r, i) => hit(r, x, y, 8) && (this.pressed = `chg${i}`));
         if (!this.pressed) this.miss('cod');
-      } else if (c.pick !== null && c.pickT > 0.5) this.closeCod();
+      }
       return;
     }
     // a tap on the gull shoos it off (and it drops what it's got)
@@ -3155,7 +3168,7 @@ export class PlayScene implements Scene {
     if (pressed?.startsWith('chg')) {
       const i = Number(pressed.slice(3));
       const c = this.cod;
-      if (c && c.pick === null && hit(c.btns[i], x, y, 8)) this.chooseChange(i);
+      if (c && hit(c.btns[i], x, y, 8)) this.chooseChange(i);
       return;
     }
     if (pressed?.startsWith('card')) {
@@ -3399,6 +3412,19 @@ export class PlayScene implements Scene {
     if (this.hint?.key === key) this.hint = null;
   }
 
+  /** The hand beside the frog: press, pull down, let go; with a caption saying a tap doesn't jump. */
+  private coachPull() {
+    this.pullCoaches++;
+    this.pullCoach = { t: 0 };
+    this.showHint('pull', '要【按住】往下拉，松手才会跳', { dur: PULL_COACH_T, sub: '只点一下不会跳；拉得越长，跳得越远', again: true });
+  }
+
+  /** A real pull: the hand and its caption have done their job. */
+  private endPullCoach() {
+    this.pullCoach = null;
+    if (this.hint?.key === 'pull') this.hint = null;
+  }
+
   private showToast(t: string) {
     this.toast = { text: t, t: 0 };
     this.game.audio.play('toast_blip', { volume: 0.7 });
@@ -3487,6 +3513,7 @@ export class PlayScene implements Scene {
       // the leap gauge goes over everything: the frog's chance to get out depends on seeing it
       ctx.translate(this.camX, this.panY);
       this.drawGauge(ctx);
+      if (this.pullCoach && this.frog.state === 'stand' && !this.aim && !this.cod) this.drawPullCoach(ctx);
       ctx.restore();
     }
     if (this.cod && !this.paused) this.drawCod(ctx);
@@ -5794,17 +5821,29 @@ export class PlayScene implements Scene {
     if (hand) this.drawHand(ctx, hand.kind, hand.x, hand.y);
   }
 
-  private drawHand(ctx: Ctx, kind: 'tap' | 'drag' | 'stick', x: number, y: number) {
+  /** The pull shown beside the frog, on open water to the side, clear of the top bar and the tray. */
+  private drawPullCoach(ctx: Ctx) {
+    const f = this.frog;
+    const x = f.x > 375 ? f.x - 170 : f.x + 170;
+    const y = clamp(this.sy(f.y) - 60, this.game.safeT + 200, this.trayY() - 270);
+    // its own label, so it still says what to do when another hint takes the caption
+    panel(ctx, x - 100, y - 96, 200, 52, { r: 26, fill: P.gold, shadow: false });
+    text(ctx, '按住往下拉', x, y - 69, 28, { bold: true });
+    this.drawHand(ctx, 'drag', x, y, this.pullCoach!.t);
+  }
+
+  /** `t` sets where in its loop the hand is (by default the scene's clock). */
+  private drawHand(ctx: Ctx, kind: 'tap' | 'drag' | 'stick', x: number, y: number, t = this.time) {
     const sp = this.game.sprites;
     ctx.save();
     if (kind === 'stick') {
       // press the wheel and push the knob round
-      const cyc = (this.time % 2.4) / 2.4;
+      const cyc = (t % 2.4) / 2.4;
       const ang = -Math.PI / 2 - Math.PI / 4 + Math.sin(cyc * Math.PI * 2) * 0.9;
       const r = cyc < 0.1 ? (cyc / 0.1) * 50 : 50;
       sp.draw(ctx, 'hand', x + Math.cos(ang) * r, y + 14 + Math.sin(ang) * r, 1.1);
     } else if (kind === 'tap') {
-      const cyc = (this.time % 1.1) / 1.1;
+      const cyc = (t % 1.1) / 1.1;
       const press = cyc < 0.25 ? cyc / 0.25 : cyc < 0.45 ? 1 : Math.max(0, 1 - (cyc - 0.45) / 0.3);
       if (press > 0.8) {
         ctx.globalAlpha = 0.6;
@@ -5817,7 +5856,7 @@ export class PlayScene implements Scene {
       sp.draw(ctx, 'hand', x, y + 14 - press * 14, 1.1 - press * 0.08);
     } else {
       // press, pull down, let go
-      const cyc = (this.time % 2) / 2;
+      const cyc = (t % 2) / 2;
       const k = cyc < 0.15 ? 0 : cyc < 0.7 ? easeOutCubic((cyc - 0.15) / 0.55) : 1;
       const hx = x - k * 30, hy = y + k * 170;
       ctx.globalAlpha = cyc > 0.85 ? (1 - cyc) / 0.15 : 1;
@@ -5922,7 +5961,6 @@ export class PlayScene implements Scene {
     if (c.t < 0) return;
     const sp = this.game.sprites;
     const { price, paid } = c.o.cod!;
-    const right = paid - price;
     const H = this.H;
     const w = 640, h = 560, x0 = 55, y0 = H * 0.42 - h / 2;
     ctx.save();
@@ -5944,26 +5982,19 @@ export class PlayScene implements Scene {
     text(ctx, who, rx + 76 + 18, y0 + 150, 30, { align: 'left' });
     this.drawBill(ctx, rx + 76 + 18 + ww + 40 + 86, y0 + 150, paid);
     rich(ctx, segs(`货款【¥${price}】，要找回多少？`), 375, y0 + 238, 34, { bold: true });
-    if (this.cfg.tutorial && c.pick === null) text(ctx, '找零 = 付的钱 − 货款', 375, y0 + 284, 24, { color: P.inkSoft });
+    if (this.cfg.tutorial) text(ctx, '找零 = 付的钱 − 货款', 375, y0 + 284, 24, { color: P.inkSoft });
     c.btns = c.opts.map((v, i) => {
       const r = { x: x0 + 34 + i * 194, y: y0 + 318, w: 178, h: 132 };
-      const chosen = c.pick === i, isRight = v === right;
-      const done = c.pick !== null;
-      const fill = done && isRight ? '#DDEFD0' : done && chosen ? '#FBE0DA' : P.cream;
       const down = this.pressed === `chg${i}`;
       pressIn(ctx, r, down);
-      panel(ctx, r.x, r.y, r.w, r.h, { r: 18, fill, stitch: done && isRight ? P.lilyDeep : done && chosen ? P.red : undefined });
+      panel(ctx, r.x, r.y, r.w, r.h, { r: 18, fill: P.cream });
       // a little stack of coins beside the amount, the same for every option (its height isn't the answer)
       for (let j = 0; j < 3; j++) sp.draw(ctx, 'coin', r.x + 48, r.y + 96 - j * 10, 0.85, 0.6);
-      text(ctx, `¥${v}`, r.x + 120, r.y + r.h / 2 + 2, 46, { bold: true, color: done && isRight ? P.lilyDeep : done && chosen ? P.red : INK });
+      text(ctx, `¥${v}`, r.x + 120, r.y + r.h / 2 + 2, 46, { bold: true, color: INK });
       pressOut(ctx, down, () => roundRect(ctx, r.x, r.y, r.w, r.h, 18));
       return r;
     });
-    if (c.pick !== null) {
-      const ok = c.opts[c.pick] === right;
-      const line = ok ? `找对了！${c.h.name}给了小费 +${TUNING.codTip}` : `应该找 ¥${right}（${paid} − ${price}），扣 ${TUNING.codPenalty} 元`;
-      text(ctx, line, 375, y0 + 504, 28, { bold: true, color: ok ? P.lilyDeep : P.red, maxWidth: w - 40 });
-    } else text(ctx, '点一下要找回的钱', 375, y0 + 504, 26, { color: P.inkSoft });
+    text(ctx, '点一下要找回的钱', 375, y0 + 504, 26, { color: P.inkSoft });
     ctx.restore();
   }
 

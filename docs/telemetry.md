@@ -85,7 +85,7 @@
 - `rescue`：捞回包裹 `code`、`how`（tongue，第四轮起包裹进了舌头范围就自动卷回）、`after`（漂了几秒）、`late`（房子已经过去了）· `sunk`：包裹被冲出屏幕底部 `code`
 - `pickup`：`code`、`size`、`urgent`、`cod`、`used`（背包占了几格）· `bag_full`：装不下还点 · `put_back`：放回车上
 - `deliver`：`code`、`house`（房型 id，见 `src/game/cast.ts` HOUSE_DEFS，10-22 起）、`res`（这户居民的动物 id，RESIDENT_DEFS，10-22 起）、`ok`、`size`、`urgent`、`late`、`cod`、`sec`（取件到送达）；送错时还有 `want`（这家等的取件码）、`hadRight`（这家的包裹其实就在包里 → 是点错卡片，不是认错房子）
-- `cod`：找零 `ok`、`pick`（选的）、`right`（正确的）、`price`、`paid`、`sec`（想了几秒）
+- `cod`：找零 `ok`、`pick`（选的）、`right`（正确的）、`price`、`paid`、`sec`（想了几秒）。10-29 起点完找零卡立刻关掉，结果在住户头上飘字，找错时底部提示应该找多少
 - `missed`：房子过去了包裹没送 `code`、`inBag` · `urgent_late`：加急件超时 `code`
 - `warn`：进了底部红线区 `state`、`on` · `thrown`：被甩出屏幕 `state`、`on`、`warnSec`
 - `rush`：跑太靠前，车队加速 · `road`：落到路上 `spot`（ahead 在车前等车 / behind 在车尾）· `exhaust`：车尾起跳喷尾气
@@ -97,7 +97,7 @@
 - `dpr_cap`（10-22 起）：帧时间长期超 34ms，自动把画布清晰度上限降到 `cap`（game.ts）
 - `hub_locked`（10-22 起）：新手点了还没开放的地方 `id`
 - `jump` 多一个可选 `snap`（落点吸附了多少）；`yank` 的 `why` 多一种 `rope`（用了救命绳）
-- `hint`：出现了哪条提示 `key`（每种每局最多记 3 条，总数在 run_end 的 `hints` 里）
+- `hint`：出现了哪条提示 `key`（每种每局最多记 3 条，总数在 run_end 的 `hints` 里）。10-29 起多一个 `pull`：3 秒内点了两下没拉，青蛙旁边演示「按住往下拉」（每局最多 2 次，第 1 天瞄准教学那一步不出）
 - `pause`、`menu`：`id`（resume/restart/map/sound）
 
 **章节机关（10-27 起，第 6 天以后；每天教一个，见 `src/game/config.ts` 的 DAYS 和 `levelfeats.ts`）**
