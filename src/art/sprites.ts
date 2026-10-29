@@ -185,8 +185,8 @@ export function codeSprite(name: string, b: [number, number, number, number], dr
   for (const bank of banks) bank.dropCode(name);
 }
 
-/** Non-lazy art that has to be in before the first screen (the loading screen waits for it). */
-const CORE = /^(frog_stand|frog_happy|coin|hand|hat_|neck_)/;
+/** Non-lazy art that has to be in before the first screen (the loading screen waits for it; the mini game keeps it in its main package). */
+export const CORE = /^(frog_stand|frog_happy|coin|hand|hat_|neck_)/;
 /** The art one day of play needs; the rest is only for the other screens. */
 const PLAY = /^(frog_|box\d|satchel|lily|log$|river$|hand$|coin$|bill$|letter$|splash$|truck_|hat_|neck_|gear_)/;
 

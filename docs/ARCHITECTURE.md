@@ -6,14 +6,15 @@
 
 TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画布、存档、音频、美术和埋点，
 同一时间只有一个 `Scene`（画面），画面之间用 `game.go(new XxxScene(...))` 切换。
-浏览器相关的调用全部在 `src/platform/web.ts`，以后做微信小游戏只要再写一个 `wx.ts` 实现同样的 `Platform` 接口。
+浏览器相关的调用全部在 `src/platform/web.ts`，微信小游戏的在 `src/platform/wx.ts`，两者实现同一个 `Platform` 接口（`types.ts`），游戏代码不分平台。
 
 ## 目录
 
 | 位置 | 内容 |
 |---|---|
 | `src/main.web.ts` | 网页入口：建 `WebPlatform` 和 `Game`，处理 `?tm=` / `?day=`，把游戏挂到 `window.__game`（测试机器人用） |
-| `src/platform/` | `types.ts` 平台接口；`web.ts` 浏览器实现（触摸、音频、存储、`postJson` 发埋点、存图分享） |
+| `src/main.wx.ts` | 微信小游戏入口：建 `WxPlatform` 和 `Game`，挂到 `GameGlobal.__game`（开发者工具控制台用） |
+| `src/platform/` | `types.ts` 平台接口；`web.ts` 浏览器实现（触摸、音频、存储、`postJson` 发埋点、存图分享）；`wx.ts` 微信小游戏实现（见文末「微信小游戏」） |
 | `src/engine/` | `audio.ts` 音效音乐（manifest 驱动，见 `docs/audio.md`）、`math.ts`、`telemetry.ts` 匿名埋点队列 |
 | `src/game/game.ts` | `Game`：主循环、存档 `save`（localStorage）、场景切换、成就发放 |
 | `src/game/hub.ts` | 主页小镇（启动后的第一个画面）：上班、总部、我的家、福利社、工牌 |
@@ -33,7 +34,8 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 | `src/art/` | 代码绘制：`kit/` 手账风基础件（墨线、纸纹、图标、勋章、相框、招牌、时段配色）；`river.ts` 河上的机关（乌龟、石头、落叶、浮冰、薄冰、水坝、栈桥、渡船、吊钩、海鸥、大鹅、烟花）；`village.ts`/`room.ts`/`furniture.ts` 场景；`sprites.ts` 是精灵表（名字、包围盒、alias、paintedOnly，`codeSprite` 注册代码精灵） |
 | `public/art/` | AI 画的正式美术 PNG，名字写进 `manifest.json` 就替换同名占位图；没有的自动回退到占位图 |
 | `public/audio/` | 音效音乐，来源见 `CREDITS.md`；由 `tools/audio/` 生成，场景配乐在 `src/game/sound.ts`，说明见 `docs/audio.md` |
-| `scripts/` | `deploy.sh` 部署、`stats.py` 数据报告、`telemetry.sql` 建表、`subset_font.py` 裁字体 |
+| `scripts/` | `deploy.sh` 部署、`stats.py` 数据报告、`telemetry.sql` 建表、`subset_font.py` 裁字体、`build_wx.py` 打包微信小游戏 |
+| `wx/` | 小游戏工程要带的固定文件：分享图 `share.jpg`（500×400）、字体许可 `OFL.txt` |
 | `docs/telemetry.md` | 埋点说明（事件、字段、位置、怎么加、怎么读） |
 
 ## 美术回退
@@ -106,3 +108,20 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - 卡关帮助：同一天连续没过两次，结算出「慢一点再试」（`save.assist[day]`，河水 0.9 倍速，过了就取消）；三次出「跳过这一天」（`save.skipped`，开下一天但这一天拿不到章，路线图上标「跳过」，回来补跑就去掉）。
 - 故事线：第 1–30 天每天河上漂着乌龟爷爷（小龟）年轻时写给去出海的老朋友阿灰（鹈鹕大叔）的一封信（`STORY`，`save.story` 记找到的天）。集齐 30 封 `save.secret = 1`，信箱出现「第0号快递」（第 0 天，`SECRET` 配置，`dayLabel(0)`），把第一封信送到上游的阿灰家后 `secret = 2`，能读第一封信。
 - 年终总结：第 30 天第一次通过后结算的下一步按钮变成「年终总结」（`save.ending` 记看过），之后去路线图第 31 天。
+
+## 微信小游戏（2026-10-29，`wechat-minigame`）
+- 打包：`npm run build:wx`（`scripts/build_wx.py`）生成 `dist-wx/`，用微信开发者工具「导入」这个文件夹就能跑。默认用游客 AppID（只能在开发者工具里跑）；`npm run build:wx -- --appid wx…` 换成正式 AppID 才能真机预览和上传。需要 node、Pillow、fontTools（`pip install pillow fonttools brotli`），有 pngquant 会把图压到 256 色。
+- 包的结构（主包限 4 MB，总共限 30 MB；现在主包约 1.9 MB，总共约 12 MB）：
+  - 主包：`game.js`（esbuild 打的整个游戏）、`fonts/`（霞鹜文楷子集转成 TTF，字体内的名字改成 `WK`/`WKB`，因为 `wx.loadFont` 按字体文件里写的名字注册）、`core/art/`（`CORE` 那些首屏精灵、`manifest.json`、`files.json` 精灵名→文件）、`core/share.jpg`。
+  - 分包 `art/`：其余精灵，`parallelPreloadSubpackages` 让它跟主包一起下载；分包 `audio/`：`public/audio` 原样。
+  - 小游戏包不收 WebP、woff2、md，所以打包时 WebP 转回 PNG（不透明的转 JPEG），转好的缓存在 `node_modules/.cache/wx-art`。
+- `wx.ts` 把网页路径翻译成包内路径（`where()`：`art/x.webp` 查 `files.json`、`.woff2` 换 `.ttf`），读分包里的文件前先等 `wx.loadSubpackage`（失败会重试 5 次）。
+- 和网页版的不同：
+  - 加载页底部显示「健康游戏忠告」全文，左上角「8+ 适龄提示」，至少停 3 秒（`loading.ts` 的 `mini`）。
+  - 顶部安全区让开右上角胶囊按钮（`safeTop` 取胶囊底边 +6）。
+  - 存照片是直接存进手机相册（`saveImageToPhotosAlbum`，没权限会引导去设置），没有「长按图片保存」（`platform.longPressSave = false`）。
+  - 分享走右上角菜单和 `shareAppMessage`（分享给朋友、朋友圈），配图是当前画面裁 5:4，没有就用 `core/share.jpg`。
+  - 有新版本时弹窗问要不要重新打开（`getUpdateManager`）。
+  - **默认不发试玩数据**：小游戏只能请求后台配好且已 ICP 备案的「服务器域名」，Supabase 的域名配不进去。要发得先把数据中转到自己备案的域名，再用 `--tm` 打包（见 `docs/telemetry.md`）。
+- 测试：没有官方模拟器可在云端跑，用的是一个浏览器里的 `wx` 假接口（会检查分包加载了才读里面的文件）加测试机器人；真机效果以开发者工具和手机预览为准。
+- 上架步骤（注册、软著、自审报告、备案、隐私、提审）见上架清单：https://claude.ai/artifact/HJeppnDd52Y5vBzfpF8Ahj

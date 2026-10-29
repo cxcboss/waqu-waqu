@@ -12,6 +12,9 @@ const COLS = 11;
 const STEP_T = 0.2;
 const MIN_STEP = 0.11;
 const BOARD_TOP = 410;
+/** The mini game keeps the health notice up at least this long before going in by itself. */
+const NOTICE_SEC = 3;
+const HEALTH_NOTICE = ['抵制不良游戏，拒绝盗版游戏。注意自我保护，谨防受骗上当。', '适度游戏益脑，沉迷游戏伤身。合理安排时间，享受健康生活。'];
 
 type Dir = { x: number; y: number };
 interface Cell {
@@ -25,6 +28,11 @@ export interface LoaderHost {
   readonly safeB: number;
   /** 0–1 */
   progress(): number;
+  /**
+   * Running as the WeChat mini game: the health notice and age rating every game in China shows before
+   * it starts go along the bottom, and there's no page to reload.
+   */
+  readonly mini: boolean;
   vibrate(ms: number): void;
   /** The load is over and the player has said they're ready: go to the game. */
   enter(): void;
@@ -87,7 +95,7 @@ export class Loader {
     this.tongue = Math.max(0, this.tongue - dt);
     if (this.finished && !this.entering) {
       // nobody was playing: straight in after a beat; otherwise wait for the button
-      if (!this.touched && this.t - this.finished > 1.1) this.go();
+      if (!this.touched && this.t - this.finished > 1.1 && (!this.host.mini || this.t > NOTICE_SEC)) this.go();
     }
     if (this.dead > 0) {
       this.dead -= dt;
@@ -210,7 +218,8 @@ export class Loader {
     const dots = '.'.repeat(1 + (Math.floor(this.t * 2.5) % 3));
     text(ctx, this.finished ? '加载完成' : `加载中${dots}`, 375, top + 70, 56, { bold: true, color: this.finished ? P.lilyDeep : INK });
     const secs = this.t;
-    const note = this.finished ? '加载完成！' : secs > 60 ? '网络有点慢，等不及可以刷新页面再试' : secs > 18 ? '网络有点慢，再等一下就好' : '第一次进来要多等一会儿，下次就快了';
+    const slow = this.host.mini ? '网络有点慢，等不及可以退出再进' : '网络有点慢，等不及可以刷新页面再试';
+    const note = this.finished ? '加载完成！' : secs > 60 ? slow : secs > 18 ? '网络有点慢，再等一下就好' : '第一次进来要多等一会儿，下次就快了';
     text(ctx, note, 375, top + 124, 26, { color: this.finished ? P.lilyDeep : P.inkSoft, bold: !!this.finished });
 
     const bx = 75, bw = 600, by = top + 160, bh = 40;
@@ -257,7 +266,8 @@ export class Loader {
     this.drawBoard(ctx);
     // a strip of the river along the bottom, if there's room under the board
     const foot = H - 156;
-    if (foot > this.board().y + this.rows * CELL + 40) drawBaked(ctx, 'loadfoot', 0, foot, [0, -60, 750, 260], (c) => river(c));
+    if (this.host.mini) this.drawNotice(ctx);
+    else if (foot > this.board().y + this.rows * CELL + 40) drawBaked(ctx, 'loadfoot', 0, foot, [0, -60, 750, 260], (c) => river(c));
 
     // done: say so, loudly
     if (this.finished && this.touched) {
@@ -267,6 +277,19 @@ export class Loader {
       this.goRect = { x: x + 50, y: y + 96, w: w - 100, h: 80 };
       button(ctx, this.goRect.x, this.goRect.y, this.goRect.w, this.goRect.h, '进入游戏', { primary: true, pressed: this.pressedGo, size: 36 });
     }
+  }
+
+  /** 健康游戏忠告 along the bottom and the age rating up in the corner. */
+  private drawNotice(ctx: Ctx) {
+    const y = this.host.H - this.host.safeB - 124;
+    text(ctx, '健康游戏忠告', 375, y, 24, { bold: true, color: INK });
+    HEALTH_NOTICE.forEach((line, i) => text(ctx, line, 375, y + 38 + i * 34, 22, { color: P.inkSoft }));
+    const top = this.host.safeT;
+    roundRect(ctx, 28, top + 22, 92, 40, 10);
+    ctx.fillStyle = P.lilyDeep;
+    ctx.fill();
+    text(ctx, '8+', 74, top + 43, 26, { bold: true, color: P.white });
+    text(ctx, '适龄提示', 74, top + 82, 18, { color: P.inkSoft });
   }
 
   private drawBoard(ctx: Ctx) {

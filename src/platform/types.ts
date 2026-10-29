@@ -1,13 +1,14 @@
 // Platform adapter: the only layer that touches browser or wx.* APIs.
 // Game code depends on this interface; web.ts implements it for browsers,
-// and a wx.ts implementation will be added for the WeChat mini game build.
+// wx.ts for the WeChat mini game (built by scripts/build_wx.py).
 
 export type Canvas = HTMLCanvasElement;
 export type Ctx = CanvasRenderingContext2D;
 export type ImageSource = CanvasImageSource & { width: number; height: number };
 
 export type TouchKind = 'start' | 'move' | 'end' | 'cancel';
-export type SaveResult = 'shared' | 'downloaded' | 'longpress' | 'cancelled' | 'failed';
+/** 'album': it's in the phone's photos (WeChat); 'denied': the player hasn't let the game save there. */
+export type SaveResult = 'shared' | 'downloaded' | 'album' | 'longpress' | 'cancelled' | 'denied' | 'failed';
 /** Pointer position in CSS pixels relative to the main canvas. */
 export interface TouchPoint {
   id: number;
@@ -29,6 +30,8 @@ export interface ScreenInfo {
 export interface Platform {
   readonly kind: 'web' | 'wx';
   readonly canvas: Canvas;
+  /** Pictures laid over the game with `showImage` can be long-pressed and saved (browsers; not the mini game). */
+  readonly longPressSave: boolean;
   /** Measures the screen and sizes the main canvas to match. */
   screen(): ScreenInfo;
   onResize(cb: () => void): void;

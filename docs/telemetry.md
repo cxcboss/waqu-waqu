@@ -8,7 +8,8 @@
 和游戏里发生的事。不弹任何提示。
 
 - 代码：`src/engine/telemetry.ts`（排队、存本地、分批发送，平台无关）；发送和设备信息在
-  `src/platform/web.ts`（`postJson` / `deviceInfo` / `onError`），小游戏版用 `wx.request`、`wx.getSystemInfoSync`、`wx.onError` 实现同样三个接口即可。
+  `src/platform/web.ts`（`postJson` / `deviceInfo` / `onError`）；小游戏版在 `src/platform/wx.ts`，用 `wx.request`、`wx.getWindowInfo`、`wx.onError` 实现同样三个接口，`browser` 记成 `minigame`。
+- **小游戏版默认不发**：小游戏只能请求后台配好、已 ICP 备案的服务器域名，Supabase 的域名配不进去。`npm run build:wx` 打出来的包不记也不发（`main.wx.ts` 的 `__WX_TM__` 关掉了埋点）；要发得先在自己备案的域名上做中转，改 `telemetry.ts` 的地址，再用 `npm run build:wx -- --tm` 打包。
 - 埋点：`src/game/play.ts`（`this.log(...)`）、`hq.ts`、`map.ts`、`game.ts`。
 - 存储：Supabase 的 `events` 表，建表语句 `scripts/telemetry.sql`。项目地址和 publishable key 写在
   `telemetry.ts` 顶部（这把钥匙本来就是公开放在网页里的，只能加数据和读数据，不能改、不能删）。

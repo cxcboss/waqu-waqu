@@ -155,6 +155,7 @@ export class Game {
         return self.safeB;
       },
       progress: () => Math.min(0.97, this.loadDone / Math.max(1, this.loadTotal)),
+      mini: platform.kind === 'wx',
       vibrate: (ms) => this.platform.vibrate(ms),
       enter: () => this.enter(),
     });
