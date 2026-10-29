@@ -1,7 +1,7 @@
 // Shared pieces for the screens outside work (home page, HQ hall, the frog's home, the shop):
 // tap targets, a scrolling list, the header bar, paper tabs, dialogs, round icon buttons and the
 // dressed-up frog. Pictograms come from the kit's icon set (src/art/kit/icons.ts).
-import { grainFill, icon, ICON_NAMES, ribbon, shade, tint, type IconName } from '../art/kit';
+import { drawBakedScreen, grainFill, icon, ICON_NAMES, ribbon, shade, tint, type IconName } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { K, type SpriteBank } from '../art/sprites';
 import { ellipse, font, hit, panel, pressIn, pressOut, roundRect, text, type Rect } from '../art/ui';
@@ -197,13 +197,18 @@ export function pill(ctx: Ctx, taps: Taps, id: string, x: number, y: number, w: 
   pressOut(ctx, down, () => roundRect(ctx, x, y, w, h, h / 2));
 }
 
+/** Registers the tap area of an `iconButton` without drawing it (when it's drawn from a bake); true while it's held. */
+export function iconButtonTap(taps: Taps, id: string, cx: number, cy: number, d: number) {
+  return taps.add(id, { x: cx - d / 2, y: cy - d / 2, w: d, h: d }, Math.max(6, (88 - d) / 2));
+}
+
 /**
  * Round icon button centred on (cx, cy), `d` across (speaker, pause, close…). Its tap area is padded
  * to at least 88 units. `dot` adds the red "something new" dot. Returns whether it's held down.
  */
 export function iconButton(ctx: Ctx, taps: Taps, id: string, cx: number, cy: number, d: number, name: IconName, o: { fill?: string; dot?: boolean; disabled?: boolean } = {}) {
   const r = { x: cx - d / 2, y: cy - d / 2, w: d, h: d };
-  const down = taps.add(id, r, Math.max(6, (88 - d) / 2));
+  const down = iconButtonTap(taps, id, cx, cy, d);
   const fill = o.fill ?? P.cream;
   const circle = (y: number, rad: number) => {
     ctx.beginPath();
@@ -267,9 +272,19 @@ export function coinPill(ctx: Ctx, _sp: SpriteBank, x: number, y: number, coins:
  */
 export function header(ctx: Ctx, game: Game, taps: Taps, title: string, o: { back?: string; flash?: number; icon?: IconName } = {}) {
   const top = game.safeT;
-  panel(ctx, 16, top + 10, 718, 76, { r: 22, grain: true });
   const br = { x: 26, y: top + 20, w: 132, h: 56 };
   const down = taps.add('back', br, 10);
+  // it's on every screen and nothing on it moves until it's tapped or paid from: drawn once, then copied
+  if (!down && !o.flash) {
+    const state = `${title}:${o.back ?? ''}:${o.icon ?? ''}:${game.save.coins}`;
+    drawBakedScreen(ctx, 'header', state, 0, 0, [0, top, 750, top + 100], (c) => headerBar(c, game, title, o, false));
+  } else headerBar(ctx, game, title, o, down);
+}
+
+function headerBar(ctx: Ctx, game: Game, title: string, o: { back?: string; flash?: number; icon?: IconName }, down: boolean) {
+  const top = game.safeT;
+  panel(ctx, 16, top + 10, 718, 76, { r: 22, grain: true });
+  const br = { x: 26, y: top + 20, w: 132, h: 56 };
   pressIn(ctx, br, down);
   roundRect(ctx, br.x, br.y + 3, br.w, br.h, 28);
   ctx.fillStyle = shade(P.cream, 0.16);
@@ -329,7 +344,7 @@ export function sheet(ctx: Ctx, x: number, y: number, w: number, h: number, fill
  * tab joins it like a real folder tab; without it the caller draws its own sheet afterwards.
  */
 export function tabs(
-  ctx: Ctx, taps: Taps, prefix: string, x: number, y: number, w: number, labels: string[], sel: number, dots: boolean[] = [],
+  screen: Ctx, taps: Taps, prefix: string, x: number, y: number, w: number, labels: string[], sel: number, dots: boolean[] = [],
   icons?: { sp?: SpriteBank; names: string[] }, o: { sheet?: { h: number; x?: number; w?: number; fill?: string } } = {},
 ) {
   const n = labels.length;
@@ -339,6 +354,7 @@ export function tabs(
     return { x: x + i * tw + 3, y: on ? y - 8 : y, w: tw - 6, h: on ? (o.sheet ? 66 : 70) : 62 };
   };
   // a folder tab: sides leaning in a little, round top corners, open at the bottom
+  let ctx = screen;
   const shape = (r: Rect, close: boolean) => {
     const rr = 16, lean = 4;
     ctx.beginPath();
@@ -350,10 +366,9 @@ export function tabs(
     ctx.lineTo(r.x + r.w, r.y + r.h);
     if (close) ctx.closePath();
   };
-  const drawTab = (i: number) => {
+  const drawTab = (i: number, down: boolean) => {
     const on = i === sel;
     const r = rectOf(i);
-    const down = taps.add(`${prefix}${i}`, r, 2);
     pressIn(ctx, r, down);
     ctx.save();
     shape(r, true);
@@ -386,9 +401,22 @@ export function tabs(
     ctx.restore();
     pressOut(ctx, down, () => roundRect(ctx, r.x, r.y, r.w, r.h, 12));
   };
-  for (let i = 0; i < n; i++) if (i !== sel) drawTab(i);
-  if (o.sheet) sheet(ctx, o.sheet.x ?? x - 8, y + 58, o.sheet.w ?? w + 16, o.sheet.h, o.sheet.fill);
-  if (sel >= 0 && sel < n) drawTab(sel);
+  const down: boolean[] = [];
+  for (let i = 0; i < n; i++) if (i !== sel) down[i] = taps.add(`${prefix}${i}`, rectOf(i), 2);
+  if (sel >= 0 && sel < n) down[sel] = taps.add(`${prefix}${sel}`, rectOf(sel), 2);
+  const all = (c: Ctx) => {
+    ctx = c;
+    for (let i = 0; i < n; i++) if (i !== sel) drawTab(i, down[i]);
+    if (o.sheet) sheet(ctx, o.sheet.x ?? x - 8, y + 58, o.sheet.w ?? w + 16, o.sheet.h, o.sheet.fill);
+    if (sel >= 0 && sel < n) drawTab(sel, down[sel]);
+    ctx = screen;
+  };
+  // drawn once and then copied while none is held down and their pictures are all in (a sheet under them is too big)
+  const ready = !icons?.names.some((m) => m && !isIcon(m) && !TAB_CODE[m] && icons.sp && !icons.sp.has(m));
+  if (ready && !o.sheet && !down.includes(true)) {
+    const state = `${x}:${y}:${w}:${labels.join('|')}:${sel}:${dots.map(Number).join('')}:${icons?.names.join('|') ?? ''}:${icons?.sp?.version ?? ''}`;
+    drawBakedScreen(screen, `tabs:${prefix}`, state, 0, 0, [x - 6, y - 14, x + w + 6, y + 68], all);
+  } else all(screen);
 }
 
 

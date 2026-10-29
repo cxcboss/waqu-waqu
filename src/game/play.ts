@@ -1,7 +1,7 @@
 import { INK, P } from '../art/palette';
 import { craneBeam, damGate, featIcon, goose, gull, padLetter, rapidsFoam, thinCracks, whirlpool, type GateState } from '../art/river';
 import { K, TILE_H, boxSprite } from '../art/sprites';
-import { releaseCanvas } from '../art/kit';
+import { blit, drawBakedScreen, releaseCanvas } from '../art/kit';
 import { breakPieces, button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
 import { alpha3, approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
@@ -3485,22 +3485,27 @@ export class PlayScene implements Scene {
   render(ctx: Ctx) {
     const H = this.H;
     this.refreshTray();
+    this.weather.prepareDark(H, this.lights());
     if (this.camX) {
       // the road carries on past the tile's edge while the camera is panned sideways
       ctx.fillStyle = P.road;
       ctx.fillRect(0, 0, 750, H);
     }
-    ctx.save();
     // a hard landing gives the camera a little knock
     const sh = this.shakeT > 0 ? (this.shakeT / 0.22) * 7 : 0;
-    ctx.translate(this.camX + (sh ? Math.sin(this.time * 90) * sh : 0), this.panY + (sh ? Math.cos(this.time * 77) * sh * 0.6 : 0));
-    // River background tiles
+    const dx = this.camX + (sh ? Math.sin(this.time * 90) * sh : 0), dy = this.panY + (sh ? Math.cos(this.time * 77) * sh * 0.6 : 0);
+    // River background tiles: the most a frame draws, so they're copied pixel for pixel with the chapter's tint
+    // already on them (see blit). Panned sideways at the end of the day, the tint covers the road too: drawn as before.
     const top = this.camY - this.panY;
-    for (let k = Math.floor(top / TILE); k * TILE - top < H; k++) {
-      ctx.drawImage(this.game.sprites.get('river').img, 0, k * TILE - this.camY, 750, TILE + 1);
-    }
+    const river = this.game.sprites.get('river').img;
+    const tint = CHAPTERS[chapterOf(Math.max(1, this.day))].tint;
+    const fast = !this.camX;
+    if (fast) for (let k = Math.floor(top / TILE); k * TILE - top < H; k++) blit(ctx, river, dx, dy + k * TILE - this.camY, 750, TILE + 1, tint);
+    ctx.save();
+    ctx.translate(dx, dy);
+    if (!fast) for (let k = Math.floor(top / TILE); k * TILE - top < H; k++) ctx.drawImage(river, 0, k * TILE - this.camY, 750, TILE + 1);
     // the chapter's season on the water: its tint, what floats on it, the rain's rings
-    this.weather.drawWater(ctx, this.camY, H, CHAPTERS[chapterOf(Math.max(1, this.day))].tint, -this.panY);
+    this.weather.drawWater(ctx, this.camY, H, fast ? null : tint, -this.panY);
     const rushA = clamp((this.speedK - 1.15) / (TUNING.rushMax - 1.15), 0, 1);
     if (rushA > 0) this.drawStreaks(ctx, rushA);
     this.drawWorld(ctx);
@@ -3661,7 +3666,7 @@ export class PlayScene implements Scene {
   /** Over the river and everything on it, under the HUD: rain or snow, the dark of a night shift with its lights, fireflies over the lit pads. */
   private drawSky(ctx: Ctx) {
     const w = this.weather;
-    w.drawAir(ctx, this.H, this.lights());
+    w.drawAir(ctx, this.H);
     if (!w.darkness) return;
     for (const p of this.lv.plats) {
       if (!p.lit || p.gone) continue;
@@ -5232,38 +5237,19 @@ export class PlayScene implements Scene {
   }
 
   private drawHud(ctx: Ctx) {
-    const sp = this.game.sprites;
     const H = this.H;
     const ty = this.game.safeT + 10;
-    // Top bar: pause, day, route progress, delivered count
-    panel(ctx, 16, ty, 718, 72, { r: 22 });
+    // Top bar: pause, day, route progress, delivered count. Only the progress moves: the rest is drawn once and copied.
     this.pauseBtn = { x: 26, y: ty + 12, w: 48, h: 48 };
-    pressIn(ctx, this.pauseBtn, this.pressed === 'pause');
-    ellipse(ctx, 50, ty + 36, 21, 21);
-    ctx.fillStyle = P.cream;
-    ctx.fill();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = INK;
-    ctx.fillRect(43, ty + 27, 5, 18);
-    ctx.fillRect(53, ty + 27, 5, 18);
-    pressOut(ctx, this.pressed === 'pause', () => ellipse(ctx, 50, ty + 36, 23, 23));
-    text(ctx, this.day ? `第${this.day}天` : '0号快递', 86, ty + 37, 30, { bold: true, align: 'left', maxWidth: 122 });
-    // clear of a two-digit day, and the van stops short of the postmark at the end of the route
+    const handed = this.lv.orders.filter((o) => o.state === 'delivered' || o.state === 'wrong').length;
+    const count = `${handed}/${this.lv.orders.length}`;
+    if (this.pressed === 'pause') this.hudBar(ctx, ty, count, true);
+    else drawBakedScreen(ctx, 'hudbar', `${ty}:${this.day}:${count}:${this.game.sprites.version}`, 0, 0, [8, ty - 6, 742, ty + 86], (c) => this.hudBar(c, ty, count, false));
     const x0 = 212, x1 = 520, ly = ty + 36;
     const prog = clamp(-this.camY / this.cfg.length, 0, 1);
     ctx.save();
-    ctx.strokeStyle = 'rgba(74,59,48,0.35)';
-    ctx.lineWidth = 4;
-    ctx.setLineDash([2, 10]);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x0, ly);
-    ctx.lineTo(x1, ly);
-    ctx.stroke();
-    ctx.setLineDash([]);
     ctx.strokeStyle = P.orange;
+    ctx.lineCap = 'round';
     ctx.lineWidth = 7;
     ctx.beginPath();
     ctx.moveTo(x0, ly);
@@ -5294,6 +5280,40 @@ export class PlayScene implements Scene {
       ctx.fill();
       ctx.stroke();
     }
+    ctx.restore();
+
+    this.drawUrgentCard(ctx, ty + 84);
+    this.drawHudRest(ctx, H);
+  }
+
+  /** The still part of the top bar: the panel, the pause button, the day, the empty route, its postmark, the count. */
+  private hudBar(ctx: Ctx, ty: number, count: string, paused: boolean) {
+    const sp = this.game.sprites;
+    panel(ctx, 16, ty, 718, 72, { r: 22 });
+    pressIn(ctx, this.pauseBtn, paused);
+    ellipse(ctx, 50, ty + 36, 21, 21);
+    ctx.fillStyle = P.cream;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = INK;
+    ctx.fillRect(43, ty + 27, 5, 18);
+    ctx.fillRect(53, ty + 27, 5, 18);
+    pressOut(ctx, paused, () => ellipse(ctx, 50, ty + 36, 23, 23));
+    text(ctx, this.day ? `第${this.day}天` : '0号快递', 86, ty + 37, 30, { bold: true, align: 'left', maxWidth: 122 });
+    // clear of a two-digit day, and the van stops short of the postmark at the end of the route
+    const x0 = 212, x1 = 520, ly = ty + 36;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(74,59,48,0.35)';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([2, 10]);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x0, ly);
+    ctx.lineTo(x1, ly);
+    ctx.stroke();
+    ctx.setLineDash([]);
     // postmark at the route's end
     ctx.strokeStyle = P.red;
     ctx.lineWidth = 2.5;
@@ -5304,15 +5324,14 @@ export class PlayScene implements Scene {
     ctx.stroke();
     ctx.restore();
     // delivered count
-    const handed = this.lv.orders.filter((o) => o.state === 'delivered' || o.state === 'wrong').length;
-    const count = `${handed}/${this.lv.orders.length}`;
     ctx.font = font(30, true);
     const cw = ctx.measureText(count).width;
     sp.draw(ctx, 'box0', 716 - cw - 26, ly + 14, 0.95);
     text(ctx, count, 716, ly + 2, 30, { bold: true, align: 'right' });
+  }
 
-    this.drawUrgentCard(ctx, ty + 84);
-
+  /** The HUD under the top bar: the power gauge while aiming, the tray, and the calls, lifeline and wind. */
+  private drawHudRest(ctx: Ctx, H: number) {
     // Power gauge while aiming
     if (this.aim && this.frog.state === 'stand') {
       // on the left edge when the frog is on the right (on the truck), so it never covers the frog
@@ -5449,7 +5468,17 @@ export class PlayScene implements Scene {
       panel(ctx, 14, cy - 100, Math.max(this.bag.length * 92 + 140, 430), 162, { r: 16, fill: '#F3E4CB', stitch: P.orange });
       text(ctx, this.bag.length ? '背包里的 · 点一下放回车上' : '背包是空的', 148, cy - 72, 22, { align: 'left', bold: true, color: P.orangeDeep });
     }
-    // Backpack button
+    // Backpack button: drawn once and copied until its load changes
+    const w = this.weight(), used = this.slotsUsed();
+    const look = `${w <= 1 ? 0 : w <= 3 ? 1 : 2}`;
+    drawBakedScreen(ctx, 'backpack', `${cy}:${look}:${used}:${this.cfg.bagSlots}:${sp.version}`, 0, 0, [8, cy - 64, 140, cy + 66], (c) => this.backpack(c, cy, look, used));
+    // cards on the move go on top, so they're seen crossing over
+    const moving = (c: Card) => this.flights.some((f) => f.o === c.order);
+    for (const c of this.cards) if (!moving(c)) this.drawCard(ctx, c);
+    for (const c of this.cards) if (moving(c)) this.drawCard(ctx, c);
+  }
+
+  private backpack(ctx: Ctx, cy: number, look: string, used: number) {
     ellipse(ctx, 74, cy, 54, 54);
     ctx.fillStyle = P.paper;
     ctx.fill();
@@ -5462,9 +5491,7 @@ export class PlayScene implements Scene {
     ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.setLineDash([]);
-    const w = this.weight();
-    sp.draw(ctx, `satchel${w <= 1 ? 0 : w <= 3 ? 1 : 2}`, 74, cy - 20, 1.25);
-    const used = this.slotsUsed();
+    this.game.sprites.draw(ctx, `satchel${look}`, 74, cy - 20, 1.25);
     roundRect(ctx, 40, cy + 30, 68, 32, 16);
     ctx.fillStyle = used >= this.cfg.bagSlots ? P.red : P.orange;
     ctx.fill();
@@ -5472,10 +5499,6 @@ export class PlayScene implements Scene {
     ctx.lineWidth = 2;
     ctx.stroke();
     text(ctx, `${used}/${this.cfg.bagSlots}`, 74, cy + 47, 22, { color: P.white, bold: true });
-    // cards on the move go on top, so they're seen crossing over
-    const moving = (c: Card) => this.flights.some((f) => f.o === c.order);
-    for (const c of this.cards) if (!moving(c)) this.drawCard(ctx, c);
-    for (const c of this.cards) if (moving(c)) this.drawCard(ctx, c);
   }
 
   /** A little side view of the delivery truck, for the cargo row's title. */
@@ -5501,7 +5524,6 @@ export class PlayScene implements Scene {
   }
 
   private drawCard(ctx: Ctx, c: Card) {
-    const sp = this.game.sprites;
     const o = c.order;
     let { x, y, w, h } = c.rect;
     // sliding over from the other row: a hop up, and a shadow left on the tray
@@ -5522,17 +5544,35 @@ export class PlayScene implements Scene {
       ctx.restore();
       y -= lift;
     }
-    if (this.shakeCard && this.shakeCard.id === o.id) x += Math.sin(this.shakeCard.t * 50) * 6 * (1 - this.shakeCard.t / 0.4);
+    const shake = this.shakeCard && this.shakeCard.id === o.id;
+    if (shake) x += Math.sin(this.shakeCard!.t * 50) * 6 * (1 - this.shakeCard!.t / 0.4);
     const spot = (this.step === 'pick' && c.where === 'truck') || (this.step === 'deliver' && this.trayMode === 'deliver');
     const down = this.pressed === `card${o.id}`;
     const pulse = down ? 0.92 : spot ? 1 + Math.sin(this.time * 6) * 0.03 : fl ? 1.06 : 1;
+    const full = this.trayMode === 'pickup' && c.where === 'truck' && this.slotsUsed() + SIZE_INFO[o.size].slots > this.cfg.bagSlots;
+    const tags = this.cardTags(o, c.where).slice(0, 2);
+    // a card sitting still is drawn once and copied; one that moves, or whose cold (or heat) is running down, is drawn live
+    if (pulse === 1 && !fl && !shake && !o.oldLetter && !tags.some((t) => t.bar !== undefined)) {
+      const state = `${w}:${h}:${c.where}:${full}:${tags.map((t) => `${t.s}${t.fill}${t.ink ? 1 : 0}`).join(',')}:${!!o.group}:${o.dunks ?? 0}:${this.game.sprites.version}`;
+      // kept per place in its row, so a card taking another's place is drawn over the same canvas
+      const slot = this.cards.filter((d) => d.where === c.where).indexOf(c);
+      drawBakedScreen(ctx, `card:${c.where}:${slot}`, `${o.id}:${state}`, x, y, [-10, -12, w + 12, h + 14], (g) => this.cardFace(g, c, 0, 0, w, h, full, false, tags));
+      return;
+    }
     ctx.save();
     if (pulse !== 1) {
       ctx.translate(x + w / 2, y + h / 2);
       ctx.scale(pulse, pulse);
       ctx.translate(-(x + w / 2), -(y + h / 2));
     }
-    const full = this.trayMode === 'pickup' && c.where === 'truck' && this.slotsUsed() + SIZE_INFO[o.size].slots > this.cfg.bagSlots;
+    this.cardFace(ctx, c, x, y, w, h, full, down, tags);
+    ctx.restore();
+  }
+
+  /** A parcel's card: who it's for, its code, the parcel and its labels. */
+  private cardFace(ctx: Ctx, c: Card, x: number, y: number, w: number, h: number, full: boolean, down: boolean, tags: ReturnType<PlayScene['cardTags']>) {
+    const sp = this.game.sprites;
+    const o = c.order;
     if (full) ctx.globalAlpha = 0.55;
     const ret = c.where === 'ret';
     panel(ctx, x, y, w, h, { r: 12, fill: c.where === 'truck' ? '#F7FAFB' : ret ? '#E4F2EE' : P.paper, stitch: c.where === 'truck' ? P.blueLight : ret ? P.tealDeep : undefined });
@@ -5549,7 +5589,7 @@ export class PlayScene implements Scene {
     } else sp.draw(ctx, boxSprite(o.size, o.urgent, o.cod), x + w / 2, y + h - 10 * k, (o.size === 0 ? 1.15 : o.size === 1 ? 1 : 0.9) * k);
     // labels stuck on the parcel's lid, below the avatar and inside the card: what's special about it
     let ly = y + 66 * k;
-    for (const t of this.cardTags(o, c.where).slice(0, 2)) {
+    for (const t of tags) {
       ctx.font = font(18 * k, true);
       const bw = Math.min(w - 10, ctx.measureText(t.s).width + 14 * k);
       const bx = x + w / 2 - bw / 2;
@@ -5588,7 +5628,6 @@ export class PlayScene implements Scene {
       ctx.fillStyle = 'rgba(36,28,22,0.22)';
       ctx.fill();
     }
-    ctx.restore();
   }
 
   /** The labels on a parcel's card: urgent, its twist (a return, fragile, chilled or hot, chased up), cash on delivery. */

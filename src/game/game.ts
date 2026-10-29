@@ -364,7 +364,9 @@ export class Game {
 
   /** A line to the remote log: where the player is, the frame rate since the last one, and the sound's state. */
   private heartbeat(t: number) {
-    const p = this.perf, h = this.hb;
+    const p = this.perf;
+    // a day on the river starts the counters over (see PlayScene): count from there
+    const h = p.frames < this.hb.frames ? { frames: 0, slow: 0, time: 0 } : this.hb;
     const fps = (p.frames - h.frames) / Math.max(0.001, p.time - h.time);
     this.platform.log?.('info', `hb ${this.ready ? (this.scene?.id ?? '-') : 'loading'} fps${fps.toFixed(0)} slow${p.slow - h.slow} dpr${this.dprCap} ${this.audio.diag()}`);
     this.hb = { at: t, frames: p.frames, slow: p.slow, time: p.time };

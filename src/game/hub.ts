@@ -1,7 +1,7 @@
 // The home page (主页): the river-bend village between workdays. From here the frog goes back to
 // work, to the owl's HQ (records and photos), home (its room and photo wall) or the hamster's shop.
 // The village is drawn in code (src/art/village.ts) for the hour of the day: morning, day, dusk or night.
-import { cloud, contactShadow, drawBaked, fireflies, glints, grainRect, hills, icon, inked, lampGlow, sky, stars, sunMoon, TOD, todAt, tuft, type Tod, type TodName } from '../art/kit';
+import { cloud, contactShadow, drawBaked, drawBakedScreen, fireflies, glints, grainRect, hills, icon, inked, lampGlow, sky, stars, sunMoon, TOD, todAt, tuft, type Tod, type TodName } from '../art/kit';
 import { alpha, blobPath, mix, shade, tint } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { codeSprite } from '../art/sprites';
@@ -16,7 +16,7 @@ import type { Game, Scene } from './game';
 import { HallScene } from './hall';
 import { HomeScene } from './home';
 import { MapScene } from './map';
-import { Taps, Toast, coinPill, dialog, dot, drawDressedFrog, iconButton, pill, shortDate } from './menu';
+import { Taps, Toast, coinPill, dialog, dot, drawDressedFrog, iconButton, iconButtonTap, pill, shortDate } from './menu';
 import { PlayScene } from './play';
 import { ShopScene } from './shop';
 import { SCENE_MUSIC, hubAmbience } from './sound';
@@ -444,7 +444,7 @@ export class HubScene implements Scene {
     };
 
     // the village itself is baked once per hour and screen size; only the things that move are drawn live
-    drawBaked(ctx, `hub:${tod.name}:${Math.round(L.H)}:${Math.round(L.top)}:${Math.round(bot)}`, 0, 0, [0, 0, 750, L.H], (c) => paintVillage(c, L, tod));
+    drawBakedScreen(ctx, 'hub', `${tod.name}:${Math.round(L.H)}:${Math.round(L.top)}:${Math.round(bot)}`, 0, 0, [0, 0, 750, L.H], (c) => paintVillage(c, L, tod));
     this.drawLive(ctx, L, false);
 
     const unread = unreadNotes(s) > 0;
@@ -466,7 +466,12 @@ export class HubScene implements Scene {
     const by = bot - 150;
     const first = firstDay(s);
     const workDown = this.taps.add('work', { x: 32, y: by, w: 456, h: 104 });
-    if (this.newbie) {
+    const mapDown = this.taps.add('map', { x: 504, y: by, w: 214, h: 104 });
+    const label = first ? '开始上班' : s.cleared ? `全部完成 · 再玩一遍第${day}天` : `继续上班 · 第${day}天`;
+    if (!this.newbie && !workDown && !mapDown) {
+      // nothing on the bar moves until it's pressed: drawn once, then copied
+      drawBakedScreen(ctx, 'hubbar', `${label}:${day}:${by}`, 0, 0, [24, by - 6, 726, by + 150], (c) => this.workBar(c, by, label, day, false, false));
+    } else if (this.newbie) {
       // the one thing to do: the button breathes and a hand taps it
       const k = 1 + Math.sin(this.t * 5) * 0.025;
       ctx.save();
@@ -477,17 +482,22 @@ export class HubScene implements Scene {
       ctx.restore();
       const cyc = (this.t % 1.2) / 1.2;
       sp.draw(ctx, 'hand', 420, by + 60 - Math.sin(cyc * Math.PI) * 12, 1.1);
-    } else button(ctx, 32, by, 456, 104, first ? '开始上班' : s.cleared ? `全部完成 · 再玩一遍第${day}天` : `继续上班 · 第${day}天`, { primary: true, pressed: workDown, size: 38 });
-    const mapDown = this.taps.add('map', { x: 504, y: by, w: 214, h: 104 });
+      this.workBar(ctx, by, null, day, false, mapDown);
+    } else this.workBar(ctx, by, label, day, workDown, mapDown);
+
+    if (this.profile) this.drawProfile(ctx);
+    // clear of the staff card's bottom edge
+    this.toast.render(ctx, g.safeT + 140);
+  }
+
+  /** The buttons along the bottom (the work button is drawn already for a newbie, `label` null) and the day's line. */
+  private workBar(ctx: Ctx, by: number, label: string | null, day: number, workDown: boolean, mapDown: boolean) {
+    if (label !== null) button(ctx, 32, by, 456, 104, label, { primary: true, pressed: workDown, size: 38 });
     button(ctx, 504, by, 214, 104, '路线图', { pressed: mapDown, size: 34, disabled: this.newbie, icon: this.newbie ? 'lock' : 'map' });
     roundRect(ctx, 40, by + 112, 670, 32, 16);
     ctx.fillStyle = alpha(P.white, 0.9);
     ctx.fill();
     text(ctx, `第${day}天 · ${DAYS[day - 1].intro}`, 375, by + 128, 22, { color: INK, alpha: 0.85, maxWidth: 650 });
-
-    if (this.profile) this.drawProfile(ctx);
-    // clear of the staff card's bottom edge
-    this.toast.render(ctx, g.safeT + 140);
   }
 
   /** A gear upgrade or something on sale the frog can pay for right now. */
@@ -699,8 +709,14 @@ export class HubScene implements Scene {
 
   private sign(ctx: Ctx, id: string, x: number, y: number, name: string, sub: string, isNew: boolean, w: number, down = this.taps.pressed === id, locked = false) {
     x = clamp(x, 10, 740 - w);
+    this.taps.add(id, { x, y, w, h: 76 }, 6);
+    // drawn once and copied, unless it's being pressed
+    if (!down) drawBakedScreen(ctx, `sign:${id}`, `${x}:${y}:${w}:${name}:${sub}:${isNew}:${locked}`, 0, 0, [x - 6, y - 10, x + w + 10, y + 90], (c) => this.signFace(c, x, y, name, sub, isNew, w, false, locked));
+    else this.signFace(ctx, x, y, name, sub, isNew, w, true, locked);
+  }
+
+  private signFace(ctx: Ctx, x: number, y: number, name: string, sub: string, isNew: boolean, w: number, down: boolean, locked: boolean) {
     const r = { x, y, w, h: 76 };
-    this.taps.add(id, r, 6);
     pressIn(ctx, r, down);
     panel(ctx, x, y, w, 76, { r: 14, fill: locked ? '#EDE6D6' : P.cream, shadow: true });
     if (locked) {
@@ -741,10 +757,19 @@ export class HubScene implements Scene {
   private drawHeader(ctx: Ctx) {
     const g = this.game;
     const s = g.save;
-    const sp = g.sprites;
     const top = g.safeT + 16;
+    const down = this.taps.add('card', { x: 20, y: top, w: 390, h: 104 }, 4);
+    const music = iconButtonTap(this.taps, 'music', 612, top + 30, 58), sfx = iconButtonTap(this.taps, 'sfx', 690, top + 30, 58);
+    if (down || music || sfx) return this.headerFace(ctx, top, down, this.taps);
+    // nothing on it moves until it's pressed: drawn once (again when the coins, the clothes or a switch change), then copied
+    const state = `${top}:${s.name}:${stampCount(s)}:${s.coins}:${s.music}:${s.sfx}:${s.since}:${daysWorked(s)}:${firstDay(s)}:${JSON.stringify(s.wear)}:${g.sprites.version}`;
+    drawBakedScreen(ctx, 'hubheader', state, 0, 0, [10, top - 6, 740, top + 116], (c) => this.headerFace(c, top, false, new Taps()));
+  }
+
+  private headerFace(ctx: Ctx, top: number, down: boolean, taps: Taps) {
+    const s = this.game.save;
+    const sp = this.game.sprites;
     const card = { x: 20, y: top, w: 390, h: 104 };
-    const down = this.taps.add('card', card, 4);
     pressIn(ctx, card, down);
     panel(ctx, card.x, card.y, card.w, card.h, { r: 20 });
     this.avatar(ctx, card.x + 56, card.y + 52, 38);
@@ -772,8 +797,8 @@ export class HubScene implements Scene {
     pressOut(ctx, down, () => roundRect(ctx, card.x, card.y, card.w, card.h, 20));
 
     coinPill(ctx, sp, 422, top + 2, s.coins, 0, { w: 140 });
-    iconButton(ctx, this.taps, 'music', 612, top + 30, 58, s.music ? 'music' : 'musicOff');
-    iconButton(ctx, this.taps, 'sfx', 690, top + 30, 58, s.sfx ? 'speaker' : 'mute');
+    iconButton(ctx, taps, 'music', 612, top + 30, 58, s.music ? 'music' : 'musicOff');
+    iconButton(ctx, taps, 'sfx', 690, top + 30, 58, s.sfx ? 'speaker' : 'mute');
     roundRect(ctx, 432, top + 68, 290, 34, 17);
     ctx.fillStyle = alpha(P.white, 0.88);
     ctx.fill();

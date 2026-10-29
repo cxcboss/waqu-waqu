@@ -4,7 +4,6 @@
 // how hard the wind is blowing (jumps drift with it) and hands it the lights to cut out of the dark.
 import { P } from '../art/palette';
 import { firework, lightning } from '../art/river';
-import { alpha } from '../art/kit';
 import type { Audio } from '../engine/audio';
 import { alpha3 } from '../engine/math';
 import type { Canvas, Ctx } from '../platform/types';
@@ -27,6 +26,33 @@ const rand = (a: number, b: number) => a + Math.random() * (b - a);
 interface Drop { x: number; y: number; v: number; l: number }
 interface Burst { x: number; y: number; t: number; color: string; seed: number }
 
+/**
+ * Soft spots for the night, each drawn once and then stamped wherever it's wanted, rather than a new gradient for
+ * every light every frame (dozens of them on a night shift): the hole a light cuts in the dark, the warm glow over a
+ * lamp, a firefly. Opaque in the middle, fading out to the edge of the canvas, so `globalAlpha` sets how strong.
+ */
+let spots: { hole: Canvas; glow: Canvas; fly: Canvas } | null = null;
+/** The dark of a night shift, at half the screen's size: one canvas for every night, see `drawDark`. */
+let darkC: Canvas | null = null;
+
+function makeSpots(make: (w: number, h: number) => Canvas) {
+  const spot = (size: number, inner: number, stops: [number, string][]) => {
+    const c = make(size, size);
+    const g = c.getContext('2d')!;
+    const r = size / 2;
+    const gr = g.createRadialGradient(r, r, r * inner, r, r, r);
+    for (const [at, color] of stops) gr.addColorStop(at, color);
+    g.fillStyle = gr;
+    g.fillRect(0, 0, size, size);
+    return c;
+  };
+  return {
+    hole: spot(256, 0.15, [[0, 'rgba(0,0,0,1)'], [0.55, 'rgba(0,0,0,0.75)'], [1, 'rgba(0,0,0,0)']]),
+    glow: spot(256, 0, [[0, 'rgba(246,198,106,1)'], [1, 'rgba(246,198,106,0)']]),
+    fly: spot(32, 0, [[0, 'rgba(246,240,140,1)'], [1, 'rgba(246,240,140,0)']]),
+  };
+}
+
 export class Weather {
   /** Rain streaks or snowflakes, in screen space. */
   private drops: Drop[] = [];
@@ -42,7 +68,6 @@ export class Weather {
   private bursts: Burst[] = [];
   private burstCd = 1;
   private t = 0;
-  private dark: Canvas | null = null;
   /** How dark the river is (0 none): night shifts, the storm, New Year's Eve. */
   readonly darkness: number;
 
@@ -257,8 +282,8 @@ export class Weather {
    * Over the river and everything on it, under the HUD: rain or snow, the blizzard's white-out at the
    * top, the dark with its lights, the lightning and the fireworks.
    */
-  drawAir(ctx: Ctx, H: number, lights: Light[]) {
-    if (this.darkness > 0) this.drawDark(ctx, H, lights);
+  drawAir(ctx: Ctx, H: number) {
+    if (this.lit) this.drawDark(ctx, H, this.lit);
     for (const b of this.bursts) firework(ctx, b.x, b.y, b.t / 1.4, b.color, b.seed);
     if (this.bolt) lightning(ctx, this.bolt.x, -20, H * 0.45, this.bolt.seed, 1 - this.bolt.t / 0.22);
     if (this.drops.length) {
@@ -266,8 +291,8 @@ export class Weather {
       ctx.lineCap = 'round';
       if (this.snowy) {
         ctx.fillStyle = P.white;
+        ctx.globalAlpha = 0.85;
         for (const d of this.drops) {
-          ctx.globalAlpha = 0.85;
           ctx.beginPath();
           ctx.arc(d.x, d.y, d.l, 0, Math.PI * 2);
           ctx.fill();
@@ -302,14 +327,26 @@ export class Weather {
     }
   }
 
-  /** The dark of a night shift, drawn at half resolution with each light cut out of it, then fireflies on top. */
-  private drawDark(ctx: Ctx, H: number, lights: Light[]) {
+  /** This frame's lights, once `prepareDark` has made the dark for them (null when there's no dark to draw). */
+  private lit: Light[] | null = null;
+
+  /**
+   * The dark of a night shift, at half resolution with each light cut out of it. Made before anything else is drawn
+   * in the frame, so the phone isn't sent from the screen to this canvas and back in the middle of drawing it.
+   */
+  prepareDark(H: number, lights: Light[]) {
+    this.lit = null;
     const a = this.darkness * (1 - this.flash * 0.9);
     if (a <= 0.01) return;
     const s = 0.5;
     const w = Math.ceil(750 * s), h = Math.ceil(H * s);
-    if (!this.dark || this.dark.width !== w || this.dark.height !== h) this.dark = this.make(w, h);
-    const g = this.dark.getContext('2d')!;
+    spots ??= makeSpots(this.make);
+    if (!darkC) darkC = this.make(w, h);
+    else if (darkC.width !== w || darkC.height !== h) {
+      darkC.width = w;
+      darkC.height = h;
+    }
+    const g = darkC.getContext('2d')!;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.globalCompositeOperation = 'source-over';
     g.clearRect(0, 0, w, h);
@@ -319,48 +356,38 @@ export class Weather {
     for (const l of lights) {
       const x = l.x * s, y = l.y * s, r = l.r * s;
       if (y < -r || y > h + r) continue;
-      const gr = g.createRadialGradient(x, y, r * 0.15, x, y, r);
-      gr.addColorStop(0, 'rgba(0,0,0,1)');
-      gr.addColorStop(0.55, 'rgba(0,0,0,0.75)');
-      gr.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = gr;
-      g.beginPath();
-      g.arc(x, y, r, 0, Math.PI * 2);
-      g.fill();
+      g.drawImage(spots.hole, x - r, y - r, r * 2, r * 2);
     }
     g.globalCompositeOperation = 'source-over';
-    ctx.drawImage(this.dark, 0, 0, 750, H);
-    // a warm glow over the lamps and windows
+    this.lit = lights;
+  }
+
+  /** The dark made by `prepareDark` over the screen, then a warm glow over the lamps and windows. */
+  private drawDark(ctx: Ctx, H: number, lights: Light[]) {
+    const a = this.darkness * (1 - this.flash * 0.9);
+    ctx.drawImage(darkC!, 0, 0, 750, H);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = alpha3(0.22 * a);
     for (const l of lights) {
       if (!l.warm) continue;
-      const gr = ctx.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r * 0.5);
-      gr.addColorStop(0, alpha('#F6C66A', 0.22 * a));
-      gr.addColorStop(1, alpha('#F6C66A', 0));
-      ctx.fillStyle = gr;
-      ctx.beginPath();
-      ctx.arc(l.x, l.y, l.r * 0.5, 0, Math.PI * 2);
-      ctx.fill();
+      const r = l.r * 0.5;
+      ctx.drawImage(spots!.glow, l.x - r, l.y - r, r * 2, r * 2);
     }
     ctx.restore();
   }
 
   /** Fireflies over a lit pad: a few soft dots drifting round it (screen coordinates). */
   fireflies(ctx: Ctx, x: number, y: number, seed: number) {
+    spots ??= makeSpots(this.make);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < 3; i++) {
       const ph = this.t * (0.7 + i * 0.23) + seed * 1.7 + i * 2.1;
       const fx = x + Math.cos(ph) * (26 + i * 8), fy = y - 26 + Math.sin(ph * 1.3) * 14 - i * 6;
       const on = 0.55 + 0.45 * Math.sin(this.t * 3 + seed + i * 1.9);
-      const gr = ctx.createRadialGradient(fx, fy, 0, fx, fy, 12);
-      gr.addColorStop(0, `rgba(246,240,140,${alpha3(0.9 * on)})`);
-      gr.addColorStop(1, 'rgba(246,240,140,0)');
-      ctx.fillStyle = gr;
-      ctx.beginPath();
-      ctx.arc(fx, fy, 12, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.globalAlpha = alpha3(0.9 * on);
+      ctx.drawImage(spots.fly, fx - 12, fy - 12, 24, 24);
     }
     ctx.restore();
   }

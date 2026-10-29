@@ -1,7 +1,7 @@
 // The frog's home (我的家): its room with a photo wall for pictures kept from HQ, furniture bought at
 // the shop, the wardrobe, a desk with personal records and the money book, and the letters found.
 import { todSprite } from '../art/codeart';
-import { alpha, drawBaked, frame, frameOpening, FRAME_KINDS, lampGlow, todAt, type FrameKind } from '../art/kit';
+import { alpha, drawBakedScreen, frame, frameOpening, FRAME_KINDS, lampGlow, todAt, type FrameKind } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { homeRoom } from '../art/room';
 import { button, ellipse, roundRect, text, wrapText, type Rect } from '../art/ui';
@@ -228,7 +228,7 @@ export class HomeScene implements Scene {
     // wall things: window, photo wall, shelf, clock, lights (hung down from the wainscot)
     const row2 = floorY - 230, row1 = row2 - 170;
     const wy = row1 - 80;
-    drawBaked(ctx, `homeroom:${tod.name}:${Math.round(floorY)}:${Math.round(H)}`, 0, 0, [0, 0, 750, H], (c) => homeRoom(c, tod, floorY, H, 630, wy + 230));
+    drawBakedScreen(ctx, 'homeroom', `${tod.name}:${Math.round(floorY)}:${Math.round(H)}`, 0, 0, [0, 0, 750, H], (c) => homeRoom(c, tod, floorY, H, 630, wy + 230));
     sp.draw(ctx, at('home_window'), 630, wy + 122);
     if (this.shown('deco_curtain')) sp.draw(ctx, 'deco_curtain', 630, wy + 252);
     if (this.shown('deco_fish')) sp.draw(ctx, 'deco_fish', 630, wy + 216);
@@ -299,6 +299,19 @@ export class HomeScene implements Scene {
     const r = { x: cx - w / 2 - 6, y: cy - h / 2 - 20, w: w + 12, h: h + 30 };
     const down = this.taps.add(`slot${i}`, r, 4);
     this.slots[i] = r;
+    if (!down) {
+      // a frame on the wall doesn't move: drawn once (again when its photo arrives or changes), then copied
+      const img = f ? this.game.album.image(f.photo) : null;
+      const state = f ? `${f.frame}:${f.photo}:${!!img}` : '';
+      drawBakedScreen(ctx, `slot:${i}`, state, cx, cy, [-100, -100, 100, 90], (c) => this.slotFace(c, i, 0, 0, false));
+      return;
+    }
+    this.slotFace(ctx, i, cx, cy, true);
+  }
+
+  private slotFace(ctx: Ctx, i: number, cx: number, cy: number, down: boolean) {
+    const f = this.game.save.room.frames[i];
+    const w = 134, h = 110;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate([-0.04, 0.03, -0.02, 0.025, -0.035, 0.02][i]);
@@ -353,11 +366,16 @@ export class HomeScene implements Scene {
       ['wardrobe', '衣柜', false], ['records', '个人记录', false], ['letters', '信箱', newMail(s)], ['decor', '布置', false],
     ];
     const w = 164, gap = 12, x0 = 375 - (items.length * w + (items.length - 1) * gap) / 2;
-    items.forEach(([id, label, isNew], i) => {
-      const x = x0 + i * (w + gap);
-      pill(ctx, this.taps, id, x, y, w, 84, label, { size: 30, fill: P.paper });
-      if (isNew) dot(ctx, x + w - 14, y + 10);
-    });
+    const draw = (c: Ctx, taps: Taps) =>
+      items.forEach(([id, label, isNew], i) => {
+        const x = x0 + i * (w + gap);
+        pill(c, taps, id, x, y, w, 84, label, { size: 30, fill: P.paper });
+        if (isNew) dot(c, x + w - 14, y + 10);
+      });
+    // nothing on it moves until a button is held: drawn once, then copied (the taps still go to the scene)
+    if (items.some(([id]) => this.taps.pressed === id)) return draw(ctx, this.taps);
+    items.forEach(([id], i) => this.taps.add(id, { x: x0 + i * (w + gap), y, w, h: 84 }, 6));
+    drawBakedScreen(ctx, 'hometools', `${y}:${items.map((it) => +it[2]).join('')}`, 0, 0, [x0 - 8, y - 12, 750 - x0 + 8, y + 96], (c) => draw(c, new Taps()));
   }
 
   // ---------------------------------------------------------------- dialogs

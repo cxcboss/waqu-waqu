@@ -1,7 +1,7 @@
 // The HQ hall (河湾总部), open between workdays: the frog's delivery record, the work log, the
 // photo album, the wall of honour (achievements) and the river news, with the owl behind the counter.
 import { todSprite } from '../art/codeart';
-import { emptyState, medal, todAt, type EmptyKind } from '../art/kit';
+import { drawStrips, emptyState, medal, todAt, type EmptyKind } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { HQ_CLOCK, HQ_ROOM, clockHands } from '../art/room';
 import { K } from '../art/sprites';
@@ -35,6 +35,9 @@ const NOTE_ICON: Record<NoteKind, [string, string]> = {
   stamp: ['章', P.pink], rank: ['升', P.red], ach: ['★', P.gold],
 };
 
+/** Visits to the hall so far: each one bakes its record page afresh (the save will have changed in between). */
+let visits = 0;
+
 export class HallScene implements Scene {
   readonly id = 'hall';
   private t = 0;
@@ -49,6 +52,9 @@ export class HallScene implements Scene {
   private seen0: number;
   /** Work-log pages opened up to show everything. */
   private open = new Set<number>();
+  private visit = ++visits;
+  /** How tall the record page is (worked out when it's baked). */
+  private recordH = 0;
 
   constructor(private game: Game, tab = 0) {
     this.tab = tab;
@@ -166,7 +172,7 @@ export class HallScene implements Scene {
     const roomTop = counterY + 36 - HQ_ROOM.h;
     ctx.fillStyle = '#C9A37A';
     ctx.fillRect(0, 0, 750, H);
-    sp.draw(ctx, todSprite('hq_room', todAt()), 0, roomTop);
+    sp.blit(ctx, todSprite('hq_room', todAt()), 0, roomTop);
     clockHands(ctx, HQ_CLOCK.x, roomTop + HQ_CLOCK.y, HQ_CLOCK.r, new Date());
     const ox = 640 * K, oy = counterY + 3;
     const bob = Math.sin(this.t * 2) * 2;
@@ -177,7 +183,7 @@ export class HallScene implements Scene {
       sp.draw(ctx, 'owl', ox, oy + bob, 0.92);
       sp.draw(ctx, 'owl_wing', ox + 96 * K, oy + bob - 138 * K, 0.92, 0.92, -0.1 + Math.sin(this.t * 1.5) * 0.04);
     }
-    sp.draw(ctx, 'hq_counter', 0, counterY);
+    sp.blit(ctx, 'hq_counter', 0, counterY);
     this.bubble(ctx, 250, counterY - 150, OWL[this.tab]);
 
     const sheetTop = counterY + 110, sheetBot = bot - 16;
@@ -191,7 +197,7 @@ export class HallScene implements Scene {
     this.scroll.view = { x: 16, y: sheetTop + 6, w: 718, h: sheetBot - sheetTop - 12 };
     this.scroll.begin(ctx);
     const y0 = sheetTop + 22;
-    const h = [() => this.drawRecord(ctx, y0), () => this.drawLog(ctx, y0), () => this.drawAlbum(ctx, y0), () => this.drawHonour(ctx, y0), () => this.drawNews(ctx, y0)][this.tab]();
+    const h = [() => this.drawRecordPage(ctx, y0), () => this.drawLog(ctx, y0), () => this.drawAlbum(ctx, y0), () => this.drawHonour(ctx, y0), () => this.drawNews(ctx, y0)][this.tab]();
     this.scroll.end(ctx);
     this.scroll.setContent(h - sheetTop + 20);
 
@@ -237,7 +243,20 @@ export class HallScene implements Scene {
   }
 
   // 送单情况: rank, the numbers, best day by day, who gets the most parcels
-  private drawRecord(ctx: Ctx, y: number) {
+  /**
+   * The record tab, baked in strips as it scrolls into view: it's some 1,800 drawing calls of words and stamps that
+   * never move and can't be tapped, which a phone otherwise draws afresh every frame. A painted picture arriving
+   * late (a badge, a resident's portrait) bakes it again.
+   */
+  private drawRecordPage(ctx: Ctx, y0: number) {
+    const v = this.scroll.view, top = this.scroll.y + v.y;
+    const state = `${this.visit}:${y0}:${this.game.sprites.version}`;
+    drawStrips(ctx, 'record', state, v.x, v.x + v.w, top, top + v.h, -this.scroll.y, 400, (c, lo, hi) => (this.recordH = this.drawRecord(c, y0, lo, hi)));
+    return this.recordH;
+  }
+
+  /** Draws the record page from y down, only the rows between lo and hi; returns where it ends. */
+  private drawRecord(ctx: Ctx, y: number, lo = -Infinity, hi = Infinity) {
     const s = this.game.save;
     const k = s.career;
     const sp = this.game.sprites;
@@ -298,6 +317,10 @@ export class HallScene implements Scene {
     this.heading(ctx, '每天的最好成绩', y);
     y += 56;
     for (const d of DAYS) {
+      if (y + 30 < lo || y - 30 > hi) {
+        y += 56;
+        continue;
+      }
       const open = d.day <= s.day;
       text(ctx, `第${d.day}天 · ${d.name}`, 56, y + 2, 26, { align: 'left', color: open ? INK : P.inkSoft });
       const got = s.stamps[d.day] ?? [];
@@ -317,6 +340,10 @@ export class HallScene implements Scene {
     }
     const max = who[0][1].n;
     for (const [name, e] of who) {
+      if (y + 40 < lo || y - 40 > hi) {
+        y += 64;
+        continue;
+      }
       const av = `avatar_${e.species}`;
       if (sp.has(av)) sp.draw(ctx, av, 76, y + 4, 0.62);
       else {
