@@ -16,16 +16,23 @@ export interface TouchPoint {
   y: number;
 }
 
-/** A long sound the system plays straight from its file, never decoded into memory (the mini game's music). */
+/**
+ * A sound file on the system's own player (the mini game's InnerAudioContext): nothing decoded into memory, each
+ * one mixed by the system. The mini game plays every sound this way (see docs/audio.md, 微信小游戏).
+ */
 export interface Stream {
-  /** Starts, or carries on after `pause`. */
+  /** Starts, or carries on after `pause`; after `stop` (or the end) it starts over. */
   play(): void;
   pause(): void;
-  /** Seconds into the file (0 until it has started). */
+  /** Stops and goes back to the top. */
+  stop(): void;
+  /** Not making sound right now (not started yet, paused, stopped or done). */
+  readonly paused: boolean;
+  /** Seconds into the file. */
   readonly time: number;
   /** 0–1. */
   volume: number;
-  /** Stops it for good and lets go of the player. */
+  /** Lets go of the player for good. */
   destroy(): void;
 }
 
@@ -77,11 +84,11 @@ export interface Platform {
   /** Web Audio compatible context, or null when audio is unavailable. */
   createAudioContext(): AudioContext | null;
   /**
-   * Plays a packaged sound file through the system's player instead of Web Audio: for music in the mini game,
-   * where WeChat's notes say long tracks shouldn't be decoded (memory, and the pause while decoding). Starts
-   * `from` seconds in, at `volume`. Not on the web, where music stays in Web Audio.
+   * A packaged sound file on the system's player instead of Web Audio (the mini game, where all sound goes this way:
+   * WeChat's notes and the engines built for it play sound with InnerAudioContext). `onEnd` is called when a sound
+   * that doesn't loop has played to its end. Not on the web.
    */
-  createStream?(url: string, o: { loop: boolean; from: number; volume: number }): Stream;
+  createStream?(url: string, o: { loop: boolean; volume: number; onEnd?: () => void }): Stream;
   /** Hints that now is a good time to collect garbage (between scenes). */
   gc?(): void;
   /** The system is short of memory: let go of whatever can be fetched or drawn again. */

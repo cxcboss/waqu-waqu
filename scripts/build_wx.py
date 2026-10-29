@@ -11,8 +11,8 @@ What it does:
   core/       main package art: the sprites the first screen needs (CORE in src/art/sprites.ts), the art
               manifest, files.json (sprite -> file) and the share card; plus wx/ (share.jpg, OFL.txt)
   art/        subpackage "art": every other sprite
-  audio/      subpackage "audio": public/audio, except that each music file is cut down to its loop (the mini game
-              streams music instead of decoding it, and a stream loops the whole file; needs ffmpeg)
+  audio/      subpackage "audio": public/audio, except that each looping file (music, ambience, the engine) is cut
+              down to its loop (the mini game plays sound on the system's player, which loops whole files; needs ffmpeg)
 The package takes no WebP either, so art is turned back into PNG (shrunk to 256 colours with pngquant when it's
 installed) or JPEG when it has no transparency. Converted files are cached in node_modules/.cache/wx-art.
 Limits: main package 4 MB, everything 30 MB. The script prints the sizes and fails if they're over.
@@ -143,11 +143,11 @@ def fonts():
 
 
 def loop_body(src, start, end):
-    """A music file cut down to its loop region, as (mp3 bytes, seconds): decoded, cut where the manifest's
+    """A looping sound cut down to its loop region, as (mp3 bytes, seconds): decoded, cut where the manifest's
     loopAt says (counted from the first sound, as src/engine/audio.ts does) and encoded again. Cached."""
     import numpy as np
     data = open(src, 'rb').read()
-    key = hashlib.sha1(data + f'{start}:{end}'.encode()).hexdigest()
+    key = hashlib.sha1(data + f'{start}:{end}:v2'.encode()).hexdigest()
     hit = os.path.join(AUDIO_CACHE, key + '.mp3')
     sr = int(subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=sample_rate', '-of', 'csv=p=0', src],
                             capture_output=True, text=True, check=True).stdout.strip())
@@ -156,12 +156,12 @@ def loop_body(src, start, end):
         x = np.frombuffer(pcm, dtype=np.float32)
         lead = int(np.argmax(np.abs(x) >= 1e-4))
         body = x[lead + round(start * sr):lead + round(end * sr)]
-        # a little above the original 40 kbps, so encoding a second time costs nothing you can hear
-        out = subprocess.run(['ffmpeg', '-v', 'error', '-f', 'f32le', '-ar', str(sr), '-ac', '1', '-i', '-', '-c:a', 'libmp3lame', '-b:a', '48k', '-f', 'mp3', '-'],
-                             input=body.tobytes(), capture_output=True, check=True).stdout
+        # a little above the original 40 kbps, so encoding a second time costs nothing you can hear; into a file, not a
+        # pipe, so ffmpeg can go back and fill in the LAME header (its length and encoder delay, for a gapless loop)
         os.makedirs(AUDIO_CACHE, exist_ok=True)
-        with open(hit, 'wb') as f:
-            f.write(out)
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'f32le', '-ar', str(sr), '-ac', '1', '-i', '-', '-c:a', 'libmp3lame', '-b:a', '48k', hit + '.tmp.mp3'],
+                       input=body.tobytes(), capture_output=True, check=True)
+        os.replace(hit + '.tmp.mp3', hit)
     return open(hit, 'rb').read(), (round(end * sr) - round(start * sr)) / sr
 
 
@@ -170,15 +170,16 @@ def audio():
     # .md isn't a file type the package takes; the credits go in as .txt
     shutil.copytree(os.path.join(PUB, 'audio'), dst, ignore=shutil.ignore_patterns('*.md'))
     shutil.copy(os.path.join(PUB, 'audio', 'CREDITS.md'), os.path.join(dst, 'CREDITS.txt'))
-    # Music is streamed in the mini game (InnerAudioContext), which loops whole files: each track becomes just its
-    # loop, without the run-in and run-out that let Web Audio loop it seamlessly, and its loopAt says so.
+    # The mini game plays every sound on the system's player (InnerAudioContext), which loops whole files: each looping
+    # sound becomes just its loop, without the run-in and run-out that let Web Audio loop it seamlessly, and its loopAt
+    # says so.
     if not shutil.which('ffmpeg'):
-        sys.exit('ffmpeg is needed to cut the music to its loops (apt install ffmpeg / brew install ffmpeg)')
+        sys.exit('ffmpeg is needed to cut the looping sounds to their loops (apt install ffmpeg / brew install ffmpeg)')
     path = os.path.join(dst, 'manifest.json')
     man = json.load(open(path, encoding='utf-8'))
     n = 0
     for e in man['sounds'].values():
-        if e.get('kind') != 'music' or e.get('of') or not e.get('loopAt'):
+        if not e.get('loop') or e.get('of') or not e.get('loopAt'):
             continue
         out, secs = loop_body(os.path.join(PUB, 'audio', e['file']), *e['loopAt'])
         with open(os.path.join(dst, e['file']), 'wb') as f:
@@ -188,7 +189,7 @@ def audio():
         e['bytes'] = len(out)
         n += 1
     json.dump(man, open(path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-    print(f'audio: {n} music tracks cut to their loops')
+    print(f'audio: {n} looping sounds cut to their loops')
 
 
 def project():

@@ -3,7 +3,7 @@ import { forgetBaked } from '../art/kit';
 import { P } from '../art/palette';
 import { SpriteBank } from '../art/sprites';
 import { ellipse, panel, roundRect, text } from '../art/ui';
-import { Audio } from '../engine/audio';
+import { createAudio, type Audio } from '../engine/audio';
 import { alpha3 } from '../engine/math';
 import { Telemetry, type TelemetryOptions } from '../engine/telemetry';
 import type { Ctx, Platform } from '../platform/types';
@@ -144,7 +144,7 @@ export class Game {
     const self = this;
     this.ctx = platform.canvas.getContext('2d')!;
     this.sprites = new SpriteBank(platform);
-    this.audio = new Audio(platform);
+    this.audio = createAudio(platform);
     this.save = this.readSave();
     this.album = new Album(this);
     audioPrefs(this.save);
@@ -226,7 +226,7 @@ export class Game {
       if (!v) this.tm.hide();
       this.last = this.platform.now();
     });
-    // short of memory (the mini game): let go of decoded sounds and baked pictures, which can all be made again
+    // short of memory (the mini game): let go of sounds not playing and baked pictures, which can all be made again
     this.platform.onMemoryWarning?.(() => {
       this.audio.trim();
       forgetBaked();

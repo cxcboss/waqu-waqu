@@ -39,6 +39,8 @@ export class WxPlatform implements Platform {
   private rtLines = 0;
   /** Canvases made, and their pixels when made: the biggest memory the game holds besides images. */
   private canvases = { n: 0, px: 0 };
+  /** Player errors logged so far (a broken file mustn't fill the log). */
+  private streamErrors = 0;
 
   constructor() {
     // the first canvas made is the screen
@@ -263,6 +265,7 @@ export class WxPlatform implements Platform {
   }
 
   createAudioContext(): AudioContext | null {
+    // not used by the game here: all its sound goes through createStream (see StreamAudio in src/engine/audio-streams.ts)
     try {
       return wx.createWebAudioContext ? (wx.createWebAudioContext() as AudioContext) : null;
     } catch {
@@ -270,25 +273,20 @@ export class WxPlatform implements Platform {
     }
   }
 
-  createStream(url: string, o: { loop: boolean; from: number; volume: number }): Stream {
-    // InnerAudioContext, as WeChat's notes advise for music: played from the file, nothing decoded into memory
-    const a = wx.createInnerAudioContext({ useWebAudioImplement: false });
+  createStream(url: string, o: { loop: boolean; volume: number; onEnd?: () => void }): Stream {
+    // the system's player, not its Web Audio version (useWebAudioImplement), which is what the rest of the sound
+    // used to go through and what broke up on Android phones
+    const a = wx.createInnerAudioContext();
     a.loop = o.loop;
     a.volume = o.volume;
-    let want = true, dead = false, ready = false, seek = o.from > 0.5 ? o.from : 0;
+    let want = false, dead = false, ready = false;
     const name = url.replace(/^.*\//, '');
-    a.onError?.((e: { errMsg?: string; errCode?: number }) => this.log('warn', `stream ${name} error ${e?.errCode ?? ''} ${String(e?.errMsg ?? '').slice(0, 100)}`));
-    // where it left off last time: a seek once it's playing (startTime would also be where every loop restarts)
-    a.onPlay?.(() => {
-      if (!seek) return;
-      const t = seek;
-      seek = 0;
-      try {
-        a.seek(t);
-      } catch {
-        /* starts from the top */
-      }
+    a.onError?.((e: { errMsg?: string; errCode?: number }) => {
+      if (this.streamErrors++ < 20) this.log('warn', `stream ${name} error ${e?.errCode ?? ''} ${String(e?.errMsg ?? '').slice(0, 100)}`);
+      o.onEnd?.();
     });
+    if (o.onEnd) a.onEnded?.(() => !dead && o.onEnd!());
+    // the file may still be in its subpackage's download: it's played as soon as it's there, if still wanted
     void this.where(url).then(
       (path) => {
         if (dead) return;
@@ -296,16 +294,34 @@ export class WxPlatform implements Platform {
         ready = true;
         if (want) a.play();
       },
-      (e) => this.log('warn', `stream ${name} not found ${String((e as Error)?.message ?? e).slice(0, 80)}`),
+      (e) => {
+        this.log('warn', `stream ${name} not found ${String((e as Error)?.message ?? e).slice(0, 80)}`);
+        o.onEnd?.();
+      },
     );
+    const run = (f: () => void) => {
+      if (!ready || dead) return;
+      try {
+        f();
+      } catch {
+        /* the player has gone */
+      }
+    };
     return {
       play: () => {
         want = true;
-        if (ready && !dead) a.play();
+        run(() => a.play());
       },
       pause: () => {
         want = false;
-        if (ready && !dead) a.pause();
+        run(() => a.pause());
+      },
+      stop: () => {
+        want = false;
+        run(() => a.stop());
+      },
+      get paused() {
+        return dead || !ready || a.paused !== false;
       },
       get time() {
         return dead ? 0 : Number(a.currentTime) || 0;
@@ -320,7 +336,6 @@ export class WxPlatform implements Platform {
         if (dead) return;
         dead = true;
         try {
-          a.stop();
           a.destroy();
         } catch {
           /* already gone */

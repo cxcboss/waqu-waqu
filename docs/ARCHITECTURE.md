@@ -15,7 +15,7 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 | `src/main.web.ts` | 网页入口：建 `WebPlatform` 和 `Game`，处理 `?tm=` / `?day=`，把游戏挂到 `window.__game`（测试机器人用） |
 | `src/main.wx.ts` | 微信小游戏入口：建 `WxPlatform` 和 `Game`，挂到 `GameGlobal.__game`（开发者工具控制台用） |
 | `src/platform/` | `types.ts` 平台接口；`web.ts` 浏览器实现（触摸、音频、存储、`postJson` 发埋点、存图分享）；`wx.ts` 微信小游戏实现（见文末「微信小游戏」） |
-| `src/engine/` | `audio.ts` 音效音乐（manifest 驱动，见 `docs/audio.md`）、`math.ts`、`telemetry.ts` 匿名埋点队列 |
+| `src/engine/` | `audio.ts` 音效音乐（manifest 驱动，网页用 Web Audio；`audio-streams.ts` 是微信小游戏用的系统播放器版，`createAudio()` 按平台选；见 `docs/audio.md`）、`math.ts`、`telemetry.ts` 匿名埋点队列 |
 | `src/game/game.ts` | `Game`：主循环、存档 `save`（localStorage）、场景切换、成就发放 |
 | `src/game/hub.ts` | 主页小镇（启动后的第一个画面）：上班、总部、我的家、福利社、工牌 |
 | `src/game/map.ts` | 路线图：选第几天，好评章 |
@@ -113,15 +113,15 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - 打包：`npm run build:wx`（`scripts/build_wx.py`）生成 `dist-wx/`，用微信开发者工具「导入」这个文件夹就能跑。默认用游客 AppID（只能在开发者工具里跑）；`npm run build:wx -- --appid wx…` 换成正式 AppID 才能真机预览和上传。需要 node、Pillow、fontTools、numpy（`pip install pillow fonttools brotli numpy`）和 ffmpeg，有 pngquant 会把图压到 256 色。
 - 包的结构（主包限 4 MB，总共限 30 MB；现在主包约 1.9 MB，总共约 12 MB）：
   - 主包：`game.js`（esbuild 打的整个游戏）、`fonts/`（霞鹜文楷子集转成 TTF，字体内的名字改成 `WK`/`WKB`，因为 `wx.loadFont` 按字体文件里写的名字注册）、`core/art/`（`CORE` 那些首屏精灵、`manifest.json`、`files.json` 精灵名→文件）、`core/share.jpg`。
-  - 分包 `art/`：其余精灵，`parallelPreloadSubpackages` 让它跟主包一起下载；分包 `audio/`：`public/audio`，但每首音乐剪成正好一个循环（小游戏里音乐用系统播放器整首循环，见 `docs/audio.md`），剪好的缓存在 `node_modules/.cache/wx-audio`。
+  - 分包 `art/`：其余精灵，`parallelPreloadSubpackages` 让它跟主包一起下载；分包 `audio/`：`public/audio`，但每个循环的声音（音乐、环境声、引擎、水泡）剪成正好一个循环（小游戏里声音用系统播放器整首循环，见 `docs/audio.md`），剪好的缓存在 `node_modules/.cache/wx-audio`。
   - 小游戏包不收 WebP、woff2、md，所以打包时 WebP 转回 PNG（不透明的转 JPEG），转好的缓存在 `node_modules/.cache/wx-art`。
 - `wx.ts` 把网页路径翻译成包内路径（`where()`：`art/x.webp` 查 `files.json`、`.woff2` 换 `.ttf`），读分包里的文件前先等 `wx.loadSubpackage`（失败会重试 5 次）。
 - 和网页版的不同：
   - 加载页没有贪吃蛇（几秒就加载完），只有进度条、一只在荷叶间跳的青蛙；底部显示「健康游戏忠告」全文，左上角「8+ 适龄提示」，至少停 3 秒，加载完自己进（`loading.ts` 的 `mini`）。
   - 顶部安全区让开右上角胶囊按钮（`safeTop` 取胶囊底边 +6）。底部安全区在系统给的值上多留 10、至少 24（`wx.ts` 的 `BOTTOM_AIR`/`BOTTOM_MIN`），让开大圆角和底部横条。
-  - 声音的特殊处理见 `docs/audio.md`「播放器」最后一条（音乐走 InnerAudioContext，音效播完就断开节点）。
-  - 内存：微信的离屏画布在脚本内存之外，垃圾回收不着急收，所以缓存丢掉的画布会先缩成 1×1（`releaseCanvas`）；每次换场景调一次 `wx.triggerGC`（`platform.gc`）；内存告警时丢掉解码的声音和烘焙缓存（`game.ts`）。
-  - **实时日志**（`platform.log`，只在手机上报，开发者工具不报）：小游戏后台「WE分析 → 性能质量 → 实时日志」，用关键字 `waqu` 或 `b<构建号>` 搜。记的是启动时的机型和系统、分包下载用时、前后台切换、音频中断、内存告警、报错、每次换场景，以及每 10 秒一行心跳（场景、帧率、卡顿帧数、画布缩放、声音状态：`alive` 是还连着的音效数、`song` 是正在放的音乐和位置）。每次启动最多 2000 行。真机上闪退、没声音时先看这里。
+  - 声音：1.0.4 起全部走 InnerAudioContext（`StreamAudio`），不用 WebAudio，见 `docs/audio.md`「微信小游戏」。
+  - 内存：微信的离屏画布在脚本内存之外，垃圾回收不着急收，所以缓存丢掉的画布会先缩成 1×1（`releaseCanvas`）；每次换场景调一次 `wx.triggerGC`（`platform.gc`）；内存告警时丢掉不在放的声音播放器和烘焙缓存（`game.ts`）。
+  - **实时日志**（`platform.log`，只在手机上报，开发者工具不报）：小游戏后台「WE分析 → 性能质量 → 实时日志」，用关键字 `waqu` 或 `b<构建号>` 搜。记的是启动时的机型和系统、分包下载用时、前后台切换、音频中断、内存告警、报错、每次换场景，以及每 10 秒一行心跳（场景、帧率、卡顿帧数、画布缩放、声音状态：`music` 是正在放的音乐、位置和音量，`beds`、`shots` 是在放的循环和音效数）。每次启动最多 2000 行。真机上闪退、没声音时先看这里。
   - 存照片是直接存进手机相册（`saveImageToPhotosAlbum`，没权限会引导去设置），没有「长按图片保存」（`platform.longPressSave = false`）。
   - 分享走右上角菜单和 `shareAppMessage`（分享给朋友、朋友圈），配图是当前画面裁 5:4，没有就用 `core/share.jpg`。
   - 有新版本时弹窗问要不要重新打开（`getUpdateManager`）。
