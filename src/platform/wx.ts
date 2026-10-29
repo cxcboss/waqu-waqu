@@ -8,6 +8,7 @@ import type { Canvas, ImageSource, Platform, SaveResult, ScreenInfo, TouchKind, 
 
 // The wx global and its objects, typed loosely: only what's used here.
 declare const wx: any;
+declare const __BUILD__: string;
 type WxTouch = { identifier: number; clientX: number; clientY: number };
 type WxTouchEvent = { changedTouches: WxTouch[] };
 
@@ -28,12 +29,16 @@ export class WxPlatform implements Platform {
   readonly kind = 'wx' as const;
   readonly canvas: Canvas;
   readonly longPressSave = false;
-  readonly audioRebuildOnShow: boolean;
   private fs = wx.getFileSystemManager();
   /** Art by sprite name -> its file in the package (written by the build: PNG, or JPEG for opaque art). */
   private art: Record<string, string> = {};
   private subs = new Map<Sub, Promise<void>>();
   private t0 = Date.now();
+  /** WeChat's 实时日志, and how many lines this run has sent to it (capped, see `log`). */
+  private rt: any = null;
+  private rtLines = 0;
+  /** Canvases made, and their pixels when made: the biggest memory the game holds besides images. */
+  private canvases = { n: 0, px: 0 };
 
   constructor() {
     // the first canvas made is the screen
@@ -48,10 +53,7 @@ export class WxPlatform implements Platform {
       .catch(() => undefined)
       .then(() => this.sub('audio'))
       .catch(() => undefined);
-    const d = wx.getDeviceInfo ? wx.getDeviceInfo() : wx.getSystemInfoSync();
-    const ios = /ios\s*([\d.]+)/i.exec(String(d.system || ''));
-    const [major, minor] = ios ? ios[1].split('.').map(Number) : [0, 0];
-    this.audioRebuildOnShow = !!ios && (major > 17 || (major === 17 && (minor || 0) >= 5));
+    this.startLog();
     wx.showShareMenu?.({ menus: ['shareAppMessage', 'shareTimeline'] });
     wx.onShareAppMessage?.(() => ({ title: SHARE_TITLE, imageUrl: 'core/share.jpg' }));
     wx.onShareTimeline?.(() => ({ title: SHARE_TITLE, imageUrl: 'core/share.jpg' }));
@@ -65,16 +67,61 @@ export class WxPlatform implements Platform {
     });
   }
 
+  /**
+   * The remote log: lines go to WeChat's 实时日志 (only from phones, not the developer tool), tagged with
+   * the build so one version's lines can be picked out. The game's lifecycle, memory warnings and errors are
+   * logged from here; the game adds its own lines (sound, a heartbeat every few seconds).
+   */
+  private startLog() {
+    try {
+      this.rt = wx.getRealtimeLogManager ? wx.getRealtimeLogManager() : null;
+      this.rt?.setFilterMsg?.('waqu');
+      this.rt?.addFilterMsg?.('b' + (typeof __BUILD__ === 'string' ? __BUILD__ : 'dev'));
+    } catch {
+      this.rt = null;
+    }
+    const d = wx.getDeviceInfo ? wx.getDeviceInfo() : wx.getSystemInfoSync();
+    const w = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync();
+    const app = wx.getAppBaseInfo ? wx.getAppBaseInfo() : wx.getSystemInfoSync();
+    this.log('info', `start ${d.brand} ${d.model} ${d.system} wx${app.version} sdk${app.SDKVersion} ${w.windowWidth}x${w.windowHeight}@${w.pixelRatio} mem${d.memorySize ?? '?'} build ${typeof __BUILD__ === 'string' ? __BUILD__ : 'dev'}`);
+    wx.onShow?.(() => this.log('info', 'show'));
+    wx.onHide?.(() => this.log('info', 'hide'));
+    wx.onAudioInterruptionBegin?.(() => this.log('warn', 'audio interruption begin'));
+    wx.onAudioInterruptionEnd?.(() => this.log('info', 'audio interruption end'));
+    wx.onMemoryWarning?.((r: { level?: number }) => this.log('warn', `memory warning ${r?.level ?? ''} canvases ${this.canvases.n} ${Math.round(this.canvases.px / 1e6)}Mpx`));
+    wx.onError?.((e: { message?: string; stack?: string }) => this.log('error', `error ${String(e.message).slice(0, 160)} | ${String(e.stack ?? '').split('\n').slice(0, 3).join(' | ').slice(0, 300)}`));
+    wx.onUnhandledRejection?.((e: { reason?: { message?: string } }) => this.log('error', `rejection ${String(e.reason?.message ?? e.reason).slice(0, 200)}`));
+  }
+
+  log(level: 'info' | 'warn' | 'error', msg: string): void {
+    // one report holds at most 200 lines and 5 KB per few seconds; a runaway loop must not eat the day's quota
+    if (!this.rt || this.rtLines >= 2000) return;
+    this.rtLines++;
+    try {
+      this.rt[level](`${((Date.now() - this.t0) / 1000).toFixed(1)}s ${msg.slice(0, 400)}`);
+    } catch {
+      /* not on this client */
+    }
+  }
+
+  /** Canvases made so far and their pixels, for the heartbeat line. */
+  get canvasTally() {
+    return this.canvases;
+  }
+
   /** Downloads a subpackage once (retrying a few times on a bad connection). */
   private sub(name: Sub): Promise<void> {
     let p = this.subs.get(name);
     if (!p) {
       p = (async () => {
+        const t = Date.now();
         for (let i = 0; ; i++) {
           try {
             await call('loadSubpackage', { name });
+            this.log('info', `subpackage ${name} ${((Date.now() - t) / 1000).toFixed(1)}s`);
             return;
           } catch (e) {
+            this.log('warn', `subpackage ${name} failed ${String((e as { errMsg?: string })?.errMsg ?? e).slice(0, 120)}`);
             if (i >= 4) throw e;
             await new Promise((r) => setTimeout(r, 1000 * 2 ** i));
           }
@@ -137,8 +184,8 @@ export class WxPlatform implements Platform {
   onVisibility(cb: (visible: boolean) => void): void {
     wx.onShow(() => cb(true));
     wx.onHide(() => cb(false));
-    // a phone call or an alarm takes the sound away like going to the background does
-    wx.onAudioInterruptionBegin?.(() => cb(false));
+    // after a phone call or an alarm the sound has to be resumed (WeChat's audio notes); the start of one
+    // isn't passed on: a real call sends the game to the background anyway
     wx.onAudioInterruptionEnd?.(() => cb(true));
   }
 
@@ -150,6 +197,8 @@ export class WxPlatform implements Platform {
     const c = wx.createCanvas() as Canvas;
     c.width = Math.max(1, Math.ceil(w));
     c.height = Math.max(1, Math.ceil(h));
+    this.canvases.n++;
+    this.canvases.px += c.width * c.height;
     return c;
   }
 

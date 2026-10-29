@@ -97,6 +97,8 @@ function audioPrefs(s: SaveData) {
 }
 const STEP = 1 / 60;
 const FADE = 0.5;
+/** How often the remote log (platform.log, the mini game's 实时日志) gets a line on how things are going. */
+const HEARTBEAT_MS = 10000;
 const MEDAL_T = 3;
 
 export class Game {
@@ -113,6 +115,8 @@ export class Game {
   tm: Telemetry;
   /** Frames drawn, slow ones (over 50 ms) and seconds on screen since the last reset, to spot devices that stutter. */
   perf = { frames: 0, slow: 0, time: 0 };
+  /** When the last heartbeat went to the remote log, and the frame counts then. */
+  private hb = { at: 0, frames: 0, slow: 0, time: 0 };
   save: SaveData;
   album: Album;
   scene: Scene | null = null;
@@ -282,6 +286,7 @@ export class Game {
     this.waiting = null;
     // a photo laid over the game for long-press saving belongs to the screen being left
     this.platform.showImage(null);
+    this.platform.log?.('info', `scene ${scene.id}`);
     if (fade && this.scene) this.fade = { next: scene, t: 0 };
     else this.scene = scene;
   }
@@ -307,6 +312,7 @@ export class Game {
     }
     this.tm.tick();
     this.audio.update(dt > 0 && dt < 0.25 ? dt : STEP);
+    if (this.platform.log && t - this.hb.at >= HEARTBEAT_MS) this.heartbeat(t);
     // a device that stays under about 30 fps gets a smaller canvas, which is the cheapest way to win time back
     if (this.ready && dt > 0 && dt < 0.25) {
       this.frameMs += (dt - this.frameMs) * 0.04;
@@ -346,6 +352,14 @@ export class Game {
     }
     this.platform.requestFrame(this.frame);
   };
+
+  /** A line to the remote log: where the player is, the frame rate since the last one, and the sound's state. */
+  private heartbeat(t: number) {
+    const p = this.perf, h = this.hb;
+    const fps = (p.frames - h.frames) / Math.max(0.001, p.time - h.time);
+    this.platform.log?.('info', `hb ${this.ready ? (this.scene?.id ?? '-') : 'loading'} fps${fps.toFixed(0)} slow${p.slow - h.slow} dpr${this.dprCap} ${this.audio.diag()}`);
+    this.hb = { at: t, frames: p.frames, slow: p.slow, time: p.time };
+  }
 
   private renderWaiting(ctx: Ctx) {
     ctx.fillStyle = 'rgba(28,22,18,0.35)';

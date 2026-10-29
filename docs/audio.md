@@ -12,14 +12,14 @@
 - 同一个 id 在几十毫秒内重复播放会被跳过（`gap`），同一个 id 同时最多几份（`voices`），总共最多 28 个声音。
 - 环境声：`audio.setAmbience([...])` 换一组循环，带 `spots` 的会自己随机插入单发声音（雨里打雷、港口海鸥）。
 - 居民说话：`say(audio, 物种, 心情)` 用几个音节拼一句「动物语」，音高和语速按物种（sound.ts 的 VOICES）。
-- 微信小游戏（`wx.createWebAudioContext`，2026-10-29 真机试玩「声音时有时无」后按微信官方音频说明改过）：
+- 微信小游戏（`wx.createWebAudioContext`）。2026-10-29 真机试玩：1.0.0「声音时有时无」，1.0.1「破声、然后没声、闪退」，1.0.2 起改成下面这样，并把声音的状态写进实时日志（见 ARCHITECTURE.md「微信小游戏」）：
+  - 混音尽量简单：没有限幅器（主音量改成 0.75）、没有低通（水下只压低音量，音乐的闷声变体不闷）、蓄力的合成哼声不放，同时最多 12 个声音。
   - 不用 AudioParam 自动化：微信文档里 AudioParam 只有 `value`，所有渐变都在 `update()` 里每帧手动做。浏览器里时间常数为 0 的渐变也直接赋值，不交给 `setTargetAtTime`。
-  - 新建的 context 立刻 `resume()` 一次；每次回到前台、通话结束都 `resume()`，不看 `state`；第一次触摸也会 `resume()`。
-  - 放声音不看 `state`（只要没 closed、游戏不在后台），因为真停了下次触摸就会恢复，`state` 不准的话反而全没声。
-  - iPhone 上 iOS 17.5 及以上（`platform.audioRebuildOnShow`）：微信说明里写着这时退后台回来恢复不了，所以每次回来扔掉旧 context 新建一个，音乐从原来的位置接着放，解码过的音效重新解码（`rebuild()`）。
+  - 新建的 context 立刻 `resume()` 一次；每次回到前台、通话结束都 `resume()`；触摸时只在还没成功恢复过、或者 `state` 不是 running 时才 `resume()`，而且两次至少隔 3 秒。
+  - 放声音不看 `state`（只要没 closed、游戏不在后台）。
+  - 1.0.1 曾在 iOS 17.5+ 每次回前台关掉旧 context 新建（微信说明里那是「高性能模式」的做法），之后出现闪退，1.0.2 去掉了；关掉的 context 还被场景里的声音句柄碰到，微信文档说 close 之后不要再访问它。
   - 声音是分包 `audio/`，美术分包下完就开始下；manifest 读不到会每 5 秒再试，最多 6 次。
   - playbackRate 限制在 (0, 2]，manifest 用 `platform.loadJson` 读，不用 TextDecoder。
-  - 控制台有 `[audio]` 开头的日志（建 context、开始运行、重建、恢复失败）。真机还是没声时：体验版右上角「···」→「开发调试」打开调试，重进后看 vConsole 里这些日志。
 
 ## 响度
 

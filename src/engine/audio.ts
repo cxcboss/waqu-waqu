@@ -82,6 +82,10 @@ interface Track {
 const GAP = 0.04;
 const VOICES = 4;
 const MAX_VOICES = 28;
+/** The mini game mixes on the phone's CPU in WeChat's own audio engine: keep the pile-up smaller there. */
+const MAX_VOICES_WX = 12;
+/** Least time between two resume() calls from touches in the mini game (each one can restart the audio unit). */
+const WAKE_GAP_WX = 3;
 /** Decoded tracks kept: the one playing and the one before it, so going back and forth doesn't decode again. */
 const KEEP_MUSIC = 2;
 const KEEP_AMB = 4;
@@ -101,9 +105,9 @@ const MAX_RATE = 2; // the WeChat context takes 0 < playbackRate <= 2
  * underwater low-pass; everything ends in a limiter so stacked sounds can't clip. Works without AudioParam
  * automation (not documented for WeChat): fades are then stepped from `update()` each frame.
  *
- * In the mini game (see docs/audio.md, 微信小游戏): no automation, sound goes out whatever the context's `state` says,
- * the context is resumed as soon as it's made and on every return, and on iPhones with iOS 17.5+ it's made afresh
- * each time the game comes back from the background.
+ * In the mini game (see docs/audio.md, 微信小游戏): a plain mix (no limiter or filters), fewer voices at once, no
+ * automation, sound goes out whatever the context's `state` says, and the context is resumed when it's made and on
+ * every return. What it does is written to the remote log (`platform.log`), since problems only show on phones.
  */
 export class Audio {
   private set: AudioSettings = { music: true, sfx: true, musicVolume: 1, sfxVolume: 1 };
@@ -132,8 +136,11 @@ export class Audio {
   private hidden = false;
   /** resume() has gone through at least once on this context. */
   private woke = false;
-  /** Counts contexts, so files decoded for one thrown away don't land in the next. */
-  private gen = 0;
+  /** When resume() was last asked for (platform.now(), ms), and how many times. */
+  private wokeAt = -1e9;
+  private wakes = 0;
+  /** Lines for the remote log about failed decodes, so a bad file can't fill it. */
+  private failNotes = 0;
 
   private music: Track | null = null;
   private fading: Track[] = [];
@@ -156,6 +163,11 @@ export class Audio {
     this.wx = platform.kind === 'wx';
   }
 
+  /** Low-pass filters (underwater, muffled tracks): left out of the mini game's plain mix. */
+  private get filters() {
+    return !this.wx;
+  }
+
   /** Back-compat: true while either music or effects are on. */
   get enabled() {
     return this.set.music || this.set.sfx;
@@ -174,7 +186,7 @@ export class Audio {
     const ctx = (this.ctx = this.platform.createAudioContext());
     if (!ctx) return;
     this.woke = false;
-    console.info('[audio] context', ctx.state, ctx.sampleRate);
+    this.note('info', `context ${ctx.state} ${ctx.sampleRate}Hz`);
     const probe = ctx.createGain();
     try {
       // WeChat documents only `value` on its AudioParam: fades are stepped by hand there
@@ -184,10 +196,12 @@ export class Audio {
       this.auto = false;
     }
     this.master = ctx.createGain();
-    // a limiter at the end: two loud sounds landing together turn down instead of clipping
+    // a limiter at the end: two loud sounds landing together turn down instead of clipping (not in the mini
+    // game, where the mix stays as plain as it can be; a little lower instead)
     let out: AudioNode = ctx.destination;
+    if (this.wx) this.master.gain.value = 0.75;
     try {
-      if (typeof ctx.createDynamicsCompressor === 'function') {
+      if (!this.wx && typeof ctx.createDynamicsCompressor === 'function') {
         const lim = ctx.createDynamicsCompressor();
         lim.threshold.value = -8;
         lim.knee.value = 6;
@@ -212,7 +226,7 @@ export class Audio {
     // music and ambience go through the underwater low-pass (wide open on land) if the context has filters
     let world: AudioNode = this.master;
     try {
-      if (typeof ctx.createBiquadFilter === 'function') {
+      if (this.filters && typeof ctx.createBiquadFilter === 'function') {
         this.under = ctx.createBiquadFilter();
         this.under.type = 'lowpass';
         this.under.frequency.value = this.wet ? 650 : 20000;
@@ -242,7 +256,7 @@ export class Audio {
         this.defs = json.sounds;
         break;
       } catch (e) {
-        console.warn('audio manifest failed', e);
+        this.note('warn', `manifest failed ${errText(e)}`);
         if (i >= 5) return;
         await new Promise((r) => setTimeout(r, 5000));
       }
@@ -281,21 +295,18 @@ export class Audio {
     const def = this.defs[key];
     if (!def || !this.ctx) return Promise.resolve(null);
     const ctx = this.ctx;
-    const gen = this.gen;
     const p = this.platform
       .loadBinary(this.base + def.file)
       .then((data) => decode(ctx, data))
       .then((buf) => {
-        // made for a context that has since been replaced
-        if (gen !== this.gen) return null;
         this.buffers.set(key, buf);
         this.loading.delete(key);
         this.touch(key);
         return buf;
       })
       .catch((e) => {
-        console.warn('audio failed', key, e);
-        if (gen === this.gen) this.loading.delete(key);
+        if (this.failNotes++ < 10) this.note('warn', `failed ${key} ${errText(e)}`);
+        this.loading.delete(key);
         return null;
       });
     this.loading.set(key, p);
@@ -325,7 +336,9 @@ export class Audio {
   unlock() {
     this.init();
     const ctx = this.ctx;
-    if (ctx && (ctx.state !== 'running' || !this.woke)) this.wake();
+    if (!ctx || (ctx.state === 'running' && this.woke)) return;
+    if (this.wx && this.platform.now() - this.wokeAt < WAKE_GAP_WX * 1000) return;
+    this.wake();
   }
 
   /** Off to the background, or the system has taken the sound (a call, an alarm). */
@@ -340,67 +353,46 @@ export class Audio {
 
   /** Back from the background, a phone call or Siri ('interrupted' on iPhone). */
   resume() {
-    const was = this.hidden;
     this.hidden = false;
     if (!this.ctx) return;
-    if (was && this.platform.audioRebuildOnShow) this.rebuild();
     // WeChat resumes on every return whatever the state says; a browser only when it's stopped
-    else if (this.wx || this.ctx.state !== 'running') this.wake();
+    if (this.wx || this.ctx.state !== 'running') this.wake();
   }
 
   /** Asks the context to run, then starts what was waiting for it. */
   private wake() {
     const ctx = this.ctx;
     if (!ctx) return;
+    this.wokeAt = this.platform.now();
+    const n = ++this.wakes;
+    const before = ctx.state;
     const done = () => {
       if (ctx !== this.ctx) return;
-      if (!this.woke) console.info('[audio] running', ctx.state);
+      if (n <= 12) this.note('info', `resume #${n} ${before} -> ${ctx.state}`);
       this.woke = true;
       this.kick();
     };
     try {
       const r = ctx.resume() as Promise<void> | undefined;
-      if (r && typeof r.then === 'function') r.then(done, (e) => console.warn('[audio] resume failed', e));
+      if (r && typeof r.then === 'function') r.then(done, (e) => this.note('warn', `resume #${n} failed ${errText(e)}`));
       else done();
     } catch (e) {
-      console.warn('[audio] resume failed', e);
+      this.note('warn', `resume #${n} threw ${errText(e)}`);
     }
   }
 
-  /**
-   * Throws the context away and makes a new one: the music carries on from where it was, and the effects
-   * that were decoded are decoded again (WeChat's buffers may belong to the context that made them).
-   */
-  private rebuild() {
-    const old = this.ctx;
-    if (!old) return;
-    console.info('[audio] new context');
-    const m = this.music;
-    if (m && !this.paused) this.pos.set(m.file, this.position(m));
-    const effects = [...this.buffers.keys()].filter((k) => this.defs[k]?.kind !== 'music' && this.defs[k]?.kind !== 'amb');
-    this.gen++;
-    this.music = null;
-    this.fading = [];
-    this.voices = [];
-    this.jingles = [];
-    this.amb.clear();
-    this.ramps.clear();
-    this.buffers.clear();
-    this.loading.clear();
-    this.used = [];
-    this.lastPlay.clear();
-    this.ctx = this.master = this.sfxBus = this.ambBus = this.musicBus = this.duckGain = this.under = null;
-    try {
-      void old.close()?.catch(() => undefined);
-    } catch {
-      /* already closed */
-    }
-    this.init();
-    if (!this.ctx) return;
-    this.applyDuck();
-    // init() already resumed the mini game's context; a browser's needs it here
-    if (!this.wx) this.wake();
-    void this.decodeAll(effects);
+  /** Console, and the remote log in the mini game. */
+  private note(level: 'info' | 'warn', msg: string) {
+    console[level]('[audio] ' + msg);
+    this.platform.log?.(level, 'audio ' + msg);
+  }
+
+  /** A one-line state of the sound, for the game's heartbeat in the remote log. */
+  diag() {
+    const ctx = this.ctx;
+    if (!ctx) return 'audio none';
+    const t = ctx.currentTime;
+    return `audio ${ctx.state} t${Number.isFinite(t) ? t.toFixed(1) : t} ready${+this.ready} voices${this.voices.length} bufs${this.buffers.size} music:${this.music?.id ?? '-'} amb${this.amb.size} ramps${this.ramps.size}${this.hidden ? ' hidden' : ''}`;
   }
 
   private get live() {
@@ -546,7 +538,7 @@ export class Audio {
     const ctx = this.ctx!;
     const same = this.voices.filter((v) => v.id === id && !v.stopped);
     if (same.length >= cap) this.stopVoice(same[0], 0.03);
-    if (this.voices.length >= MAX_VOICES) this.stopVoice(this.voices[0], 0.03);
+    if (this.voices.length >= (this.wx ? MAX_VOICES_WX : MAX_VOICES)) this.stopVoice(this.voices[0], 0.03);
     const src = ctx.createBufferSource();
     src.buffer = buf;
     setRate(src, rate);
@@ -692,7 +684,8 @@ export class Audio {
    */
   tone(volume = 0.06): { setPitch(hz: number): void; stop(): void } | null {
     const ctx = this.ctx;
-    if (!ctx || !this.live || !this.sfxBus || !this.set.sfx) return null;
+    // the mini game has no automation, so the pitch would be retuned in a jump every frame: no hum there
+    if (this.wx || !ctx || !this.live || !this.sfxBus || !this.set.sfx) return null;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     osc.type = 'triangle';
@@ -817,7 +810,7 @@ export class Audio {
     g.gain.value = 0;
     this.ramp(g.gain, def.volume, fade / 3);
     let filter: BiquadFilterNode | null = null;
-    if (def.lowpass && typeof ctx.createBiquadFilter === 'function') {
+    if (def.lowpass && this.filters && typeof ctx.createBiquadFilter === 'function') {
       filter = ctx.createBiquadFilter();
       filter.type = 'lowpass';
       filter.frequency.value = def.lowpass;
@@ -898,6 +891,8 @@ export class Audio {
     }
   }
 }
+
+const errText = (e: unknown) => String((e as { errMsg?: string; message?: string })?.errMsg ?? (e as { message?: string })?.message ?? e).slice(0, 120);
 
 function decode(ctx: AudioContext, data: ArrayBuffer): Promise<AudioBuffer> {
   // Callback form for older Safari and the wx WebAudio context.

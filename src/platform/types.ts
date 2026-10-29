@@ -64,10 +64,10 @@ export interface Platform {
   /** Web Audio compatible context, or null when audio is unavailable. */
   createAudioContext(): AudioContext | null;
   /**
-   * The audio context doesn't come back from the background and has to be made again each time the game
-   * is back (WeChat on iPhone with iOS 17.5 or later, by WeChat's audio notes).
+   * A line for the developer's remote log (the mini game's 实时日志 in the WeChat admin: WE分析 → 性能质量 →
+   * 实时日志), for problems that only show on players' phones. Keep it to a handful of lines a minute.
    */
-  readonly audioRebuildOnShow: boolean;
+  log?(level: 'info' | 'warn' | 'error', msg: string): void;
 
   vibrate(ms: number): void;
   /**
