@@ -529,7 +529,7 @@ export class HqScene implements Scene {
       ctx.lineTo(750, y);
       ctx.stroke();
     }
-    sp.draw(ctx, todSprite('hq_room', todAt()), 0, roomTop);
+    sp.blit(ctx, todSprite('hq_room', todAt()), 0, roomTop);
     clockHands(ctx, HQ_CLOCK.x, roomTop + HQ_CLOCK.y, HQ_CLOCK.r, new Date());
     // the HQ sign, hanging from the picture rail
     woodSign(ctx, 375, contentTop + 54, 420, 84, '蛙趣快递 · 河湾总部', undefined, { wood: P.woodDeep, hang: contentTop + 54 - 42 - (roomTop + 126), size: 32 });
@@ -544,7 +544,7 @@ export class HqScene implements Scene {
     else if (st >= 0 && st < 0.12) wingRot = -0.45 + easeInCubic(st / 0.12) * 1.2;
     else if (st >= 0.12 && st < 0.6) wingRot = 0.75 - easeOutCubic((st - 0.12) / 0.48) * 0.85;
     sp.draw(ctx, 'owl_wing', ox + 104 * K, oy + bob - 150 * K, 1, 1, wingRot);
-    sp.draw(ctx, 'hq_counter', 0, counterY);
+    sp.blit(ctx, 'hq_counter', 0, counterY);
     // owl's speech bubble with typewriter text
     this.drawBubble(ctx, 172, contentTop + 268);
 

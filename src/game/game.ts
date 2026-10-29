@@ -1,8 +1,10 @@
 import '../art/codeart';
+import { forgetBaked } from '../art/kit';
 import { P } from '../art/palette';
 import { SpriteBank } from '../art/sprites';
 import { ellipse, panel, roundRect, text } from '../art/ui';
-import { Audio } from '../engine/audio';
+import { createAudio, type Audio } from '../engine/audio';
+import { alpha3 } from '../engine/math';
 import { Telemetry, type TelemetryOptions } from '../engine/telemetry';
 import type { Ctx, Platform } from '../platform/types';
 import { Album } from './album';
@@ -96,6 +98,8 @@ function audioPrefs(s: SaveData) {
 }
 const STEP = 1 / 60;
 const FADE = 0.5;
+/** How often the remote log (platform.log, the mini game's 实时日志) gets a line on how things are going. */
+const HEARTBEAT_MS = 10000;
 const MEDAL_T = 3;
 
 export class Game {
@@ -112,6 +116,8 @@ export class Game {
   tm: Telemetry;
   /** Frames drawn, slow ones (over 50 ms) and seconds on screen since the last reset, to spot devices that stutter. */
   perf = { frames: 0, slow: 0, time: 0 };
+  /** When the last heartbeat went to the remote log, and the frame counts then. */
+  private hb = { at: 0, frames: 0, slow: 0, time: 0 };
   save: SaveData;
   album: Album;
   scene: Scene | null = null;
@@ -138,7 +144,7 @@ export class Game {
     const self = this;
     this.ctx = platform.canvas.getContext('2d')!;
     this.sprites = new SpriteBank(platform);
-    this.audio = new Audio(platform);
+    this.audio = createAudio(platform);
     this.save = this.readSave();
     this.album = new Album(this);
     audioPrefs(this.save);
@@ -155,6 +161,7 @@ export class Game {
         return self.safeB;
       },
       progress: () => Math.min(0.97, this.loadDone / Math.max(1, this.loadTotal)),
+      mini: platform.kind === 'wx',
       vibrate: (ms) => this.platform.vibrate(ms),
       enter: () => this.enter(),
     });
@@ -219,6 +226,12 @@ export class Game {
       if (!v) this.tm.hide();
       this.last = this.platform.now();
     });
+    // short of memory (the mini game): let go of sounds not playing and baked pictures, which can all be made again
+    this.platform.onMemoryWarning?.(() => {
+      this.audio.trim();
+      forgetBaked();
+      this.platform.gc?.();
+    });
     this.last = this.platform.now();
     this.platform.requestFrame(this.frame);
 
@@ -280,6 +293,9 @@ export class Game {
     this.waiting = null;
     // a photo laid over the game for long-press saving belongs to the screen being left
     this.platform.showImage(null);
+    this.platform.log?.('info', `scene ${scene.id}`);
+    // what the last screen made is garbage now: a good moment to collect it
+    this.platform.gc?.();
     if (fade && this.scene) this.fade = { next: scene, t: 0 };
     else this.scene = scene;
   }
@@ -305,6 +321,7 @@ export class Game {
     }
     this.tm.tick();
     this.audio.update(dt > 0 && dt < 0.25 ? dt : STEP);
+    if (this.platform.log && t - this.hb.at >= HEARTBEAT_MS) this.heartbeat(t);
     // a device that stays under about 30 fps gets a smaller canvas, which is the cheapest way to win time back
     if (this.ready && dt > 0 && dt < 0.25) {
       this.frameMs += (dt - this.frameMs) * 0.04;
@@ -336,11 +353,24 @@ export class Game {
     if (this.waiting) this.renderWaiting(ctx);
     if (this.fade) {
       const k = Math.min(1, this.fade.t / FADE);
-      ctx.fillStyle = `rgba(28,22,18,${this.fade.next ? k : 1 - k})`;
-      ctx.fillRect(0, 0, this.W, this.H);
+      const a = alpha3(this.fade.next ? k : 1 - k);
+      if (a > 0) {
+        ctx.fillStyle = `rgba(28,22,18,${a})`;
+        ctx.fillRect(0, 0, this.W, this.H);
+      }
     }
     this.platform.requestFrame(this.frame);
   };
+
+  /** A line to the remote log: where the player is, the frame rate since the last one, and the sound's state. */
+  private heartbeat(t: number) {
+    const p = this.perf;
+    // a day on the river starts the counters over (see PlayScene): count from there
+    const h = p.frames < this.hb.frames ? { frames: 0, slow: 0, time: 0 } : this.hb;
+    const fps = (p.frames - h.frames) / Math.max(0.001, p.time - h.time);
+    this.platform.log?.('info', `hb ${this.ready ? (this.scene?.id ?? '-') : 'loading'} fps${fps.toFixed(0)} slow${p.slow - h.slow} dpr${this.dprCap} ${this.audio.diag()}`);
+    this.hb = { at: t, frames: p.frames, slow: p.slow, time: p.time };
+  }
 
   private renderWaiting(ctx: Ctx) {
     ctx.fillStyle = 'rgba(28,22,18,0.35)';

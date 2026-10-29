@@ -1,8 +1,9 @@
 import { INK, P } from '../art/palette';
 import { craneBeam, damGate, featIcon, goose, gull, padLetter, rapidsFoam, thinCracks, whirlpool, type GateState } from '../art/river';
 import { K, TILE_H, boxSprite } from '../art/sprites';
+import { blit, drawBakedScreen, releaseCanvas } from '../art/kit';
 import { breakPieces, button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
-import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
+import { alpha3, approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
 import type { Data } from '../engine/telemetry';
 import type { Canvas, Ctx } from '../platform/types';
@@ -65,6 +66,18 @@ interface Puff { x: number; y: number; vx: number; vy: number; r: number; t: num
  * the nearest thing within reach; anywhere else the frog only bobs up and back down where it is.
  */
 interface Stick { id: number; x: number; y: number }
+
+/** A pull in progress: where the finger went down, where it is now, and where it has been lately. */
+interface Pull {
+  id: number;
+  sx: number;
+  sy: number;
+  x: number;
+  y: number;
+  t: number;
+  /** The last few positions, [ms, x, y], for `settled`. */
+  trail: [number, number, number][];
+}
 
 interface Frog {
   state: 'stand' | 'jump' | 'swim' | 'board';
@@ -185,6 +198,13 @@ const FOOT_WARN = 3.5;
 const FOOT_T = 5;
 /** A press made while the frog is still in the air is kept this long (seconds) and used on landing. */
 const BUFFER_T = 0.5;
+/**
+ * Letting go: a fingertip rolls as it lifts, and on a phone the point it last reports can be off by
+ * several pixels, enough to turn a jump. A pull that ends with the finger barely moving over its last
+ * SETTLE_MS goes where it was aimed before that (a flick that is still moving goes where it ended).
+ */
+const SETTLE_MS = 60;
+const SETTLE_PX = 24;
 /** Jumping off the road behind a truck: it blows exhaust, which slows the frog for a while. */
 const SMOG_T = 2.6;
 const SMOG_REACH = 0.7;
@@ -277,7 +297,7 @@ export class PlayScene implements Scene {
   private runT = 0;
   private frog: Frog;
   private bag: Order[] = [];
-  private aim: { id: number; sx: number; sy: number; x: number; y: number; t: number } | null = null;
+  private aim: Pull | null = null;
   private fx: Fx[] = [];
   private popups: Popup[] = [];
   private photos: Photo[] = [];
@@ -375,7 +395,7 @@ export class PlayScene implements Scene {
   /** Legs still aching after a charge held too long: no new pull until this runs out. */
   private tiredT = 0;
   /** A press that began in mid-air, and a jump released in mid-air: both go off when the frog lands. */
-  private early: { id: number; sx: number; sy: number; x: number; y: number; t: number } | null = null;
+  private early: Pull | null = null;
   private queued: { dx: number; dy: number; held: number; sx: number; sy: number; at: number } | null = null;
   /** The truck's lifeline, once a day: spent when the frog would have been swept off the screen. */
   private ropeUsed = 0;
@@ -588,7 +608,8 @@ export class PlayScene implements Scene {
     }
     this.updateSound(dt);
 
-    if (!this.ended) {
+    // (`finish` clears `ended` as the scene fades out: nothing may start again then, like a second 收工 that stops the report's music)
+    if (!this.ended && !this.leaving) {
       this.checkHouses();
       this.checkUrgent();
       this.checkDanger(dt);
@@ -3062,11 +3083,11 @@ export class PlayScene implements Scene {
       return;
     }
     if (f.state === 'stand' && !this.aim && this.tiredT <= 0 && !this.routeEnd) {
-      this.aim = { id, sx: x, sy: y, x, y, t: 0 };
+      this.aim = { id, sx: x, sy: y, x, y, t: 0, trail: [[this.game.platform.now(), x, y]] };
       this.exhaust();
     } else if (f.state === 'jump' && !this.aim && !this.early && !this.queued && !this.routeEnd) {
       // pressed while still in the air: the pull starts as soon as the frog lands
-      this.early = { id, sx: x, sy: y, x, y, t: 0 };
+      this.early = { id, sx: x, sy: y, x, y, t: 0, trail: [[this.game.platform.now(), x, y]] };
     }
   }
 
@@ -3092,15 +3113,24 @@ export class PlayScene implements Scene {
   }
 
   move(x: number, y: number, id: number) {
-    if (this.aim && this.aim.id === id) {
-      this.aim.x = x;
-      this.aim.y = y;
-    }
-    if (this.early && this.early.id === id) {
-      this.early.x = x;
-      this.early.y = y;
+    for (const p of [this.aim, this.early]) {
+      if (!p || p.id !== id) continue;
+      p.x = x;
+      p.y = y;
+      p.trail.push([this.game.platform.now(), x, y]);
+      if (p.trail.length > 12) p.trail.shift();
     }
     if (this.stick && this.stick.id === id) this.steer(x, y);
+  }
+
+  /** Where a pull ends up when the finger lifts: see SETTLE_MS. */
+  private settled(p: Pull): [number, number] {
+    const now = this.game.platform.now();
+    const tr = p.trail;
+    let k = tr.length - 1;
+    while (k > 0 && now - tr[k][0] < SETTLE_MS) k--;
+    const [, x, y] = tr[k];
+    return Math.hypot(p.x - x, p.y - y) < SETTLE_PX ? [x, y] : [p.x, p.y];
   }
 
   /** The swimming wheel, bottom right, in screen coordinates. */
@@ -3174,14 +3204,16 @@ export class PlayScene implements Scene {
       // let go before the frog is down: the jump is held back for the landing
       const e = this.early;
       this.early = null;
-      if (this.frog.state === 'stand') this.startJump(x - e.sx, y - e.sy, e.t, e.sx, e.sy);
-      else if (this.frog.state === 'jump') this.queued = { dx: x - e.sx, dy: y - e.sy, held: e.t, sx: e.sx, sy: e.sy, at: this.time };
+      const [ex, ey] = this.settled(e);
+      if (this.frog.state === 'stand') this.startJump(ex - e.sx, ey - e.sy, e.t, e.sx, e.sy);
+      else if (this.frog.state === 'jump') this.queued = { dx: ex - e.sx, dy: ey - e.sy, held: e.t, sx: e.sx, sy: e.sy, at: this.time };
       return;
     }
     if (!this.aim || this.aim.id !== id) return;
     const a = this.aim;
     this.aim = null;
-    if (this.frog.state === 'stand') this.startJump(x - a.sx, y - a.sy, a.t, a.sx, a.sy);
+    const [ax, ay] = this.settled(a);
+    if (this.frog.state === 'stand') this.startJump(ax - a.sx, ay - a.sy, a.t, a.sx, a.sy);
     this.stopCharge();
   }
 
@@ -3430,7 +3462,7 @@ export class PlayScene implements Scene {
       this.photos.push({ img: c, caption: s.caption, prio: s.prio, kind: s.kind, t: this.time, focus });
       if (this.photos.length > 8) {
         this.photos.sort((a, b) => b.prio - a.prio);
-        this.photos.length = 8;
+        for (const p of this.photos.splice(8)) releaseCanvas(p.img);
       }
     }
   }
@@ -3453,22 +3485,27 @@ export class PlayScene implements Scene {
   render(ctx: Ctx) {
     const H = this.H;
     this.refreshTray();
+    this.weather.prepareDark(H, this.lights());
     if (this.camX) {
       // the road carries on past the tile's edge while the camera is panned sideways
       ctx.fillStyle = P.road;
       ctx.fillRect(0, 0, 750, H);
     }
-    ctx.save();
     // a hard landing gives the camera a little knock
     const sh = this.shakeT > 0 ? (this.shakeT / 0.22) * 7 : 0;
-    ctx.translate(this.camX + (sh ? Math.sin(this.time * 90) * sh : 0), this.panY + (sh ? Math.cos(this.time * 77) * sh * 0.6 : 0));
-    // River background tiles
+    const dx = this.camX + (sh ? Math.sin(this.time * 90) * sh : 0), dy = this.panY + (sh ? Math.cos(this.time * 77) * sh * 0.6 : 0);
+    // River background tiles: the most a frame draws, so they're copied pixel for pixel with the chapter's tint
+    // already on them (see blit). Panned sideways at the end of the day, the tint covers the road too: drawn as before.
     const top = this.camY - this.panY;
-    for (let k = Math.floor(top / TILE); k * TILE - top < H; k++) {
-      ctx.drawImage(this.game.sprites.get('river').img, 0, k * TILE - this.camY, 750, TILE + 1);
-    }
+    const river = this.game.sprites.get('river').img;
+    const tint = CHAPTERS[chapterOf(Math.max(1, this.day))].tint;
+    const fast = !this.camX;
+    if (fast) for (let k = Math.floor(top / TILE); k * TILE - top < H; k++) blit(ctx, river, dx, dy + k * TILE - this.camY, 750, TILE + 1, tint);
+    ctx.save();
+    ctx.translate(dx, dy);
+    if (!fast) for (let k = Math.floor(top / TILE); k * TILE - top < H; k++) ctx.drawImage(river, 0, k * TILE - this.camY, 750, TILE + 1);
     // the chapter's season on the water: its tint, what floats on it, the rain's rings
-    this.weather.drawWater(ctx, this.camY, H, CHAPTERS[chapterOf(Math.max(1, this.day))].tint, -this.panY);
+    this.weather.drawWater(ctx, this.camY, H, fast ? null : tint, -this.panY);
     const rushA = clamp((this.speedK - 1.15) / (TUNING.rushMax - 1.15), 0, 1);
     if (rushA > 0) this.drawStreaks(ctx, rushA);
     this.drawWorld(ctx);
@@ -3629,7 +3666,7 @@ export class PlayScene implements Scene {
   /** Over the river and everything on it, under the HUD: rain or snow, the dark of a night shift with its lights, fireflies over the lit pads. */
   private drawSky(ctx: Ctx) {
     const w = this.weather;
-    w.drawAir(ctx, this.H, this.lights());
+    w.drawAir(ctx, this.H);
     if (!w.darkness) return;
     for (const p of this.lv.plats) {
       if (!p.lit || p.gone) continue;
@@ -3736,7 +3773,7 @@ export class PlayScene implements Scene {
     const pulse = this.reachPulse;
     ctx.save();
     ellipse(ctx, x, y, R, R * 0.82);
-    ctx.fillStyle = `rgba(251,247,238,${0.08 + pulse * 0.12})`;
+    ctx.fillStyle = `rgba(251,247,238,${alpha3(0.08 + pulse * 0.12)})`;
     ctx.fill();
     ctx.setLineDash([14, 10]);
     ctx.lineDashOffset = -this.time * 24;
@@ -5182,7 +5219,7 @@ export class PlayScene implements Scene {
     ctx.setLineDash([]);
     const g = ctx.createLinearGradient(0, top, 0, H);
     g.addColorStop(0, 'rgba(217,83,79,0)');
-    g.addColorStop(1, `rgba(217,83,79,${0.12 + this.warnK * 0.32})`);
+    g.addColorStop(1, `rgba(217,83,79,${alpha3(0.12 + this.warnK * 0.32)})`);
     ctx.globalAlpha = 1;
     ctx.fillStyle = g;
     ctx.fillRect(0, top, 750, H - top);
@@ -5190,7 +5227,7 @@ export class PlayScene implements Scene {
       // red edges creeping in from the sides
       for (const side of [0, 1]) {
         const sg = ctx.createLinearGradient(side ? 750 : 0, 0, side ? 690 : 60, 0);
-        sg.addColorStop(0, `rgba(217,83,79,${0.35 * this.warnK})`);
+        sg.addColorStop(0, `rgba(217,83,79,${alpha3(0.35 * this.warnK)})`);
         sg.addColorStop(1, 'rgba(217,83,79,0)');
         ctx.fillStyle = sg;
         ctx.fillRect(side ? 690 : 0, H * 0.45, 60, H * 0.55);
@@ -5200,38 +5237,19 @@ export class PlayScene implements Scene {
   }
 
   private drawHud(ctx: Ctx) {
-    const sp = this.game.sprites;
     const H = this.H;
     const ty = this.game.safeT + 10;
-    // Top bar: pause, day, route progress, delivered count
-    panel(ctx, 16, ty, 718, 72, { r: 22 });
+    // Top bar: pause, day, route progress, delivered count. Only the progress moves: the rest is drawn once and copied.
     this.pauseBtn = { x: 26, y: ty + 12, w: 48, h: 48 };
-    pressIn(ctx, this.pauseBtn, this.pressed === 'pause');
-    ellipse(ctx, 50, ty + 36, 21, 21);
-    ctx.fillStyle = P.cream;
-    ctx.fill();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = INK;
-    ctx.fillRect(43, ty + 27, 5, 18);
-    ctx.fillRect(53, ty + 27, 5, 18);
-    pressOut(ctx, this.pressed === 'pause', () => ellipse(ctx, 50, ty + 36, 23, 23));
-    text(ctx, this.day ? `第${this.day}天` : '0号快递', 86, ty + 37, 30, { bold: true, align: 'left', maxWidth: 122 });
-    // clear of a two-digit day, and the van stops short of the postmark at the end of the route
+    const handed = this.lv.orders.filter((o) => o.state === 'delivered' || o.state === 'wrong').length;
+    const count = `${handed}/${this.lv.orders.length}`;
+    if (this.pressed === 'pause') this.hudBar(ctx, ty, count, true);
+    else drawBakedScreen(ctx, 'hudbar', `${ty}:${this.day}:${count}:${this.game.sprites.version}`, 0, 0, [8, ty - 6, 742, ty + 86], (c) => this.hudBar(c, ty, count, false));
     const x0 = 212, x1 = 520, ly = ty + 36;
     const prog = clamp(-this.camY / this.cfg.length, 0, 1);
     ctx.save();
-    ctx.strokeStyle = 'rgba(74,59,48,0.35)';
-    ctx.lineWidth = 4;
-    ctx.setLineDash([2, 10]);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x0, ly);
-    ctx.lineTo(x1, ly);
-    ctx.stroke();
-    ctx.setLineDash([]);
     ctx.strokeStyle = P.orange;
+    ctx.lineCap = 'round';
     ctx.lineWidth = 7;
     ctx.beginPath();
     ctx.moveTo(x0, ly);
@@ -5262,6 +5280,40 @@ export class PlayScene implements Scene {
       ctx.fill();
       ctx.stroke();
     }
+    ctx.restore();
+
+    this.drawUrgentCard(ctx, ty + 84);
+    this.drawHudRest(ctx, H);
+  }
+
+  /** The still part of the top bar: the panel, the pause button, the day, the empty route, its postmark, the count. */
+  private hudBar(ctx: Ctx, ty: number, count: string, paused: boolean) {
+    const sp = this.game.sprites;
+    panel(ctx, 16, ty, 718, 72, { r: 22 });
+    pressIn(ctx, this.pauseBtn, paused);
+    ellipse(ctx, 50, ty + 36, 21, 21);
+    ctx.fillStyle = P.cream;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = INK;
+    ctx.fillRect(43, ty + 27, 5, 18);
+    ctx.fillRect(53, ty + 27, 5, 18);
+    pressOut(ctx, paused, () => ellipse(ctx, 50, ty + 36, 23, 23));
+    text(ctx, this.day ? `第${this.day}天` : '0号快递', 86, ty + 37, 30, { bold: true, align: 'left', maxWidth: 122 });
+    // clear of a two-digit day, and the van stops short of the postmark at the end of the route
+    const x0 = 212, x1 = 520, ly = ty + 36;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(74,59,48,0.35)';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([2, 10]);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x0, ly);
+    ctx.lineTo(x1, ly);
+    ctx.stroke();
+    ctx.setLineDash([]);
     // postmark at the route's end
     ctx.strokeStyle = P.red;
     ctx.lineWidth = 2.5;
@@ -5272,15 +5324,14 @@ export class PlayScene implements Scene {
     ctx.stroke();
     ctx.restore();
     // delivered count
-    const handed = this.lv.orders.filter((o) => o.state === 'delivered' || o.state === 'wrong').length;
-    const count = `${handed}/${this.lv.orders.length}`;
     ctx.font = font(30, true);
     const cw = ctx.measureText(count).width;
     sp.draw(ctx, 'box0', 716 - cw - 26, ly + 14, 0.95);
     text(ctx, count, 716, ly + 2, 30, { bold: true, align: 'right' });
+  }
 
-    this.drawUrgentCard(ctx, ty + 84);
-
+  /** The HUD under the top bar: the power gauge while aiming, the tray, and the calls, lifeline and wind. */
+  private drawHudRest(ctx: Ctx, H: number) {
     // Power gauge while aiming
     if (this.aim && this.frog.state === 'stand') {
       // on the left edge when the frog is on the right (on the truck), so it never covers the frog
@@ -5417,7 +5468,17 @@ export class PlayScene implements Scene {
       panel(ctx, 14, cy - 100, Math.max(this.bag.length * 92 + 140, 430), 162, { r: 16, fill: '#F3E4CB', stitch: P.orange });
       text(ctx, this.bag.length ? '背包里的 · 点一下放回车上' : '背包是空的', 148, cy - 72, 22, { align: 'left', bold: true, color: P.orangeDeep });
     }
-    // Backpack button
+    // Backpack button: drawn once and copied until its load changes
+    const w = this.weight(), used = this.slotsUsed();
+    const look = `${w <= 1 ? 0 : w <= 3 ? 1 : 2}`;
+    drawBakedScreen(ctx, 'backpack', `${cy}:${look}:${used}:${this.cfg.bagSlots}:${sp.version}`, 0, 0, [8, cy - 64, 140, cy + 66], (c) => this.backpack(c, cy, look, used));
+    // cards on the move go on top, so they're seen crossing over
+    const moving = (c: Card) => this.flights.some((f) => f.o === c.order);
+    for (const c of this.cards) if (!moving(c)) this.drawCard(ctx, c);
+    for (const c of this.cards) if (moving(c)) this.drawCard(ctx, c);
+  }
+
+  private backpack(ctx: Ctx, cy: number, look: string, used: number) {
     ellipse(ctx, 74, cy, 54, 54);
     ctx.fillStyle = P.paper;
     ctx.fill();
@@ -5430,9 +5491,7 @@ export class PlayScene implements Scene {
     ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.setLineDash([]);
-    const w = this.weight();
-    sp.draw(ctx, `satchel${w <= 1 ? 0 : w <= 3 ? 1 : 2}`, 74, cy - 20, 1.25);
-    const used = this.slotsUsed();
+    this.game.sprites.draw(ctx, `satchel${look}`, 74, cy - 20, 1.25);
     roundRect(ctx, 40, cy + 30, 68, 32, 16);
     ctx.fillStyle = used >= this.cfg.bagSlots ? P.red : P.orange;
     ctx.fill();
@@ -5440,10 +5499,6 @@ export class PlayScene implements Scene {
     ctx.lineWidth = 2;
     ctx.stroke();
     text(ctx, `${used}/${this.cfg.bagSlots}`, 74, cy + 47, 22, { color: P.white, bold: true });
-    // cards on the move go on top, so they're seen crossing over
-    const moving = (c: Card) => this.flights.some((f) => f.o === c.order);
-    for (const c of this.cards) if (!moving(c)) this.drawCard(ctx, c);
-    for (const c of this.cards) if (moving(c)) this.drawCard(ctx, c);
   }
 
   /** A little side view of the delivery truck, for the cargo row's title. */
@@ -5469,7 +5524,6 @@ export class PlayScene implements Scene {
   }
 
   private drawCard(ctx: Ctx, c: Card) {
-    const sp = this.game.sprites;
     const o = c.order;
     let { x, y, w, h } = c.rect;
     // sliding over from the other row: a hop up, and a shadow left on the tray
@@ -5490,17 +5544,35 @@ export class PlayScene implements Scene {
       ctx.restore();
       y -= lift;
     }
-    if (this.shakeCard && this.shakeCard.id === o.id) x += Math.sin(this.shakeCard.t * 50) * 6 * (1 - this.shakeCard.t / 0.4);
+    const shake = this.shakeCard && this.shakeCard.id === o.id;
+    if (shake) x += Math.sin(this.shakeCard!.t * 50) * 6 * (1 - this.shakeCard!.t / 0.4);
     const spot = (this.step === 'pick' && c.where === 'truck') || (this.step === 'deliver' && this.trayMode === 'deliver');
     const down = this.pressed === `card${o.id}`;
     const pulse = down ? 0.92 : spot ? 1 + Math.sin(this.time * 6) * 0.03 : fl ? 1.06 : 1;
+    const full = this.trayMode === 'pickup' && c.where === 'truck' && this.slotsUsed() + SIZE_INFO[o.size].slots > this.cfg.bagSlots;
+    const tags = this.cardTags(o, c.where).slice(0, 2);
+    // a card sitting still is drawn once and copied; one that moves, or whose cold (or heat) is running down, is drawn live
+    if (pulse === 1 && !fl && !shake && !o.oldLetter && !tags.some((t) => t.bar !== undefined)) {
+      const state = `${w}:${h}:${c.where}:${full}:${tags.map((t) => `${t.s}${t.fill}${t.ink ? 1 : 0}`).join(',')}:${!!o.group}:${o.dunks ?? 0}:${this.game.sprites.version}`;
+      // kept per place in its row, so a card taking another's place is drawn over the same canvas
+      const slot = this.cards.filter((d) => d.where === c.where).indexOf(c);
+      drawBakedScreen(ctx, `card:${c.where}:${slot}`, `${o.id}:${state}`, x, y, [-10, -12, w + 12, h + 14], (g) => this.cardFace(g, c, 0, 0, w, h, full, false, tags));
+      return;
+    }
     ctx.save();
     if (pulse !== 1) {
       ctx.translate(x + w / 2, y + h / 2);
       ctx.scale(pulse, pulse);
       ctx.translate(-(x + w / 2), -(y + h / 2));
     }
-    const full = this.trayMode === 'pickup' && c.where === 'truck' && this.slotsUsed() + SIZE_INFO[o.size].slots > this.cfg.bagSlots;
+    this.cardFace(ctx, c, x, y, w, h, full, down, tags);
+    ctx.restore();
+  }
+
+  /** A parcel's card: who it's for, its code, the parcel and its labels. */
+  private cardFace(ctx: Ctx, c: Card, x: number, y: number, w: number, h: number, full: boolean, down: boolean, tags: ReturnType<PlayScene['cardTags']>) {
+    const sp = this.game.sprites;
+    const o = c.order;
     if (full) ctx.globalAlpha = 0.55;
     const ret = c.where === 'ret';
     panel(ctx, x, y, w, h, { r: 12, fill: c.where === 'truck' ? '#F7FAFB' : ret ? '#E4F2EE' : P.paper, stitch: c.where === 'truck' ? P.blueLight : ret ? P.tealDeep : undefined });
@@ -5517,7 +5589,7 @@ export class PlayScene implements Scene {
     } else sp.draw(ctx, boxSprite(o.size, o.urgent, o.cod), x + w / 2, y + h - 10 * k, (o.size === 0 ? 1.15 : o.size === 1 ? 1 : 0.9) * k);
     // labels stuck on the parcel's lid, below the avatar and inside the card: what's special about it
     let ly = y + 66 * k;
-    for (const t of this.cardTags(o, c.where).slice(0, 2)) {
+    for (const t of tags) {
       ctx.font = font(18 * k, true);
       const bw = Math.min(w - 10, ctx.measureText(t.s).width + 14 * k);
       const bx = x + w / 2 - bw / 2;
@@ -5556,7 +5628,6 @@ export class PlayScene implements Scene {
       ctx.fillStyle = 'rgba(36,28,22,0.22)';
       ctx.fill();
     }
-    ctx.restore();
   }
 
   /** The labels on a parcel's card: urgent, its twist (a return, fragile, chilled or hot, chased up), cash on delivery. */
@@ -5724,9 +5795,12 @@ export class PlayScene implements Scene {
       holes.push({ x: f.x - 100, y: fy - 160, w: 200, h: 210, round: true });
       const t = this.aimTarget;
       if (t) holes.push({ x: t.x - t.rx - 30, y: this.sy(t.y) - t.ry - 44, w: (t.rx + 30) * 2, h: (t.ry + 44) * 2, round: true });
-      const zx = 470, zy = clamp(fy - 40, H * 0.4, H * 0.62);
+      // press in the middle of the screen, where there's room to pull every way; clear of the frog's ring
+      const zx = 375;
+      let zy = H * 0.48;
+      if (Math.abs(f.x - zx) < 190 && zy + 90 > fy - 160 && zy - 90 < fy + 50) zy = fy - 160 > H * 0.3 + 110 ? fy - 270 : fy + 160;
       holes.push({ x: zx - 90, y: zy - 90, w: 180, h: 180, round: true });
-      line = segs('在【任意空白处】按住往下拉');
+      line = segs('按住【屏幕中间】往下拉');
       sub = `松手就往反方向跳，拉得越长跳得越远；按住超过 ${FOOT_T} 秒脚会累`;
       capY = this.game.safeT + 100;
       if (!this.aim) hand = { kind: 'drag', x: zx, y: zy };
@@ -5770,7 +5844,7 @@ export class PlayScene implements Scene {
         ctx.closePath();
       }
     }
-    ctx.fillStyle = `rgba(36,28,22,${0.6 * a})`;
+    ctx.fillStyle = `rgba(36,28,22,${alpha3(0.6 * a)})`;
     ctx.fill('evenodd');
     // pulsing dashed outline around each hole
     ctx.setLineDash([14, 10]);

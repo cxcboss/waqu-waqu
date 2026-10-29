@@ -6,7 +6,7 @@ import { placeholderHouse } from './houses';
 import * as A from './shapes';
 import * as H from './shapes-home';
 import { defs } from './svg';
-import { pxPerUnit, useCanvas } from './kit/canvas';
+import { blit, pxPerUnit, useCanvas } from './kit/canvas';
 
 /** Width of the design canvas, and design units per concept unit (1080-wide concept art). */
 export const DESIGN_W = 750;
@@ -185,8 +185,8 @@ export function codeSprite(name: string, b: [number, number, number, number], dr
   for (const bank of banks) bank.dropCode(name);
 }
 
-/** Non-lazy art that has to be in before the first screen (the loading screen waits for it). */
-const CORE = /^(frog_stand|frog_happy|coin|hand|hat_|neck_)/;
+/** Non-lazy art that has to be in before the first screen (the loading screen waits for it; the mini game keeps it in its main package). */
+export const CORE = /^(frog_stand|frog_happy|coin|hand|hat_|neck_)/;
 /** The art one day of play needs; the rest is only for the other screens. */
 const PLAY = /^(frog_|box\d|satchel|lily|log$|river$|hand$|coin$|bill$|letter$|splash$|truck_|hat_|neck_|gear_)/;
 
@@ -202,6 +202,8 @@ export const SPRITE_DEFS: Readonly<Record<string, SpriteDef>> = D;
  */
 export class SpriteBank {
   private map = new Map<string, Sprite>();
+  /** Goes up whenever a sprite arrives or is replaced: something baked with sprites in it is out of date. */
+  version = 0;
   /** How many sprites are painted art rather than placeholders. */
   painted = 0;
 
@@ -281,14 +283,14 @@ export class SpriteBank {
             this.isPainted.add(name);
           }
           const s = png ?? (d.svg ? await this.raster(d, pxPerUnit) : null);
-          if (s) this.map.set(name, s);
+          if (s) this.put(name, s);
           onProgress?.(++done, names.length);
         }),
       );
     }
     for (const name of names) {
       const alias = D[name].alias;
-      if (!this.map.has(name) && alias && this.map.has(alias)) this.map.set(name, this.get(alias));
+      if (!this.map.has(name) && alias && this.map.has(alias)) this.put(name, this.get(alias));
     }
   }
 
@@ -351,12 +353,12 @@ export class SpriteBank {
         if (png) {
           this.painted++;
           this.isPainted.add(name);
-          this.map.set(name, png);
-        } else if (d.prefer && this.isPainted.has(d.prefer)) this.map.set(name, this.get(d.prefer));
-        else if (d.svg) this.map.set(name, await this.raster(d, this.px));
+          this.put(name, png);
+        } else if (d.prefer && this.isPainted.has(d.prefer)) this.put(name, this.get(d.prefer));
+        else if (d.svg) this.put(name, await this.raster(d, this.px));
         else if (d.alias) {
           await this.loadOne(d.alias);
-          if (this.map.has(d.alias)) this.map.set(name, this.get(d.alias));
+          if (this.map.has(d.alias)) this.put(name, this.get(d.alias));
         }
       })();
       p = p.finally(() => this.settled.add(name));
@@ -415,6 +417,11 @@ export class SpriteBank {
   }
 
   /** Whether there's art for this sprite (painted-only sprites may be missing; code sprites are always there). */
+  private put(name: string, s: Sprite) {
+    this.map.set(name, s);
+    this.version++;
+  }
+
   has(name: string) {
     return this.map.has(name) || codeDef(name) !== undefined;
   }
@@ -429,6 +436,16 @@ export class SpriteBank {
   bounds(name: string): SpriteDef['b'] {
     const c = codeDef(name)?.b;
     return c ? [c[0] / K, c[1] / K, c[2] / K, c[3] / K] : D[name].b;
+  }
+
+  /**
+   * `draw` for a big picture at its own size (a room, a shop counter): copied onto the screen pixel for pixel, which
+   * costs the phone a fraction of scaling it every frame (see the kit's `blit`). Only at the game's own transform.
+   */
+  blit(ctx: Ctx, name: string, x: number, y: number) {
+    const s = this.codeArt(name) ?? this.map.get(name);
+    if (!s) return this.draw(ctx, name, x, y);
+    blit(ctx, s.img, x - s.ax, y - s.ay, s.w, s.h);
   }
 
   /** Draws a sprite with its anchor at (x, y), optionally scaled, rotated and faded. */

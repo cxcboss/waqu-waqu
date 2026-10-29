@@ -1,7 +1,7 @@
 // The year's end, after day 30 is first passed: New Year's Eve on the river, fireworks over the village,
 // and a few storybook pages over it (the year in numbers, the owl opening chapter 7, the old turtle's
 // letters). Tap to turn the page; the last one goes to the route map, where the early-spring run waits.
-import { alpha, drawBaked, hills, icon, mix, ribbon, shade, stars, sunMoon, TOD, type IconName } from '../art/kit';
+import { alpha, drawBaked, drawBakedScreen, hills, icon, mix, ribbon, shade, stars, sunMoon, TOD, type IconName } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { lilyPad } from '../art/village';
 import { button, ellipse, hit, panel, roundRect, text, wrapText, type Rect } from '../art/ui';
@@ -142,7 +142,7 @@ export class EndingScene implements Scene {
   render(ctx: Ctx) {
     const g = this.game;
     const H = g.H, hz = this.horizon();
-    drawBaked(ctx, `ending:${H}`, 0, 0, [0, 0, 750, H], (c) => paintNight(c, H, hz));
+    drawBakedScreen(ctx, 'ending', `${H}`, 0, 0, [0, 0, 750, H], (c) => paintNight(c, H, hz));
     stars(ctx, 0, g.safeT + 40, 750, hz - g.safeT - 140, this.t, 54);
     // the sky lights up with each burst, and so does the river
     for (const r of this.rockets) if (r.t >= CLIMB) this.drawGlow(ctx, r, hz);

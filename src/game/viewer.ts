@@ -23,8 +23,10 @@ export interface ViewerAction {
 export const SAVED: Record<SaveResult, string> = {
   shared: '搞定！',
   downloaded: '图片已保存',
+  album: '已存进手机相册',
   longpress: '长按图片，选「保存图片」',
   cancelled: '',
+  denied: '没有相册权限，没存上',
   failed: '没存上，试试长按图片保存',
 };
 
@@ -144,7 +146,8 @@ export class PhotoViewer {
     const c = this.card(this.current);
     if (!c) return '照片还没准备好';
     const res = await this.game.platform.saveImage(c, name);
-    if (res === 'shared' || res === 'downloaded') this.game.audio.play('photo_shutter', { volume: 0.6 });
+    if (res === 'shared' || res === 'downloaded' || res === 'album') this.game.audio.play('photo_shutter', { volume: 0.6 });
+    if (res === 'failed' && !this.game.platform.longPressSave) return '没存上，再试一次';
     return SAVED[res];
   }
 
@@ -223,7 +226,8 @@ export class PhotoViewer {
         pressOut(ctx, down, () => ellipse(ctx, cx, ry, 32, 32));
       }
     }
-    text(ctx, n > 1 ? '左右滑动换一张 · 长按图片也能保存' : '长按图片也能保存', 375, btnY - 34, 24, { color: P.cream, alpha: 0.7 * a });
+    const tip = [n > 1 ? '左右滑动换一张' : '', g.platform.longPressSave ? '长按图片也能保存' : ''].filter(Boolean).join(' · ');
+    if (tip) text(ctx, tip, 375, btnY - 34, 24, { color: P.cream, alpha: 0.7 * a });
     ctx.save();
     ctx.globalAlpha = a;
     // one or two rows of buttons, as wide as they can be

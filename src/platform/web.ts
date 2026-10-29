@@ -6,6 +6,7 @@ const MIN_ASPECT = 1334 / 750;
 export class WebPlatform implements Platform {
   readonly kind = 'web' as const;
   readonly canvas: Canvas;
+  readonly longPressSave = true;
   private probe: HTMLElement | null;
   private touch: ((kind: TouchKind, t: TouchPoint) => void) | null = null;
   /** Encoded pictures, so a save can start right inside the tap. */

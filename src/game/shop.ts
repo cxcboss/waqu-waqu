@@ -1,6 +1,6 @@
 // The staff shop (福利社), run by a hamster whose cheeks are always full. Gear upgrades that help on
 // the river, hats and scarves, furniture for the frog's room and frames for the photo wall.
-import { chalkboard, chalkText } from '../art/kit';
+import { chalkboard, chalkText, drawBakedScreen } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { button, ellipse, roundRect, text, wrapText, type Rect } from '../art/ui';
 import { clamp } from '../engine/math';
@@ -224,7 +224,7 @@ export class ShopScene implements Scene {
     ctx.clip();
     ctx.fillStyle = '#9E7449';
     ctx.fillRect(0, 0, 750, y1 + 80);
-    sp.draw(ctx, 'shop_back', 0, y0);
+    sp.blit(ctx, 'shop_back', 0, y0);
     ctx.restore();
     // hamster behind the counter, bobbing more when happy
     const hop = this.cheer > 0 ? Math.abs(Math.sin(this.cheer * 12)) * 14 : Math.sin(this.t * 2.2) * 2;
@@ -236,7 +236,7 @@ export class ShopScene implements Scene {
     const hamster = sp.has(`shop_hamster_${pose}`) ? `shop_hamster_${pose}` : 'shop_hamster';
     sp.draw(ctx, hamster, 560, cy + 40 - hop, 1.15);
     ctx.restore();
-    sp.draw(ctx, 'shop_counter', 0, cy);
+    sp.blit(ctx, 'shop_counter', 0, cy);
     // the daily deal on a chalkboard hung on the wall, and the parcel handed over after a purchase
     const deal = item(dailyDeal())!;
     const board = chalkboard(ctx, 18, y0 + 48, 178, 124, { hang: 30 });
@@ -288,49 +288,59 @@ export class ShopScene implements Scene {
       const r = { x: 40, y, w: 670, h: 214 };
       const sr = this.scroll.screen(r);
       const down = !!sr && this.taps.add(`g_${gd.id}`, sr);
-      ctx.save();
-      if (down) ctx.globalAlpha = 0.75;
-      roundRect(ctx, r.x, r.y, r.w, r.h, 18);
-      ctx.fillStyle = P.white;
-      ctx.fill();
-      ctx.strokeStyle = P.kraft;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      roundRect(ctx, r.x + 20, r.y + 20, 150, 150, 16);
-      ctx.fillStyle = P.cream;
-      ctx.fill();
-      const gi = gearIcon(gd.id, lv, gd.sprite);
-      if (gi === gd.sprite) this.game.sprites.draw(ctx, gd.sprite, r.x + 95, r.y + 95, 1.1 + 0.05 * lv);
-      else iconAt(ctx, this.game.sprites, gi, r.x + 95, r.y + 95, 138);
-      text(ctx, gd.name, r.x + 196, r.y + 42, 32, { align: 'left', bold: true });
-      text(ctx, `${lv} 级 · ${gd.looks[lv - 1]}`, r.x + 196, r.y + 82, 24, { align: 'left', color: P.orangeDeep, bold: true });
-      text(ctx, gd.effect(lv), r.x + 196, r.y + 118, 22, { align: 'left', color: P.inkSoft, maxWidth: 450 });
-      for (let i = 0; i < max; i++) {
-        ellipse(ctx, r.x + 206 + i * 32, r.y + 160, 11, 11);
-        ctx.fillStyle = i < lv ? P.gold : P.paperShade;
-        ctx.fill();
-        ctx.strokeStyle = INK;
-        ctx.lineWidth = 1.8;
-        ctx.stroke();
-      }
       const price = lv < max ? gd.prices[lv - 1] : null;
-      const bx = r.x + r.w - 196, by = r.y + 136;
-      if (price === null) text(ctx, '已满级', bx + 88, by + 30, 26, { bold: true, color: P.lilyDeep });
-      else {
-        roundRect(ctx, bx, by, 176, 60, 30);
-        ctx.fillStyle = s.coins >= price ? P.orange : P.paperShade;
-        ctx.fill();
-        ctx.strokeStyle = INK;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        this.game.sprites.draw(ctx, 'coin', bx + 34, by + 30, 0.55);
-        text(ctx, `${price} 升级`, bx + 108, by + 31, 24, { bold: true, color: s.coins >= price ? P.white : P.inkSoft });
+      // a row is drawn once and copied as the list scrolls, unless it's held down
+      if (down) this.gearRow(ctx, gd, r, lv, max, price, true);
+      else if (this.scroll.screen({ x: r.x, y: r.y - 8, w: r.w, h: r.h + 16 })) {
+        const state = `${r.y}:${lv}:${price !== null && s.coins >= price}:${this.game.sprites.version}`;
+        drawBakedScreen(ctx, `gear:${gd.id}`, state, 0, 0, [r.x - 4, r.y - 4, r.x + r.w + 4, r.y + r.h + 4], (c) => this.gearRow(c, gd, r, lv, max, price, false), -this.scroll.y);
       }
-      ctx.restore();
       y += 230;
     }
     text(ctx, '衣服、帽子和家具只换样子，不影响送件', 375, y + 16, 20, { color: P.inkSoft });
     return y + 50;
+  }
+
+  private gearRow(ctx: Ctx, gd: (typeof GEAR)[number], r: Rect, lv: number, max: number, price: number | null, down: boolean) {
+    const s = this.game.save;
+    ctx.save();
+    if (down) ctx.globalAlpha = 0.75;
+    roundRect(ctx, r.x, r.y, r.w, r.h, 18);
+    ctx.fillStyle = P.white;
+    ctx.fill();
+    ctx.strokeStyle = P.kraft;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    roundRect(ctx, r.x + 20, r.y + 20, 150, 150, 16);
+    ctx.fillStyle = P.cream;
+    ctx.fill();
+    const gi = gearIcon(gd.id, lv, gd.sprite);
+    if (gi === gd.sprite) this.game.sprites.draw(ctx, gd.sprite, r.x + 95, r.y + 95, 1.1 + 0.05 * lv);
+    else iconAt(ctx, this.game.sprites, gi, r.x + 95, r.y + 95, 138);
+    text(ctx, gd.name, r.x + 196, r.y + 42, 32, { align: 'left', bold: true });
+    text(ctx, `${lv} 级 · ${gd.looks[lv - 1]}`, r.x + 196, r.y + 82, 24, { align: 'left', color: P.orangeDeep, bold: true });
+    text(ctx, gd.effect(lv), r.x + 196, r.y + 118, 22, { align: 'left', color: P.inkSoft, maxWidth: 450 });
+    for (let i = 0; i < max; i++) {
+      ellipse(ctx, r.x + 206 + i * 32, r.y + 160, 11, 11);
+      ctx.fillStyle = i < lv ? P.gold : P.paperShade;
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+    }
+    const bx = r.x + r.w - 196, by = r.y + 136;
+    if (price === null) text(ctx, '已满级', bx + 88, by + 30, 26, { bold: true, color: P.lilyDeep });
+    else {
+      roundRect(ctx, bx, by, 176, 60, 30);
+      ctx.fillStyle = s.coins >= price ? P.orange : P.paperShade;
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      this.game.sprites.draw(ctx, 'coin', bx + 34, by + 30, 0.55);
+      text(ctx, `${price} 升级`, bx + 108, by + 31, 24, { bold: true, color: s.coins >= price ? P.white : P.inkSoft });
+    }
+    ctx.restore();
   }
 
   private drawItems(ctx: Ctx, y: number, kinds: ItemKind[]) {
@@ -344,7 +354,14 @@ export class ShopScene implements Scene {
       const r = { x: cx, y: cy, w: cw, h: ch };
       const sr = this.scroll.screen(r);
       const down = !!sr && this.taps.add(`i_${it.id}`, sr);
-      this.card(ctx, it, r, down, it.id === deal && !s.owned.includes(it.id));
+      const isDeal = it.id === deal && !s.owned.includes(it.id);
+      // each card is drawn once and copied as the list scrolls, unless it's held down
+      if (down) this.card(ctx, it, r, true, isDeal);
+      else if (this.scroll.screen({ x: r.x, y: r.y - 8, w: r.w, h: r.h + 16 })) {
+        const price = priceOf(it);
+        const state = `${r.x}:${r.y}:${s.owned.includes(it.id)}:${s.wear.hat === it.id || s.wear.neck === it.id}:${price}:${s.coins >= (price ?? Infinity)}:${isDeal}:${this.game.sprites.version}`;
+        drawBakedScreen(ctx, `item:${it.id}`, state, 0, 0, [r.x - 4, r.y - 4, r.x + r.w + 4, r.y + r.h + 4], (c) => this.card(c, it, r, false, isDeal), -this.scroll.y);
+      }
     });
     return y + Math.ceil(list.length / 2) * (ch + 20) + 10;
   }

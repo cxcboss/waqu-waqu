@@ -2,6 +2,8 @@
 // faded look of something not earned yet. Results are '#rrggbb' strings, remembered, so calling these
 // every frame doesn't make new strings every frame.
 
+import { alpha3 } from '../../engine/math';
+
 type RGB = [number, number, number];
 
 const parsed = new Map<string, RGB>();
@@ -61,9 +63,10 @@ export const tint = (c: string, k: number) => mix(c, '#FFFBF0', k);
 
 /** The colour with an alpha, as an rgba() string. */
 export function alpha(c: string, a: number) {
-  return memo(`a${c}${a}`, () => {
+  const a3 = alpha3(a);
+  return memo(`a${c}${a3}`, () => {
     const [r, g, b] = rgbOf(c);
-    return `rgba(${r},${g},${b},${a})`;
+    return `rgba(${r},${g},${b},${a3})`;
   });
 }
 

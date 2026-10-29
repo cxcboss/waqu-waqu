@@ -6,15 +6,16 @@
 
 TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画布、存档、音频、美术和埋点，
 同一时间只有一个 `Scene`（画面），画面之间用 `game.go(new XxxScene(...))` 切换。
-浏览器相关的调用全部在 `src/platform/web.ts`，以后做微信小游戏只要再写一个 `wx.ts` 实现同样的 `Platform` 接口。
+浏览器相关的调用全部在 `src/platform/web.ts`，微信小游戏的在 `src/platform/wx.ts`，两者实现同一个 `Platform` 接口（`types.ts`），游戏代码不分平台。
 
 ## 目录
 
 | 位置 | 内容 |
 |---|---|
 | `src/main.web.ts` | 网页入口：建 `WebPlatform` 和 `Game`，处理 `?tm=` / `?day=`，把游戏挂到 `window.__game`（测试机器人用） |
-| `src/platform/` | `types.ts` 平台接口；`web.ts` 浏览器实现（触摸、音频、存储、`postJson` 发埋点、存图分享） |
-| `src/engine/` | `audio.ts` 音效音乐（manifest 驱动，见 `docs/audio.md`）、`math.ts`、`telemetry.ts` 匿名埋点队列 |
+| `src/main.wx.ts` | 微信小游戏入口：建 `WxPlatform` 和 `Game`，挂到 `GameGlobal.__game`（开发者工具控制台用） |
+| `src/platform/` | `types.ts` 平台接口；`web.ts` 浏览器实现（触摸、音频、存储、`postJson` 发埋点、存图分享）；`wx.ts` 微信小游戏实现（见文末「微信小游戏」） |
+| `src/engine/` | `audio.ts` 音效音乐（manifest 驱动，网页用 Web Audio；`audio-streams.ts` 是微信小游戏用的系统播放器版，`createAudio()` 按平台选；见 `docs/audio.md`）、`math.ts`、`telemetry.ts` 匿名埋点队列 |
 | `src/game/game.ts` | `Game`：主循环、存档 `save`（localStorage）、场景切换、成就发放 |
 | `src/game/hub.ts` | 主页小镇（启动后的第一个画面）：上班、总部、我的家、福利社、工牌 |
 | `src/game/map.ts` | 路线图：选第几天，好评章 |
@@ -33,7 +34,8 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 | `src/art/` | 代码绘制：`kit/` 手账风基础件（墨线、纸纹、图标、勋章、相框、招牌、时段配色）；`river.ts` 河上的机关（乌龟、石头、落叶、浮冰、薄冰、水坝、栈桥、渡船、吊钩、海鸥、大鹅、烟花）；`village.ts`/`room.ts`/`furniture.ts` 场景；`sprites.ts` 是精灵表（名字、包围盒、alias、paintedOnly，`codeSprite` 注册代码精灵） |
 | `public/art/` | AI 画的正式美术 PNG，名字写进 `manifest.json` 就替换同名占位图；没有的自动回退到占位图 |
 | `public/audio/` | 音效音乐，来源见 `CREDITS.md`；由 `tools/audio/` 生成，场景配乐在 `src/game/sound.ts`，说明见 `docs/audio.md` |
-| `scripts/` | `deploy.sh` 部署、`stats.py` 数据报告、`telemetry.sql` 建表、`subset_font.py` 裁字体 |
+| `scripts/` | `deploy.sh` 部署、`stats.py` 数据报告、`telemetry.sql` 建表、`subset_font.py` 裁字体、`build_wx.py` 打包微信小游戏 |
+| `wx/` | 小游戏工程要带的固定文件：分享图 `share.jpg`（500×400）、字体许可 `OFL.txt` |
 | `docs/telemetry.md` | 埋点说明（事件、字段、位置、怎么加、怎么读） |
 
 ## 美术回退
@@ -91,7 +93,16 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
   - 室内 `room.ts`（家的墙纸、护墙板、地板和窗光，总部办公室和柜台、实时走的挂钟，福利社货架和柜台，礼物盒，7 张工牌）和 `furniture.ts`（床、书桌、衣柜、信箱、窗户和 16 件家具）。`codeart.ts` 用原来画好的图的名字和边界把它们注册成代码精灵，所以各场景的摆放代码基本没变。按时段变化的几件（家的窗户、总部房间、地毯、盆栽、坐垫、河湾旗）用 `todSprite(name, tod)` 取名字。
   - 成就勋章、相框、标签和分类图标用 kit 的 `medal()`、`frame()`、`icon()`；特价牌用 `chalkboard()`，总部招牌用 `woodSign()`。
 - 删掉了被替换的 113 张 WebP（约 2.4 MB）和 sprites.ts 里对应的定义、shapes 里的旧占位图。还在用画好的：居民、房子、开门图、青蛙、猫头鹰、仓鼠、包裹、荷叶、河、帽子围巾和装备图标。
-- `drawBaked`（kit/canvas.ts）的烘焙缓存按最近使用淘汰，总预算约 600 万像素；整屏背景（主页、家）各占一份。
+- `drawBaked`（kit/canvas.ts）的烘焙缓存按最近使用淘汰，总预算约 600 万像素；整屏背景（主页、家）各占一份。整屏的和不动的界面用按屏幕像素烘焙的 `drawBakedScreen`，见下面「画面性能」。
+
+## 画面性能（2026-10-29，降发热，帧率不变）
+- 手机发热主要看每帧要画多少像素、调多少次绘图接口。三条规矩（kit/canvas.ts）：
+  - **大图不每帧缩放**：画布宽 720 像素时一个设计单位不到 1 像素，每帧把 750 宽的图缩着画最费。河面、总部房间、福利社柜台用 `blit`（先缩到屏幕像素一次，再按整像素直接贴；河面把章节的色调也一起贴进去）；主页、家、结局的整屏背景和路线图的河道块用 `drawBakedScreen`（按屏幕像素烘焙，按整像素贴）。
+  - **不动的界面烘焙一次反复贴**：`drawBakedScreen(ctx, key, state, …)` 每个 key 留一份，`state`（文字、数字、开关、`sprites.version`）变了才重画，尺寸不变就复用原画布。已经这样做的：各页顶栏、标签页、主页招牌/顶部工牌/底栏、总部记录页、福利社列表、家的工具栏和照片墙、送货时顶栏不动的部分、背包、包裹卡。按下、闪烁、在动的时候照常现画（比如包裹卡在飞、在跳、冷藏条在掉）。长的滚动列表用 `drawStrips`（400 单位一条，只画看得见的条，滚动传 `dy`）。
+  - **夜里少建渐变**：灯光在暗色里挖的洞、灯的暖光、萤火虫都用先画好的光斑（weather.ts 的 `spots`）按透明度贴，不每帧 `createRadialGradient`；暗色遮罩在每帧画画面之前先画好（`prepareDark`），手机显卡不用画到一半切去别的画布再切回来。
+- 这两个函数会把变换设回 `setTransform(s,0,0,s,0,dy·s)`，所以只能在游戏自己的变换下用（`Game.frame` 设的缩放，外面没有 translate/scale/rotate）；开发用的 artboard 画缩小的样张，用 `screenExact(false)` 关掉。
+- 效果（云端模拟器 720×1584，每帧画像素的毫秒数）：主页 12.2→7.2，家 9.7→3.7，福利社 9.7→4.3，总部 9.0→4.5，送货白天 13.6→8.9，暴雨夜（第 15 天）23.6→16.1；总部每帧调绘图接口 1836→89 次，送货 753→575。固定时钟的截图逐像素对比，只有边缘抗锯齿的细微差别。
+- 以后加画面：每帧都一样的东西就放进 `drawBakedScreen`；比半屏大的图用 `blit` 或 `SpriteBank.blit`；别在每帧里建渐变和新画布。
 
 ## 首次加载优化（2026-10-25）
 - 美术全部是 WebP：`scripts/optimize_art.py` 把 `public/art/` 里的 png/jpg 转成 webp（普通图质量 72，整屏背景缩到 1.2 倍设计宽度，其余最多 2 倍）、删原图、重写 manifest.json（只列精灵名，扩展名固定 .webp）。**新图换进来先放 png/jpg 再跑这个脚本**，不要对已有 webp 重复压缩。`scripts/art_design_widths.json` 记各精灵的设计宽度。不支持 WebP 的老浏览器会回退到代码绘制的占位图。美术目录 19 → 约 5 MB。
@@ -106,3 +117,23 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 - 卡关帮助：同一天连续没过两次，结算出「慢一点再试」（`save.assist[day]`，河水 0.9 倍速，过了就取消）；三次出「跳过这一天」（`save.skipped`，开下一天但这一天拿不到章，路线图上标「跳过」，回来补跑就去掉）。
 - 故事线：第 1–30 天每天河上漂着乌龟爷爷（小龟）年轻时写给去出海的老朋友阿灰（鹈鹕大叔）的一封信（`STORY`，`save.story` 记找到的天）。集齐 30 封 `save.secret = 1`，信箱出现「第0号快递」（第 0 天，`SECRET` 配置，`dayLabel(0)`），把第一封信送到上游的阿灰家后 `secret = 2`，能读第一封信。
 - 年终总结：第 30 天第一次通过后结算的下一步按钮变成「年终总结」（`save.ending` 记看过），之后去路线图第 31 天。
+
+## 微信小游戏（2026-10-29，`wechat-minigame`）
+- 打包：`npm run build:wx`（`scripts/build_wx.py`）生成 `dist-wx/`，用微信开发者工具「导入」这个文件夹就能跑。默认用游客 AppID（只能在开发者工具里跑）；`npm run build:wx -- --appid wx…` 换成正式 AppID 才能真机预览和上传。需要 node、Pillow、fontTools、numpy（`pip install pillow fonttools brotli numpy`）和 ffmpeg，有 pngquant 会把图压到 256 色。
+- 包的结构（主包限 4 MB，总共限 30 MB；现在主包约 1.9 MB，总共约 12 MB）：
+  - 主包：`game.js`（esbuild 打的整个游戏）、`fonts/`（霞鹜文楷子集转成 TTF，字体内的名字改成 `WK`/`WKB`，因为 `wx.loadFont` 按字体文件里写的名字注册）、`core/art/`（`CORE` 那些首屏精灵、`manifest.json`、`files.json` 精灵名→文件）、`core/share.jpg`。
+  - 分包 `art/`：其余精灵，`parallelPreloadSubpackages` 让它跟主包一起下载；分包 `audio/`：`public/audio`，但每个循环的声音（音乐、环境声、引擎、水泡）剪成正好一个循环（小游戏里声音用系统播放器整首循环，见 `docs/audio.md`），剪好的缓存在 `node_modules/.cache/wx-audio`。
+  - 小游戏包不收 WebP、woff2、md，所以打包时 WebP 转回 PNG（不透明的转 JPEG），转好的缓存在 `node_modules/.cache/wx-art`。
+- `wx.ts` 把网页路径翻译成包内路径（`where()`：`art/x.webp` 查 `files.json`、`.woff2` 换 `.ttf`），读分包里的文件前先等 `wx.loadSubpackage`（失败会重试 5 次）。
+- 和网页版的不同：
+  - 加载页没有贪吃蛇（几秒就加载完），只有进度条、一只在荷叶间跳的青蛙；底部显示「健康游戏忠告」全文，左上角「8+ 适龄提示」，至少停 3 秒，加载完自己进（`loading.ts` 的 `mini`）。
+  - 顶部安全区让开右上角胶囊按钮（`safeTop` 取胶囊底边 +6）。底部安全区在系统给的值上多留 10、至少 24（`wx.ts` 的 `BOTTOM_AIR`/`BOTTOM_MIN`），让开大圆角和底部横条。
+  - 声音：1.0.4 起全部走 InnerAudioContext（`StreamAudio`），不用 WebAudio，见 `docs/audio.md`「微信小游戏」。
+  - 内存：微信的离屏画布在脚本内存之外，垃圾回收不着急收，所以缓存丢掉的画布会先缩成 1×1（`releaseCanvas`）；每次换场景调一次 `wx.triggerGC`（`platform.gc`）；内存告警时丢掉不在放的声音播放器和烘焙缓存（`game.ts`）。
+  - **实时日志**（`platform.log`，只在手机上报，开发者工具不报）：小游戏后台「WE分析 → 性能质量 → 实时日志」，用关键字 `waqu` 或 `b<构建号>` 搜。记的是启动时的机型和系统、分包下载用时、前后台切换、音频中断、内存告警、报错、每次换场景，以及每 10 秒一行心跳（场景、帧率、卡顿帧数、画布缩放、声音状态：`music` 是正在放的音乐、位置和音量，`beds`、`shots` 是在放的循环和音效数）。每次启动最多 2000 行。真机上闪退、没声音时先看这里。
+  - 存照片是直接存进手机相册（`saveImageToPhotosAlbum`，没权限会引导去设置），没有「长按图片保存」（`platform.longPressSave = false`）。
+  - 分享走右上角菜单和 `shareAppMessage`（分享给朋友、朋友圈），配图是当前画面裁 5:4，没有就用 `core/share.jpg`。
+  - 有新版本时弹窗问要不要重新打开（`getUpdateManager`）。
+  - **默认不发试玩数据**：小游戏只能请求后台配好且已 ICP 备案的「服务器域名」，Supabase 的域名配不进去。要发得先把数据中转到自己备案的域名，再用 `--tm` 打包（见 `docs/telemetry.md`）。
+- 测试：没有官方模拟器可在云端跑，用的是一个浏览器里的 `wx` 假接口（会检查分包加载了才读里面的文件）加测试机器人；真机效果以开发者工具和手机预览为准。
+- 上架步骤（注册、软著、自审报告、备案、隐私、提审）见上架清单：https://claude.ai/artifact/HJeppnDd52Y5vBzfpF8Ahj
