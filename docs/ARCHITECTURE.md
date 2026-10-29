@@ -117,8 +117,9 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
   - 小游戏包不收 WebP、woff2、md，所以打包时 WebP 转回 PNG（不透明的转 JPEG），转好的缓存在 `node_modules/.cache/wx-art`。
 - `wx.ts` 把网页路径翻译成包内路径（`where()`：`art/x.webp` 查 `files.json`、`.woff2` 换 `.ttf`），读分包里的文件前先等 `wx.loadSubpackage`（失败会重试 5 次）。
 - 和网页版的不同：
-  - 加载页底部显示「健康游戏忠告」全文，左上角「8+ 适龄提示」，至少停 3 秒（`loading.ts` 的 `mini`）。
-  - 顶部安全区让开右上角胶囊按钮（`safeTop` 取胶囊底边 +6）。
+  - 加载页没有贪吃蛇（几秒就加载完），只有进度条、一只在荷叶间跳的青蛙；底部显示「健康游戏忠告」全文，左上角「8+ 适龄提示」，至少停 3 秒，加载完自己进（`loading.ts` 的 `mini`）。
+  - 顶部安全区让开右上角胶囊按钮（`safeTop` 取胶囊底边 +6）。底部安全区在系统给的值上多留 10、至少 24（`wx.ts` 的 `BOTTOM_AIR`/`BOTTOM_MIN`），让开大圆角和底部横条。
+  - 声音的特殊处理见 `docs/audio.md`「播放器」最后一条。
   - 存照片是直接存进手机相册（`saveImageToPhotosAlbum`，没权限会引导去设置），没有「长按图片保存」（`platform.longPressSave = false`）。
   - 分享走右上角菜单和 `shareAppMessage`（分享给朋友、朋友圈），配图是当前画面裁 5:4，没有就用 `core/share.jpg`。
   - 有新版本时弹窗问要不要重新打开（`getUpdateManager`）。

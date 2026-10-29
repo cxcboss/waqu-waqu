@@ -12,7 +12,14 @@
 - 同一个 id 在几十毫秒内重复播放会被跳过（`gap`），同一个 id 同时最多几份（`voices`），总共最多 28 个声音。
 - 环境声：`audio.setAmbience([...])` 换一组循环，带 `spots` 的会自己随机插入单发声音（雨里打雷、港口海鸥）。
 - 居民说话：`say(audio, 物种, 心情)` 用几个音节拼一句「动物语」，音高和语速按物种（sound.ts 的 VOICES）。
-- 微信小游戏：不依赖 AudioParam 自动化（检测不到就每帧在 `update()` 里手动渐变），playbackRate 限制在 (0, 2]，manifest 用 `platform.loadJson` 读，不用 TextDecoder。
+- 微信小游戏（`wx.createWebAudioContext`，2026-10-29 真机试玩「声音时有时无」后按微信官方音频说明改过）：
+  - 不用 AudioParam 自动化：微信文档里 AudioParam 只有 `value`，所有渐变都在 `update()` 里每帧手动做。浏览器里时间常数为 0 的渐变也直接赋值，不交给 `setTargetAtTime`。
+  - 新建的 context 立刻 `resume()` 一次；每次回到前台、通话结束都 `resume()`，不看 `state`；第一次触摸也会 `resume()`。
+  - 放声音不看 `state`（只要没 closed、游戏不在后台），因为真停了下次触摸就会恢复，`state` 不准的话反而全没声。
+  - iPhone 上 iOS 17.5 及以上（`platform.audioRebuildOnShow`）：微信说明里写着这时退后台回来恢复不了，所以每次回来扔掉旧 context 新建一个，音乐从原来的位置接着放，解码过的音效重新解码（`rebuild()`）。
+  - 声音是分包 `audio/`，美术分包下完就开始下；manifest 读不到会每 5 秒再试，最多 6 次。
+  - playbackRate 限制在 (0, 2]，manifest 用 `platform.loadJson` 读，不用 TextDecoder。
+  - 控制台有 `[audio]` 开头的日志（建 context、开始运行、重建、恢复失败）。真机还是没声时：体验版右上角「···」→「开发调试」打开调试，重进后看 vConsole 里这些日志。
 
 ## 响度
 

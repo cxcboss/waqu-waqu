@@ -2,7 +2,7 @@ import { INK, P } from '../art/palette';
 import { craneBeam, damGate, featIcon, goose, gull, padLetter, rapidsFoam, thinCracks, whirlpool, type GateState } from '../art/river';
 import { K, TILE_H, boxSprite } from '../art/sprites';
 import { breakPieces, button, codeTag, ellipse, font, hit, panel, pressIn, pressOut, rich, richWidth, roundRect, segs, text, wrapText, type Rect, type Seg } from '../art/ui';
-import { approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
+import { alpha3, approach, clamp, easeOutBack, easeOutCubic, lerp, pick, shuffle, springOut } from '../engine/math';
 import type { LoopHandle } from '../engine/audio';
 import type { Data } from '../engine/telemetry';
 import type { Canvas, Ctx } from '../platform/types';
@@ -65,6 +65,18 @@ interface Puff { x: number; y: number; vx: number; vy: number; r: number; t: num
  * the nearest thing within reach; anywhere else the frog only bobs up and back down where it is.
  */
 interface Stick { id: number; x: number; y: number }
+
+/** A pull in progress: where the finger went down, where it is now, and where it has been lately. */
+interface Pull {
+  id: number;
+  sx: number;
+  sy: number;
+  x: number;
+  y: number;
+  t: number;
+  /** The last few positions, [ms, x, y], for `settled`. */
+  trail: [number, number, number][];
+}
 
 interface Frog {
   state: 'stand' | 'jump' | 'swim' | 'board';
@@ -185,6 +197,13 @@ const FOOT_WARN = 3.5;
 const FOOT_T = 5;
 /** A press made while the frog is still in the air is kept this long (seconds) and used on landing. */
 const BUFFER_T = 0.5;
+/**
+ * Letting go: a fingertip rolls as it lifts, and on a phone the point it last reports can be off by
+ * several pixels, enough to turn a jump. A pull that ends with the finger barely moving over its last
+ * SETTLE_MS goes where it was aimed before that (a flick that is still moving goes where it ended).
+ */
+const SETTLE_MS = 60;
+const SETTLE_PX = 24;
 /** Jumping off the road behind a truck: it blows exhaust, which slows the frog for a while. */
 const SMOG_T = 2.6;
 const SMOG_REACH = 0.7;
@@ -277,7 +296,7 @@ export class PlayScene implements Scene {
   private runT = 0;
   private frog: Frog;
   private bag: Order[] = [];
-  private aim: { id: number; sx: number; sy: number; x: number; y: number; t: number } | null = null;
+  private aim: Pull | null = null;
   private fx: Fx[] = [];
   private popups: Popup[] = [];
   private photos: Photo[] = [];
@@ -375,7 +394,7 @@ export class PlayScene implements Scene {
   /** Legs still aching after a charge held too long: no new pull until this runs out. */
   private tiredT = 0;
   /** A press that began in mid-air, and a jump released in mid-air: both go off when the frog lands. */
-  private early: { id: number; sx: number; sy: number; x: number; y: number; t: number } | null = null;
+  private early: Pull | null = null;
   private queued: { dx: number; dy: number; held: number; sx: number; sy: number; at: number } | null = null;
   /** The truck's lifeline, once a day: spent when the frog would have been swept off the screen. */
   private ropeUsed = 0;
@@ -3062,11 +3081,11 @@ export class PlayScene implements Scene {
       return;
     }
     if (f.state === 'stand' && !this.aim && this.tiredT <= 0 && !this.routeEnd) {
-      this.aim = { id, sx: x, sy: y, x, y, t: 0 };
+      this.aim = { id, sx: x, sy: y, x, y, t: 0, trail: [[this.game.platform.now(), x, y]] };
       this.exhaust();
     } else if (f.state === 'jump' && !this.aim && !this.early && !this.queued && !this.routeEnd) {
       // pressed while still in the air: the pull starts as soon as the frog lands
-      this.early = { id, sx: x, sy: y, x, y, t: 0 };
+      this.early = { id, sx: x, sy: y, x, y, t: 0, trail: [[this.game.platform.now(), x, y]] };
     }
   }
 
@@ -3092,15 +3111,24 @@ export class PlayScene implements Scene {
   }
 
   move(x: number, y: number, id: number) {
-    if (this.aim && this.aim.id === id) {
-      this.aim.x = x;
-      this.aim.y = y;
-    }
-    if (this.early && this.early.id === id) {
-      this.early.x = x;
-      this.early.y = y;
+    for (const p of [this.aim, this.early]) {
+      if (!p || p.id !== id) continue;
+      p.x = x;
+      p.y = y;
+      p.trail.push([this.game.platform.now(), x, y]);
+      if (p.trail.length > 12) p.trail.shift();
     }
     if (this.stick && this.stick.id === id) this.steer(x, y);
+  }
+
+  /** Where a pull ends up when the finger lifts: see SETTLE_MS. */
+  private settled(p: Pull): [number, number] {
+    const now = this.game.platform.now();
+    const tr = p.trail;
+    let k = tr.length - 1;
+    while (k > 0 && now - tr[k][0] < SETTLE_MS) k--;
+    const [, x, y] = tr[k];
+    return Math.hypot(p.x - x, p.y - y) < SETTLE_PX ? [x, y] : [p.x, p.y];
   }
 
   /** The swimming wheel, bottom right, in screen coordinates. */
@@ -3174,14 +3202,16 @@ export class PlayScene implements Scene {
       // let go before the frog is down: the jump is held back for the landing
       const e = this.early;
       this.early = null;
-      if (this.frog.state === 'stand') this.startJump(x - e.sx, y - e.sy, e.t, e.sx, e.sy);
-      else if (this.frog.state === 'jump') this.queued = { dx: x - e.sx, dy: y - e.sy, held: e.t, sx: e.sx, sy: e.sy, at: this.time };
+      const [ex, ey] = this.settled(e);
+      if (this.frog.state === 'stand') this.startJump(ex - e.sx, ey - e.sy, e.t, e.sx, e.sy);
+      else if (this.frog.state === 'jump') this.queued = { dx: ex - e.sx, dy: ey - e.sy, held: e.t, sx: e.sx, sy: e.sy, at: this.time };
       return;
     }
     if (!this.aim || this.aim.id !== id) return;
     const a = this.aim;
     this.aim = null;
-    if (this.frog.state === 'stand') this.startJump(x - a.sx, y - a.sy, a.t, a.sx, a.sy);
+    const [ax, ay] = this.settled(a);
+    if (this.frog.state === 'stand') this.startJump(ax - a.sx, ay - a.sy, a.t, a.sx, a.sy);
     this.stopCharge();
   }
 
@@ -3736,7 +3766,7 @@ export class PlayScene implements Scene {
     const pulse = this.reachPulse;
     ctx.save();
     ellipse(ctx, x, y, R, R * 0.82);
-    ctx.fillStyle = `rgba(251,247,238,${0.08 + pulse * 0.12})`;
+    ctx.fillStyle = `rgba(251,247,238,${alpha3(0.08 + pulse * 0.12)})`;
     ctx.fill();
     ctx.setLineDash([14, 10]);
     ctx.lineDashOffset = -this.time * 24;
@@ -5182,7 +5212,7 @@ export class PlayScene implements Scene {
     ctx.setLineDash([]);
     const g = ctx.createLinearGradient(0, top, 0, H);
     g.addColorStop(0, 'rgba(217,83,79,0)');
-    g.addColorStop(1, `rgba(217,83,79,${0.12 + this.warnK * 0.32})`);
+    g.addColorStop(1, `rgba(217,83,79,${alpha3(0.12 + this.warnK * 0.32)})`);
     ctx.globalAlpha = 1;
     ctx.fillStyle = g;
     ctx.fillRect(0, top, 750, H - top);
@@ -5190,7 +5220,7 @@ export class PlayScene implements Scene {
       // red edges creeping in from the sides
       for (const side of [0, 1]) {
         const sg = ctx.createLinearGradient(side ? 750 : 0, 0, side ? 690 : 60, 0);
-        sg.addColorStop(0, `rgba(217,83,79,${0.35 * this.warnK})`);
+        sg.addColorStop(0, `rgba(217,83,79,${alpha3(0.35 * this.warnK)})`);
         sg.addColorStop(1, 'rgba(217,83,79,0)');
         ctx.fillStyle = sg;
         ctx.fillRect(side ? 690 : 0, H * 0.45, 60, H * 0.55);
@@ -5724,9 +5754,12 @@ export class PlayScene implements Scene {
       holes.push({ x: f.x - 100, y: fy - 160, w: 200, h: 210, round: true });
       const t = this.aimTarget;
       if (t) holes.push({ x: t.x - t.rx - 30, y: this.sy(t.y) - t.ry - 44, w: (t.rx + 30) * 2, h: (t.ry + 44) * 2, round: true });
-      const zx = 470, zy = clamp(fy - 40, H * 0.4, H * 0.62);
+      // press in the middle of the screen, where there's room to pull every way; clear of the frog's ring
+      const zx = 375;
+      let zy = H * 0.48;
+      if (Math.abs(f.x - zx) < 190 && zy + 90 > fy - 160 && zy - 90 < fy + 50) zy = fy - 160 > H * 0.3 + 110 ? fy - 270 : fy + 160;
       holes.push({ x: zx - 90, y: zy - 90, w: 180, h: 180, round: true });
-      line = segs('在【任意空白处】按住往下拉');
+      line = segs('按住【屏幕中间】往下拉');
       sub = `松手就往反方向跳，拉得越长跳得越远；按住超过 ${FOOT_T} 秒脚会累`;
       capY = this.game.safeT + 100;
       if (!this.aim) hand = { kind: 'drag', x: zx, y: zy };
@@ -5770,7 +5803,7 @@ export class PlayScene implements Scene {
         ctx.closePath();
       }
     }
-    ctx.fillStyle = `rgba(36,28,22,${0.6 * a})`;
+    ctx.fillStyle = `rgba(36,28,22,${alpha3(0.6 * a)})`;
     ctx.fill('evenodd');
     // pulsing dashed outline around each hole
     ctx.setLineDash([14, 10]);

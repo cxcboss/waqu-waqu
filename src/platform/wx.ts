@@ -15,6 +15,10 @@ type WxTouchEvent = { changedTouches: WxTouch[] };
 const SUBPACKAGES = ['art', 'audio'] as const;
 type Sub = (typeof SUBPACKAGES)[number];
 
+/** Clear space kept along the bottom, in screen points: at least BOTTOM_MIN, and BOTTOM_AIR over the system's inset. */
+const BOTTOM_MIN = 24;
+const BOTTOM_AIR = 10;
+
 const SHARE_TITLE = '蛙趣蛙趣：小青蛙在河上跳来跳去送快递';
 
 const call = <T = any>(api: string, o: Record<string, unknown> = {}): Promise<T> =>
@@ -24,6 +28,7 @@ export class WxPlatform implements Platform {
   readonly kind = 'wx' as const;
   readonly canvas: Canvas;
   readonly longPressSave = false;
+  readonly audioRebuildOnShow: boolean;
   private fs = wx.getFileSystemManager();
   /** Art by sprite name -> its file in the package (written by the build: PNG, or JPEG for opaque art). */
   private art: Record<string, string> = {};
@@ -38,8 +43,15 @@ export class WxPlatform implements Platform {
     } catch {
       // no file list: every sprite falls back to its placeholder
     }
-    // start the art download straight away (it's what the loading screen waits on); sound waits for its turn
-    void this.sub('art');
+    // start the art download straight away (it's what the loading screen waits on), then the sound's
+    void this.sub('art')
+      .catch(() => undefined)
+      .then(() => this.sub('audio'))
+      .catch(() => undefined);
+    const d = wx.getDeviceInfo ? wx.getDeviceInfo() : wx.getSystemInfoSync();
+    const ios = /ios\s*([\d.]+)/i.exec(String(d.system || ''));
+    const [major, minor] = ios ? ios[1].split('.').map(Number) : [0, 0];
+    this.audioRebuildOnShow = !!ios && (major > 17 || (major === 17 && (minor || 0) >= 5));
     wx.showShareMenu?.({ menus: ['shareAppMessage', 'shareTimeline'] });
     wx.onShareAppMessage?.(() => ({ title: SHARE_TITLE, imageUrl: 'core/share.jpg' }));
     wx.onShareTimeline?.(() => ({ title: SHARE_TITLE, imageUrl: 'core/share.jpg' }));
@@ -94,7 +106,10 @@ export class WxPlatform implements Platform {
     const width = w.windowWidth, height = w.windowHeight;
     const safe = w.safeArea;
     let safeTop = safe ? safe.top : w.statusBarHeight || 0;
-    const safeBottom = safe ? Math.max(0, height - safe.bottom) : 0;
+    // The game runs to the very edge of the glass: keep what sits along the bottom clear of the screen's
+    // rounded corners and the home bar. Phones with a home bar report it (34 on iPhone); round-cornered
+    // ones without one report nothing, so there's a floor, and a little air above whatever is reported.
+    const safeBottom = Math.max(BOTTOM_MIN, (safe ? Math.max(0, height - safe.bottom) : 0) + BOTTOM_AIR);
     // WeChat's capsule (the ··· and close buttons) sits over the top right: keep the header under it
     try {
       const cap = wx.getMenuButtonBoundingClientRect();

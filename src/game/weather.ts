@@ -6,6 +6,7 @@ import { P } from '../art/palette';
 import { firework, lightning } from '../art/river';
 import { alpha } from '../art/kit';
 import type { Audio } from '../engine/audio';
+import { alpha3 } from '../engine/math';
 import type { Canvas, Ctx } from '../platform/types';
 import { TUNING, type Feats } from './config';
 
@@ -295,7 +296,7 @@ export class Weather {
     }
     if (this.flash > 0) {
       ctx.save();
-      ctx.fillStyle = `rgba(255,252,236,${this.flash * (this.f.storm ? 0.3 : 0.12)})`;
+      ctx.fillStyle = `rgba(255,252,236,${alpha3(this.flash * (this.f.storm ? 0.3 : 0.12))})`;
       ctx.fillRect(0, 0, 750, H);
       ctx.restore();
     }
@@ -312,7 +313,7 @@ export class Weather {
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.globalCompositeOperation = 'source-over';
     g.clearRect(0, 0, w, h);
-    g.fillStyle = `rgba(18,24,48,${a})`;
+    g.fillStyle = `rgba(18,24,48,${alpha3(a)})`;
     g.fillRect(0, 0, w, h);
     g.globalCompositeOperation = 'destination-out';
     for (const l of lights) {
@@ -354,7 +355,7 @@ export class Weather {
       const fx = x + Math.cos(ph) * (26 + i * 8), fy = y - 26 + Math.sin(ph * 1.3) * 14 - i * 6;
       const on = 0.55 + 0.45 * Math.sin(this.t * 3 + seed + i * 1.9);
       const gr = ctx.createRadialGradient(fx, fy, 0, fx, fy, 12);
-      gr.addColorStop(0, `rgba(246,240,140,${0.9 * on})`);
+      gr.addColorStop(0, `rgba(246,240,140,${alpha3(0.9 * on)})`);
       gr.addColorStop(1, 'rgba(246,240,140,0)');
       ctx.fillStyle = gr;
       ctx.beginPath();

@@ -100,6 +100,10 @@ const MAX_RATE = 2; // the WeChat context takes 0 < playbackRate <= 2
  * Mix: effects → sfx bus; ambience → amb bus; music → music bus → duck; music and ambience then share the
  * underwater low-pass; everything ends in a limiter so stacked sounds can't clip. Works without AudioParam
  * automation (not documented for WeChat): fades are then stepped from `update()` each frame.
+ *
+ * In the mini game (see docs/audio.md, 微信小游戏): no automation, sound goes out whatever the context's `state` says,
+ * the context is resumed as soon as it's made and on every return, and on iPhones with iOS 17.5+ it's made afresh
+ * each time the game comes back from the background.
  */
 export class Audio {
   private set: AudioSettings = { music: true, sfx: true, musicVolume: 1, sfxVolume: 1 };
@@ -122,6 +126,14 @@ export class Audio {
   private lastPlay = new Map<string, number>();
   private base = 'audio/';
   private ready = false;
+  /** WeChat's context (see the class comment). */
+  private readonly wx: boolean;
+  /** The game is in the background (or the system took the sound): nothing plays. */
+  private hidden = false;
+  /** resume() has gone through at least once on this context. */
+  private woke = false;
+  /** Counts contexts, so files decoded for one thrown away don't land in the next. */
+  private gen = 0;
 
   private music: Track | null = null;
   private fading: Track[] = [];
@@ -140,7 +152,9 @@ export class Audio {
   private amb = new Map<string, { loop: LoopHandle; next: number; def: SoundDef }>();
   private wantAmb: string[] = [];
 
-  constructor(private platform: Platform) {}
+  constructor(private platform: Platform) {
+    this.wx = platform.kind === 'wx';
+  }
 
   /** Back-compat: true while either music or effects are on. */
   get enabled() {
@@ -159,9 +173,12 @@ export class Audio {
     if (this.ctx) return;
     const ctx = (this.ctx = this.platform.createAudioContext());
     if (!ctx) return;
+    this.woke = false;
+    console.info('[audio] context', ctx.state, ctx.sampleRate);
     const probe = ctx.createGain();
     try {
-      this.auto = typeof probe.gain.setTargetAtTime === 'function' && typeof probe.gain.cancelScheduledValues === 'function';
+      // WeChat documents only `value` on its AudioParam: fades are stepped by hand there
+      this.auto = !this.wx && typeof probe.gain.setTargetAtTime === 'function' && typeof probe.gain.cancelScheduledValues === 'function';
       if (this.auto) probe.gain.setTargetAtTime(1, ctx.currentTime, 0.1);
     } catch {
       this.auto = false;
@@ -198,7 +215,7 @@ export class Audio {
       if (typeof ctx.createBiquadFilter === 'function') {
         this.under = ctx.createBiquadFilter();
         this.under.type = 'lowpass';
-        this.under.frequency.value = 20000;
+        this.under.frequency.value = this.wet ? 650 : 20000;
         this.under.Q.value = 0.5;
         this.under.connect(this.master);
         world = this.under;
@@ -209,6 +226,8 @@ export class Audio {
     this.duckGain.connect(world);
     this.ambBus.connect(world);
     this.applySettings(true);
+    // WeChat's own notes: resume a new context once straight away
+    if (this.wx) this.wake();
   }
 
   /** Fetches the manifest and decodes the effects marked `preload`. Never throws. */
@@ -216,19 +235,27 @@ export class Audio {
     this.base = base;
     this.init();
     if (!this.ctx) return;
-    try {
-      const json = await this.platform.loadJson<{ sounds: Record<string, SoundDef> }>(base + 'manifest.json');
-      this.defs = json.sounds;
-    } catch (e) {
-      console.warn('audio manifest failed', e);
-      return;
+    // a bad connection can fail the download (the mini game's sound is a subpackage): keep trying for a while
+    for (let i = 0; ; i++) {
+      try {
+        const json = await this.platform.loadJson<{ sounds: Record<string, SoundDef> }>(base + 'manifest.json');
+        this.defs = json.sounds;
+        break;
+      } catch (e) {
+        console.warn('audio manifest failed', e);
+        if (i >= 5) return;
+        await new Promise((r) => setTimeout(r, 5000));
+      }
     }
     this.ready = true;
     // the scene on screen may already want its music and ambience
     if (this.wantMusic) this.setMusic(this.wantMusic);
     if (this.wantAmb.length) this.setAmbience(this.wantAmb);
-    const ids = Object.keys(this.defs).filter((id) => this.defs[id].preload);
-    // a few at a time, so the sounds don't crowd out the pictures the first screen is still fetching
+    await this.decodeAll(Object.keys(this.defs).filter((id) => this.defs[id].preload));
+  }
+
+  /** Decodes these sounds a few at a time, so they don't crowd out the pictures still being fetched. */
+  private async decodeAll(ids: string[]) {
     for (let i = 0; i < ids.length; i += 3) await Promise.all(ids.slice(i, i + 3).map((id) => this.buffer(id)));
   }
 
@@ -254,10 +281,13 @@ export class Audio {
     const def = this.defs[key];
     if (!def || !this.ctx) return Promise.resolve(null);
     const ctx = this.ctx;
+    const gen = this.gen;
     const p = this.platform
       .loadBinary(this.base + def.file)
       .then((data) => decode(ctx, data))
       .then((buf) => {
+        // made for a context that has since been replaced
+        if (gen !== this.gen) return null;
         this.buffers.set(key, buf);
         this.loading.delete(key);
         this.touch(key);
@@ -265,7 +295,7 @@ export class Audio {
       })
       .catch((e) => {
         console.warn('audio failed', key, e);
-        this.loading.delete(key);
+        if (gen === this.gen) this.loading.delete(key);
         return null;
       });
     this.loading.set(key, p);
@@ -295,21 +325,90 @@ export class Audio {
   unlock() {
     this.init();
     const ctx = this.ctx;
-    if (ctx && ctx.state !== 'running') ctx.resume().then(() => this.kick(), () => undefined);
+    if (ctx && (ctx.state !== 'running' || !this.woke)) this.wake();
   }
 
+  /** Off to the background, or the system has taken the sound (a call, an alarm). */
   suspend() {
-    this.ctx?.suspend().catch(() => undefined);
+    this.hidden = true;
+    try {
+      void this.ctx?.suspend()?.catch(() => undefined);
+    } catch {
+      /* closed */
+    }
   }
 
   /** Back from the background, a phone call or Siri ('interrupted' on iPhone). */
   resume() {
+    const was = this.hidden;
+    this.hidden = false;
+    if (!this.ctx) return;
+    if (was && this.platform.audioRebuildOnShow) this.rebuild();
+    // WeChat resumes on every return whatever the state says; a browser only when it's stopped
+    else if (this.wx || this.ctx.state !== 'running') this.wake();
+  }
+
+  /** Asks the context to run, then starts what was waiting for it. */
+  private wake() {
     const ctx = this.ctx;
-    if (ctx && ctx.state !== 'running') ctx.resume().then(() => this.kick(), () => undefined);
+    if (!ctx) return;
+    const done = () => {
+      if (ctx !== this.ctx) return;
+      if (!this.woke) console.info('[audio] running', ctx.state);
+      this.woke = true;
+      this.kick();
+    };
+    try {
+      const r = ctx.resume() as Promise<void> | undefined;
+      if (r && typeof r.then === 'function') r.then(done, (e) => console.warn('[audio] resume failed', e));
+      else done();
+    } catch (e) {
+      console.warn('[audio] resume failed', e);
+    }
+  }
+
+  /**
+   * Throws the context away and makes a new one: the music carries on from where it was, and the effects
+   * that were decoded are decoded again (WeChat's buffers may belong to the context that made them).
+   */
+  private rebuild() {
+    const old = this.ctx;
+    if (!old) return;
+    console.info('[audio] new context');
+    const m = this.music;
+    if (m && !this.paused) this.pos.set(m.file, this.position(m));
+    const effects = [...this.buffers.keys()].filter((k) => this.defs[k]?.kind !== 'music' && this.defs[k]?.kind !== 'amb');
+    this.gen++;
+    this.music = null;
+    this.fading = [];
+    this.voices = [];
+    this.jingles = [];
+    this.amb.clear();
+    this.ramps.clear();
+    this.buffers.clear();
+    this.loading.clear();
+    this.used = [];
+    this.lastPlay.clear();
+    this.ctx = this.master = this.sfxBus = this.ambBus = this.musicBus = this.duckGain = this.under = null;
+    try {
+      void old.close()?.catch(() => undefined);
+    } catch {
+      /* already closed */
+    }
+    this.init();
+    if (!this.ctx) return;
+    this.applyDuck();
+    // init() already resumed the mini game's context; a browser's needs it here
+    if (!this.wx) this.wake();
+    void this.decodeAll(effects);
   }
 
   private get live() {
-    return !!this.ctx && this.ready && this.ctx.state === 'running';
+    const ctx = this.ctx;
+    if (!ctx || !this.ready || this.hidden) return false;
+    // the mini game plays whatever the state says (short of closed): a context that is really stopped gets
+    // resumed on the next touch anyway, while holding sound back on a state that's wrong would lose it all
+    return ctx.state === 'running' || (this.wx && ctx.state !== 'closed');
   }
 
   /** Steps the fades when the context can't automate them, and drops ambience one-shots in. Call every frame. */
@@ -346,7 +445,8 @@ export class Audio {
   private ramp(param: AudioParam, to: number, tc: number) {
     // a bad number would make the automation throw and switch every later fade to the fallback: ignore it
     if (!Number.isFinite(to) || !Number.isFinite(tc)) return;
-    if (this.auto && this.ctx) {
+    // a time constant of 0 is a jump, which some contexts' setTargetAtTime gets wrong (NaN): just set it
+    if (this.auto && this.ctx && tc > 0) {
       const now = this.ctx.currentTime;
       try {
         param.cancelScheduledValues(now);
@@ -358,6 +458,13 @@ export class Audio {
       }
     }
     if (tc <= 0) {
+      if (this.auto && this.ctx) {
+        try {
+          param.cancelScheduledValues(this.ctx.currentTime);
+        } catch {
+          /* nothing scheduled */
+        }
+      }
       param.value = to;
       this.ramps.delete(param);
     } else this.ramps.set(param, { to, tc });
@@ -613,8 +720,12 @@ export class Audio {
         if (stopped) return;
         stopped = true;
         this.ramp(g.gain, 0, 0.03);
-        osc.stop(ctx.currentTime + 0.2);
-        sub.stop(ctx.currentTime + 0.2);
+        try {
+          osc.stop(ctx.currentTime + 0.2);
+          sub.stop(ctx.currentTime + 0.2);
+        } catch {
+          /* its context has been replaced */
+        }
       },
     };
   }

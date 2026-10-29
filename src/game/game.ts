@@ -3,6 +3,7 @@ import { P } from '../art/palette';
 import { SpriteBank } from '../art/sprites';
 import { ellipse, panel, roundRect, text } from '../art/ui';
 import { Audio } from '../engine/audio';
+import { alpha3 } from '../engine/math';
 import { Telemetry, type TelemetryOptions } from '../engine/telemetry';
 import type { Ctx, Platform } from '../platform/types';
 import { Album } from './album';
@@ -337,8 +338,11 @@ export class Game {
     if (this.waiting) this.renderWaiting(ctx);
     if (this.fade) {
       const k = Math.min(1, this.fade.t / FADE);
-      ctx.fillStyle = `rgba(28,22,18,${this.fade.next ? k : 1 - k})`;
-      ctx.fillRect(0, 0, this.W, this.H);
+      const a = alpha3(this.fade.next ? k : 1 - k);
+      if (a > 0) {
+        ctx.fillStyle = `rgba(28,22,18,${a})`;
+        ctx.fillRect(0, 0, this.W, this.H);
+      }
     }
     this.platform.requestFrame(this.frame);
   };

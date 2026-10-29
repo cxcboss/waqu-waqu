@@ -63,6 +63,11 @@ export interface Platform {
 
   /** Web Audio compatible context, or null when audio is unavailable. */
   createAudioContext(): AudioContext | null;
+  /**
+   * The audio context doesn't come back from the background and has to be made again each time the game
+   * is back (WeChat on iPhone with iOS 17.5 or later, by WeChat's audio notes).
+   */
+  readonly audioRebuildOnShow: boolean;
 
   vibrate(ms: number): void;
   /**
