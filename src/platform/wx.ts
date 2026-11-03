@@ -20,7 +20,7 @@ type Sub = (typeof SUBPACKAGES)[number];
 const BOTTOM_MIN = 24;
 const BOTTOM_AIR = 10;
 
-const SHARE_TITLE = '蛙趣蛙趣：小青蛙在河上跳来跳去送快递';
+const SHARE_TITLE = '蛙趣送包裹：小青蛙在河上跳来跳去送快递';
 
 const call = <T = any>(api: string, o: Record<string, unknown> = {}): Promise<T> =>
   new Promise((resolve, reject) => wx[api]({ ...o, success: resolve, fail: reject }));
@@ -63,7 +63,7 @@ export class WxPlatform implements Platform {
     const um = wx.getUpdateManager?.();
     um?.onUpdateReady(() => {
       wx.showModal({
-        title: '有新版本', content: '蛙趣蛙趣更新好了，重新打开就能玩新版。', confirmText: '重新打开', cancelText: '等会儿',
+        title: '有新版本', content: '蛙趣送包裹更新好了，重新打开就能玩新版。', confirmText: '重新打开', cancelText: '等会儿',
         success: (r: { confirm: boolean }) => r.confirm && um.applyUpdate(),
       });
     });
@@ -380,7 +380,7 @@ export class WxPlatform implements Platform {
       if (!/auth|deny|denied|privacy/i.test(msg)) return 'failed';
       // said no before: the switch is in the settings page, which can be opened from a tap in a dialog
       wx.showModal({
-        title: '想存进相册', content: '要先允许蛙趣蛙趣「保存到相册」，打开设置就能改。', confirmText: '去设置', cancelText: '算了',
+        title: '想存进相册', content: '要先允许蛙趣送包裹「保存到相册」，打开设置就能改。', confirmText: '去设置', cancelText: '算了',
         success: (r: { confirm: boolean }) => r.confirm && wx.openSetting?.({}),
       });
       return 'denied';
