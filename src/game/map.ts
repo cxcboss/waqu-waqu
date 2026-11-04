@@ -160,6 +160,14 @@ export class MapScene implements Scene {
     }
   }
 
+  escape() {
+    this.drag = null;
+    this.pressed = null;
+    this.game.tm.log('map_back', { sel: this.sel, sec: Math.round(this.t) });
+    this.game.audio.play('ui_back');
+    this.game.go(new HubScene(this.game));
+  }
+
   private select(day: number) {
     const au = this.game.audio;
     if (day > this.unlocked) {

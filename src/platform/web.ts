@@ -6,6 +6,7 @@ const MIN_ASPECT = 1334 / 750;
 export class WebPlatform implements Platform {
   readonly kind = 'web' as const;
   readonly canvas: Canvas;
+  readonly longPressSave = true;
   private probe: HTMLElement | null;
   private touch: ((kind: TouchKind, t: TouchPoint) => void) | null = null;
   /** Encoded pictures, so a save can start right inside the tap. */
@@ -85,6 +86,12 @@ export class WebPlatform implements Platform {
       e.preventDefault();
       cb(e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY);
     }, { passive: false });
+  }
+
+  onKey(cb: (key: string) => void): void {
+    document.addEventListener('keydown', (e) => {
+      if (!e.repeat) cb(e.key);
+    });
   }
 
   onVisibility(cb: (visible: boolean) => void): void {

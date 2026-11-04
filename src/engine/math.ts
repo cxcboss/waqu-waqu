@@ -1,4 +1,9 @@
 export const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
+/**
+ * An alpha for an rgba() string: 0–1 to three places. A raw number can come out as 1.1e-16, which the
+ * mini game's canvas rejects, keeping the last fill colour instead (a one-frame flash over the screen).
+ */
+export const alpha3 = (a: number) => (a > 0.0005 ? (a < 1 ? Math.round(a * 1000) / 1000 : 1) : 0);
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 export const dist = (x1: number, y1: number, x2: number, y2: number) => Math.hypot(x2 - x1, y2 - y1);
 /** Moves `v` toward `target` by an exponential smoothing rate (per second). */

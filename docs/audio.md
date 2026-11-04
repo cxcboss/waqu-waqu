@@ -1,6 +1,6 @@
 # 音效和音乐
 
-游戏里的所有声音都在 `public/audio/`：`manifest.json` 是清单，`sfx/`、`amb/`、`bgm/` 是单声道 mp3，`CREDITS.md` 是来源和许可证（第三方全是 CC0，其余是本项目用代码合成的）。播放器是 `src/engine/audio.ts`，哪个场景、哪一天放什么在 `src/game/sound.ts`。
+游戏里的所有声音都在 `public/audio/`：`manifest.json` 是清单，`sfx/`、`amb/`、`bgm/` 是单声道 mp3，`CREDITS.md` 是来源和许可证（第三方全是 CC0，其余是本项目用代码合成的）。播放器是 `src/engine/audio.ts`（网页，Web Audio）和 `src/engine/audio-streams.ts`（微信小游戏，系统播放器），哪个场景、哪一天放什么在 `src/game/sound.ts`。
 
 ## 播放器（src/engine/audio.ts）
 
@@ -12,7 +12,21 @@
 - 同一个 id 在几十毫秒内重复播放会被跳过（`gap`），同一个 id 同时最多几份（`voices`），总共最多 28 个声音。
 - 环境声：`audio.setAmbience([...])` 换一组循环，带 `spots` 的会自己随机插入单发声音（雨里打雷、港口海鸥）。
 - 居民说话：`say(audio, 物种, 心情)` 用几个音节拼一句「动物语」，音高和语速按物种（sound.ts 的 VOICES）。
-- 微信小游戏：不依赖 AudioParam 自动化（检测不到就每帧在 `update()` 里手动渐变），playbackRate 限制在 (0, 2]，manifest 用 `platform.loadJson` 读，不用 TextDecoder。
+- 微信小游戏：不用这个 Web Audio 播放器，所有声音走 `src/engine/audio-streams.ts` 的 `StreamAudio`（`createAudio()` 按平台选，见下一节）。
+
+## 微信小游戏（src/engine/audio-streams.ts）
+
+2026-10-29 真机试玩（OPPO PKB110，安卓 17）：1.0.0「声音时有时无」，1.0.1「破声、然后没声、闪退」，1.0.2「卡声、破声、卡住闪退」，1.0.3（音乐改系统播放器、其余还是 WebAudio）「不卡了，但声音全部异常」。所以 1.0.4 起小游戏完全不用 WebAudio，照微信音频指南和给微信做适配的引擎（Cocos Creator 在微信上全部声音都用 InnerAudioContext）的做法：
+
+- 每个声音都是 `platform.createStream`（`wx.createInnerAudioContext()`，默认的系统播放器，不开 `useWebAudioImplement`），系统直接读文件、自己混音，什么都不解码进内存。
+- 音乐、环境声、卡车引擎、水泡是「床」：每个文件一个循环播放器，淡入淡出、插曲压低、水下压低、开关和音量都在 `update()` 里算好设 `volume`（变化时最多每 0.08 秒设一次，每次至少差 0.02，每次设都是一次跨到系统的调用）。淡出完就 `pause()` 留着（最多留 4 个不在放的），回到这首歌从停的地方接着放，不用 `seek`。
+- 音效：每个文件一小组播放器反复用（官方建议同一个声音复用实例），播完 `stop()` 回到开头等下次；同一个音效最多 3 份（manifest 的 `voices`），总共留 16 个，超了把最久没用的 `destroy()`。
+- 同时发声最多 9 个（安卓最多同时放 10 个）：音效最多 5 个，床多的时候更少，满了停掉最早的那个（插曲不停）。环境声最多两层（初夏的蛙鸣那层不放）。
+- 没有的东西：变速和音调（播放器只认几档速度，而且变速不变调）、低通（水下只压低音乐、闷声变体只是更轻）、蓄力的合成哼声；角色说话还是一串音节，但每个物种音高一样。
+- 循环：播放器只会整首循环，所以 `scripts/build_wx.py` 打包时用 ffmpeg 把每个循环的声音（音乐、环境声、引擎、水泡，共 22 个）剪成正好一个循环，`loopAt` 改成 `[0, 时长]`；写成文件而不是管道输出，这样 mp3 头里有编码延迟和补齐（无缝循环要用）。
+- 前后台：切到后台（`onHide`）床全部 `pause()`、音效全停、延后播的取消；回前台和通话结束（`onAudioInterruptionEnd`）床全部 `play()`（微信说明要求）。触摸时如果某个床说自己停了、而且离上次触摸（至少 3 秒）位置没动，就再 `play()` 一次。
+- 实时日志心跳里的声音状态：`music:曲名@秒数 v音量`、`amb:` 在放的环境声、`beds在放/总数`、`shots在放/总数`。播放器出错会记 `stream 文件名 error`（最多 20 行）。
+- 1.0.1～1.0.3 用 WebAudio 时踩过的坑（都已经不相关，留作参考）：回前台关掉旧 context 新建导致闪退；播完的节点不 `disconnect()` 会一直留着；`getChannelData` 每次拷整段数据；整首音乐解码一首约 22 MB。
 
 ## 响度
 

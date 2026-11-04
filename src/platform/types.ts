@@ -1,18 +1,39 @@
 // Platform adapter: the only layer that touches browser or wx.* APIs.
 // Game code depends on this interface; web.ts implements it for browsers,
-// and a wx.ts implementation will be added for the WeChat mini game build.
+// wx.ts for the WeChat mini game (built by scripts/build_wx.py).
 
 export type Canvas = HTMLCanvasElement;
 export type Ctx = CanvasRenderingContext2D;
 export type ImageSource = CanvasImageSource & { width: number; height: number };
 
 export type TouchKind = 'start' | 'move' | 'end' | 'cancel';
-export type SaveResult = 'shared' | 'downloaded' | 'longpress' | 'cancelled' | 'failed';
+/** 'album': it's in the phone's photos (WeChat); 'denied': the player hasn't let the game save there. */
+export type SaveResult = 'shared' | 'downloaded' | 'album' | 'longpress' | 'cancelled' | 'denied' | 'failed';
 /** Pointer position in CSS pixels relative to the main canvas. */
 export interface TouchPoint {
   id: number;
   x: number;
   y: number;
+}
+
+/**
+ * A sound file on the system's own player (the mini game's InnerAudioContext): nothing decoded into memory, each
+ * one mixed by the system. The mini game plays every sound this way (see docs/audio.md, 微信小游戏).
+ */
+export interface Stream {
+  /** Starts, or carries on after `pause`; after `stop` (or the end) it starts over. */
+  play(): void;
+  pause(): void;
+  /** Stops and goes back to the top. */
+  stop(): void;
+  /** Not making sound right now (not started yet, paused, stopped or done). */
+  readonly paused: boolean;
+  /** Seconds into the file. */
+  readonly time: number;
+  /** 0–1. */
+  volume: number;
+  /** Lets go of the player for good. */
+  destroy(): void;
 }
 
 export interface ScreenInfo {
@@ -29,12 +50,16 @@ export interface ScreenInfo {
 export interface Platform {
   readonly kind: 'web' | 'wx';
   readonly canvas: Canvas;
+  /** Pictures laid over the game with `showImage` can be long-pressed and saved (browsers; not the mini game). */
+  readonly longPressSave: boolean;
   /** Measures the screen and sizes the main canvas to match. */
   screen(): ScreenInfo;
   onResize(cb: () => void): void;
   onTouch(cb: (kind: TouchKind, t: TouchPoint) => void): void;
-  /** Mouse wheel / trackpad scroll, in screen pixels (web only). */
+  /** Mouse wheel / trackpad scroll, in screen pixels (a browser, or WeChat on a computer). */
   onWheel?(cb: (dy: number) => void): void;
+  /** A key pressed (KeyboardEvent.key names; held keys don't repeat). Only with a keyboard: a browser, or WeChat on a computer. */
+  onKey?(cb: (key: string) => void): void;
   onVisibility(cb: (visible: boolean) => void): void;
   /**
    * Every event the system counts as a user gesture (on phones that's the finger lifting, not landing),
@@ -60,6 +85,21 @@ export interface Platform {
 
   /** Web Audio compatible context, or null when audio is unavailable. */
   createAudioContext(): AudioContext | null;
+  /**
+   * A packaged sound file on the system's player instead of Web Audio (the mini game, where all sound goes this way:
+   * WeChat's notes and the engines built for it play sound with InnerAudioContext). `onEnd` is called when a sound
+   * that doesn't loop has played to its end. Not on the web.
+   */
+  createStream?(url: string, o: { loop: boolean; volume: number; onEnd?: () => void }): Stream;
+  /** Hints that now is a good time to collect garbage (between scenes). */
+  gc?(): void;
+  /** The system is short of memory: let go of whatever can be fetched or drawn again. */
+  onMemoryWarning?(cb: () => void): void;
+  /**
+   * A line for the developer's remote log (the mini game's 实时日志 in the WeChat admin: WE分析 → 性能质量 →
+   * 实时日志), for problems that only show on players' phones. Keep it to a handful of lines a minute.
+   */
+  log?(level: 'info' | 'warn' | 'error', msg: string): void;
 
   vibrate(ms: number): void;
   /**
@@ -76,6 +116,11 @@ export interface Platform {
    */
   showImage(canvas: Canvas | null, rect?: { x: number; y: number; w: number; h: number }): void;
   share(opts: { title: string; canvas?: Canvas }): void;
+  /**
+   * WeChat's own game club button (游戏圈, wx.createGameClubButton) over the game at `rect` (CSS pixels from the
+   * game canvas' top-left); null hides it. Called every frame, acts only on a change. Mini game only.
+   */
+  gameClub?(rect: { x: number; y: number; w: number; h: number } | null): void;
   /** A small JPEG of `canvas` as a data URL, for keeping photos in storage; null if it can't be made. */
   encodeImage(canvas: Canvas, quality: number): string | null;
   /** Asks the player to type a short text (the frog's name); null when cancelled. */

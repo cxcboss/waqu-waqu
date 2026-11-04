@@ -2,7 +2,7 @@
 // (spring willows, the summer lotus pond, the rainy gorge, autumn maples, the frozen river, the new-year
 // harbour, early spring again). The map is long, so it's baked in tiles of TILE units as they scroll in.
 // Map units: x across the 750-wide screen, u up the river from day 1's stop (u = 0).
-import { alpha, blobEllipse, boxPath, contactShadow, drawBaked, grainRect, inked, jit, jit01, mix, polyPath, puffPath, TOD, tuft } from '../art/kit';
+import { alpha, blobEllipse, boxPath, contactShadow, drawBakedScreen, grainRect, inked, jit, jit01, mix, polyPath, puffPath, TOD, tuft } from '../art/kit';
 import { INK, P } from '../art/palette';
 import { bush, flowerClump, lilyPad, pine, reeds, rock, roundTree, willow } from '../art/village';
 import type { Ctx } from '../platform/types';
@@ -110,7 +110,7 @@ export class RiverLine {
 export function drawMapScenery(ctx: Ctx, line: RiverLine, stops: readonly { x: number }[], y0: number, uBot: number, uTop: number) {
   const k0 = Math.floor(uBot / TILE), k1 = Math.floor(uTop / TILE);
   for (let k = k0; k <= k1; k++) {
-    drawBaked(ctx, `maptile:${line.pts.length}:${k}`, 0, y0 - (k + 1) * TILE, [0, -1, 750, TILE + 1], (c) => paintTile(c, k, line, stops));
+    drawBakedScreen(ctx, `maptile:${k}`, `${line.pts.length}`, 0, y0 - (k + 1) * TILE, [0, -1, 750, TILE + 1], (c) => paintTile(c, k, line, stops));
   }
 }
 

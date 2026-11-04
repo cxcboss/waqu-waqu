@@ -99,6 +99,7 @@ export class ArtboardScene implements Scene {
     this.taps.clear();
     this.ctaps.clear();
     this.junk.clear();
+    Kit.screenExact(false);
     // the page: the hour's sky fading into its meadow, with paper grain over it
     const grd = ctx.createLinearGradient(0, 0, 0, H);
     grd.addColorStop(0, tod.skyTop);
@@ -145,6 +146,7 @@ export class ArtboardScene implements Scene {
       pill(ctx, this.taps, `tod${i}`, 330 + i * 102, top + 22, 94, 52, Kit.TOD[n].label, { size: 22, fill: on ? P.orange : P.cream, color: on ? P.white : INK });
     });
     this.toast.render(ctx, top + barH + 20);
+    Kit.screenExact(true);
   }
 
   /** Section title on its own little paper strip. */

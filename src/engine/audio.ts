@@ -1,4 +1,5 @@
 import type { Platform } from '../platform/types';
+import { StreamAudio } from './audio-streams';
 
 /**
  * How a sound is mixed (see docs/audio.md): music and ambience beds, ordinary effects, interface clicks,
@@ -7,7 +8,7 @@ import type { Platform } from '../platform/types';
 export type SoundKind = 'music' | 'amb' | 'sfx' | 'ui' | 'voice' | 'warn' | 'jingle';
 
 /** One entry of public/audio/manifest.json (written by tools/audio/build.py). */
-interface SoundDef {
+export interface SoundDef {
   file: string;
   /** Plays another entry's file with its own volume, rate and filter: a variant that costs no download. */
   of?: string;
@@ -51,12 +52,58 @@ export interface AudioSettings {
   sfxVolume: number;
 }
 
-/** A playing source and what it needs to be stopped and counted. */
+export type PlayOptions = { rate?: number; volume?: number; jitter?: boolean; delay?: number };
+export type BabbleOptions = { pitch?: number; pace?: number; count?: number; bend?: number; volume?: number; delay?: number };
+export type LoopOptions = { volume?: number; rate?: number; fadeIn?: number; once?: boolean };
+
+/**
+ * What the game asks of its sound. In a browser that's Web Audio (`WebAudio` below); in the mini game every sound
+ * goes through the system's own players instead (`StreamAudio`, see docs/audio.md, 微信小游戏).
+ */
+export interface Audio {
+  readonly settings: Readonly<AudioSettings>;
+  /** Gets ready to play, without fetching anything (so the first tap can already unlock it). */
+  init(): void;
+  /** Fetches the manifest (and decodes the effects marked `preload`, on Web Audio). Never throws. */
+  load(base?: string): Promise<void>;
+  /** Gets sounds a scene is about to need ready. */
+  preload(ids: string[]): void;
+  /** Short of memory: lets go of whatever can be fetched again. */
+  trim(): void;
+  /** From inside a touch handler. */
+  unlock(): void;
+  /** Off to the background, or the system has taken the sound. */
+  suspend(): void;
+  resume(): void;
+  /** Starts the wanted music and ambience if they aren't playing. */
+  kick(): void;
+  /** One line for the game's heartbeat in the remote log. */
+  diag(): string;
+  /** Every frame. */
+  update(dt: number): void;
+  configure(s: Partial<AudioSettings>): void;
+  play(id: string, o?: PlayOptions): SoundHandle | null;
+  loop(id: string, o?: LoopOptions): LoopHandle | null;
+  babble(ids: string[], o?: BabbleOptions): void;
+  tone(volume?: number): { setPitch(hz: number): void; stop(): void } | null;
+  setMusic(id: string | null, o?: { restart?: boolean; fade?: number }): void;
+  pauseMusic(): void;
+  resumeMusic(): void;
+  underwater(on: boolean): void;
+  setAmbience(ids: string[] | string | null): void;
+}
+
+/** The sound for this platform: the system's players where it has them (the mini game), Web Audio elsewhere. */
+export function createAudio(platform: Platform): Audio {
+  return platform.createStream ? new StreamAudio(platform) : new WebAudio(platform);
+}
+
+/** A playing source and what it needs to be stopped, counted and let go of. */
 interface Voice {
   id: string;
   src: AudioBufferSourceNode;
   gain: GainNode;
-  /** Context time when it's done (Infinity for loops). */
+  /** Context time when it's done (sooner once stopped): its nodes are disconnected after that. */
   end: number;
   stopped: boolean;
 }
@@ -90,18 +137,19 @@ const LATE = 0.18;
 /** Music level while a jingle plays over it. */
 const DUCK_JINGLE = 0.35;
 const DUCK_ON = 0.4;
-const MAX_RATE = 2; // the WeChat context takes 0 < playbackRate <= 2
+const MAX_RATE = 2;
 
 /**
- * Manifest-driven sound player on Web Audio (browser AudioContext, or wx.createWebAudioContext in the
- * mini game). Only the effects marked `preload` are decoded up front; everything else, music and ambience
- * included, is fetched when a scene first asks for it, and only the last couple of tracks stay decoded.
+ * Manifest-driven sound player on Web Audio (the browser's AudioContext). Only the effects marked `preload` are
+ * decoded up front; everything else, music and ambience included, is fetched when a scene first asks for it, and
+ * only the last couple of tracks stay decoded.
  *
  * Mix: effects → sfx bus; ambience → amb bus; music → music bus → duck; music and ambience then share the
  * underwater low-pass; everything ends in a limiter so stacked sounds can't clip. Works without AudioParam
- * automation (not documented for WeChat): fades are then stepped from `update()` each frame.
+ * automation too: fades are then stepped from `update()` each frame. Every source is disconnected once it has
+ * finished. (The mini game doesn't use this: see `StreamAudio`.)
  */
-export class Audio {
+export class WebAudio implements Audio {
   private set: AudioSettings = { music: true, sfx: true, musicVolume: 1, sfxVolume: 1 };
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -122,6 +170,18 @@ export class Audio {
   private lastPlay = new Map<string, number>();
   private base = 'audio/';
   private ready = false;
+  /** The game is in the background (or the system took the sound): nothing plays. */
+  private hidden = false;
+  /** resume() has gone through at least once on this context. */
+  private woke = false;
+  /** How many times resume() has been asked for. */
+  private wakes = 0;
+  /** Lines for the remote log about failed decodes, so a bad file can't fill it. */
+  private failNotes = 0;
+  /** Sources started and not yet disconnected (for the remote log: it should stay small). */
+  private alive = 0;
+  /** Loops and tracks that have been told to stop: their nodes are let go of after `at` (context time). */
+  private trash: { at: number; nodes: AudioNode[] }[] = [];
 
   private music: Track | null = null;
   private fading: Track[] = [];
@@ -159,6 +219,8 @@ export class Audio {
     if (this.ctx) return;
     const ctx = (this.ctx = this.platform.createAudioContext());
     if (!ctx) return;
+    this.woke = false;
+    this.note('info', `context ${ctx.state} ${ctx.sampleRate}Hz`);
     const probe = ctx.createGain();
     try {
       this.auto = typeof probe.gain.setTargetAtTime === 'function' && typeof probe.gain.cancelScheduledValues === 'function';
@@ -198,7 +260,7 @@ export class Audio {
       if (typeof ctx.createBiquadFilter === 'function') {
         this.under = ctx.createBiquadFilter();
         this.under.type = 'lowpass';
-        this.under.frequency.value = 20000;
+        this.under.frequency.value = this.wet ? 650 : 20000;
         this.under.Q.value = 0.5;
         this.under.connect(this.master);
         world = this.under;
@@ -216,25 +278,50 @@ export class Audio {
     this.base = base;
     this.init();
     if (!this.ctx) return;
-    try {
-      const json = await this.platform.loadJson<{ sounds: Record<string, SoundDef> }>(base + 'manifest.json');
-      this.defs = json.sounds;
-    } catch (e) {
-      console.warn('audio manifest failed', e);
-      return;
+    // a bad connection can fail the download: keep trying for a while
+    for (let i = 0; ; i++) {
+      try {
+        const json = await this.platform.loadJson<{ sounds: Record<string, SoundDef> }>(base + 'manifest.json');
+        this.defs = json.sounds;
+        break;
+      } catch (e) {
+        this.note('warn', `manifest failed ${errText(e)}`);
+        if (i >= 5) return;
+        await new Promise((r) => setTimeout(r, 5000));
+      }
     }
     this.ready = true;
     // the scene on screen may already want its music and ambience
     if (this.wantMusic) this.setMusic(this.wantMusic);
     if (this.wantAmb.length) this.setAmbience(this.wantAmb);
-    const ids = Object.keys(this.defs).filter((id) => this.defs[id].preload);
-    // a few at a time, so the sounds don't crowd out the pictures the first screen is still fetching
+    await this.decodeAll(Object.keys(this.defs).filter((id) => this.defs[id].preload));
+  }
+
+  /** Decodes these sounds a few at a time, so they don't crowd out the pictures still being fetched. */
+  private async decodeAll(ids: string[]) {
     for (let i = 0; i < ids.length; i += 3) await Promise.all(ids.slice(i, i + 3).map((id) => this.buffer(id)));
   }
 
   /** Starts fetching sounds a scene is about to need (a track for the next screen, a shop's effects). */
   preload(ids: string[]) {
     for (const id of ids) void this.buffer(id);
+  }
+
+  /**
+   * Short of memory: forgets every decoded sound that isn't marked preload or playing right now (it's fetched again
+   * the next time it's asked for), and lets go of finished sources.
+   */
+  trim() {
+    const busy = new Set([this.music?.file, ...this.fading.map((t) => t.file), ...[...this.amb.keys()].map((k) => this.fileOf(k))]);
+    let n = 0;
+    for (const k of [...this.buffers.keys()]) {
+      if (this.defs[k]?.preload || busy.has(k)) continue;
+      this.buffers.delete(k);
+      n++;
+    }
+    this.used = this.used.filter((k) => this.buffers.has(k));
+    if (this.ctx) this.sweep(this.ctx.currentTime);
+    this.note('warn', `trim ${n} -> bufs${this.buffers.size} alive${this.alive}`);
   }
 
   /** The entry whose file an id plays: itself, or the one it's a variant of. */
@@ -264,7 +351,7 @@ export class Audio {
         return buf;
       })
       .catch((e) => {
-        console.warn('audio failed', key, e);
+        if (this.failNotes++ < 10) this.note('warn', `failed ${key} ${errText(e)}`);
         this.loading.delete(key);
         return null;
       });
@@ -295,21 +382,65 @@ export class Audio {
   unlock() {
     this.init();
     const ctx = this.ctx;
-    if (ctx && ctx.state !== 'running') ctx.resume().then(() => this.kick(), () => undefined);
+    if (!ctx || (ctx.state === 'running' && this.woke)) return;
+    this.wake();
   }
 
+  /** Off to the background, or the system has taken the sound (a call, an alarm). */
   suspend() {
-    this.ctx?.suspend().catch(() => undefined);
+    this.hidden = true;
+    try {
+      void this.ctx?.suspend()?.catch(() => undefined);
+    } catch {
+      /* closed */
+    }
   }
 
   /** Back from the background, a phone call or Siri ('interrupted' on iPhone). */
   resume() {
+    this.hidden = false;
+    if (this.ctx && this.ctx.state !== 'running') this.wake();
+  }
+
+  /** Asks the context to run, then starts what was waiting for it. */
+  private wake() {
     const ctx = this.ctx;
-    if (ctx && ctx.state !== 'running') ctx.resume().then(() => this.kick(), () => undefined);
+    if (!ctx) return;
+    const n = ++this.wakes;
+    const before = ctx.state;
+    const done = () => {
+      if (ctx !== this.ctx) return;
+      if (n <= 12) this.note('info', `resume #${n} ${before} -> ${ctx.state}`);
+      this.woke = true;
+      this.kick();
+    };
+    try {
+      const r = ctx.resume() as Promise<void> | undefined;
+      if (r && typeof r.then === 'function') r.then(done, (e) => this.note('warn', `resume #${n} failed ${errText(e)}`));
+      else done();
+    } catch (e) {
+      this.note('warn', `resume #${n} threw ${errText(e)}`);
+    }
+  }
+
+  /** Console (and the platform's remote log, if it has one). */
+  private note(level: 'info' | 'warn', msg: string) {
+    console[level]('[audio] ' + msg);
+    this.platform.log?.(level, 'audio ' + msg);
+  }
+
+  /** A one-line state of the sound, for the game's heartbeat in the remote log. */
+  diag() {
+    const ctx = this.ctx;
+    if (!ctx) return 'audio none';
+    const t = ctx.currentTime;
+    return `audio ${ctx.state} t${Number.isFinite(t) ? t.toFixed(1) : t} ready${+this.ready} voices${this.voices.length} alive${this.alive} bufs${this.buffers.size} music:${this.music?.id ?? '-'} amb${this.amb.size} ramps${this.ramps.size}${this.hidden ? ' hidden' : ''}`;
   }
 
   private get live() {
-    return !!this.ctx && this.ready && this.ctx.state === 'running';
+    const ctx = this.ctx;
+    if (!ctx || !this.ready || this.hidden) return false;
+    return ctx.state === 'running';
   }
 
   /** Steps the fades when the context can't automate them, and drops ambience one-shots in. Call every frame. */
@@ -328,8 +459,7 @@ export class Audio {
     const now = this.ctx.currentTime;
     // the new track never arrived: let the old one go rather than play the wrong music forever
     if (this.wantMusic !== (this.music?.id ?? null) && this.music && now - this.wantAt > 3) this.fadeOutMusic(0.4);
-    if (this.fading.length) this.fading = this.fading.filter((t) => t.end > now);
-    if (this.voices.length) this.voices = this.voices.filter((v) => !v.stopped && v.end > now);
+    this.sweep(now);
     if (this.jingles.length) {
       this.jingles = this.jingles.filter((v) => !v.stopped && v.end > now);
       if (!this.jingles.length) this.applyDuck();
@@ -342,11 +472,32 @@ export class Audio {
     }
   }
 
+  /** Lets go of finished voices, faded tracks and stopped loops: disconnected, so the engine stops carrying them. */
+  private sweep(now: number) {
+    if (this.fading.length) this.fading = this.fading.filter((t) => t.end > now || this.release(t.src, t.gain, t.filter));
+    if (this.voices.length) this.voices = this.voices.filter((v) => v.end + 0.05 > now || this.release(v.src, v.gain));
+    if (this.trash.length) this.trash = this.trash.filter((x) => x.at > now || this.release(...x.nodes));
+  }
+
+  /** Disconnects the nodes of one finished source (the source first); false, for use in a filter. */
+  private release(...nodes: (AudioNode | null)[]): false {
+    this.alive--;
+    for (const n of nodes) {
+      try {
+        n?.disconnect();
+      } catch {
+        /* already disconnected */
+      }
+    }
+    return false;
+  }
+
   /** Moves a parameter smoothly to `to` (time constant `tc` seconds), with or without automation. */
   private ramp(param: AudioParam, to: number, tc: number) {
     // a bad number would make the automation throw and switch every later fade to the fallback: ignore it
     if (!Number.isFinite(to) || !Number.isFinite(tc)) return;
-    if (this.auto && this.ctx) {
+    // a time constant of 0 is a jump, which some contexts' setTargetAtTime gets wrong (NaN): just set it
+    if (this.auto && this.ctx && tc > 0) {
       const now = this.ctx.currentTime;
       try {
         param.cancelScheduledValues(now);
@@ -358,6 +509,13 @@ export class Audio {
       }
     }
     if (tc <= 0) {
+      if (this.auto && this.ctx) {
+        try {
+          param.cancelScheduledValues(this.ctx.currentTime);
+        } catch {
+          /* nothing scheduled */
+        }
+      }
       param.value = to;
       this.ramps.delete(param);
     } else this.ramps.set(param, { to, tc });
@@ -437,15 +595,18 @@ export class Audio {
 
   private start(id: string, buf: AudioBuffer, at: number, rate: number, vol: number, cap: number, bus = this.sfxBus!): Voice {
     const ctx = this.ctx!;
-    const same = this.voices.filter((v) => v.id === id && !v.stopped);
+    const on = this.voices.filter((v) => !v.stopped);
+    const same = on.filter((v) => v.id === id);
     if (same.length >= cap) this.stopVoice(same[0], 0.03);
-    if (this.voices.length >= MAX_VOICES) this.stopVoice(this.voices[0], 0.03);
+    if (on.length >= MAX_VOICES) this.stopVoice(on[0], 0.03);
     const src = ctx.createBufferSource();
+    this.alive++;
     src.buffer = buf;
     setRate(src, rate);
     const g = ctx.createGain();
     g.gain.value = vol;
-    src.connect(g).connect(bus);
+    src.connect(g);
+    g.connect(bus);
     src.start(at);
     const v: Voice = { id, src, gain: g, end: at + buf.duration / clampRate(rate), stopped: false };
     this.voices.push(v);
@@ -456,8 +617,10 @@ export class Audio {
     if (v.stopped || !this.ctx) return;
     v.stopped = true;
     this.ramp(v.gain.gain, 0, fade / 3);
+    const at = this.ctx.currentTime + fade + 0.02;
+    v.end = Math.min(v.end, at);
     try {
-      v.src.stop(this.ctx.currentTime + fade + 0.02);
+      v.src.stop(at);
     } catch {
       /* already stopped */
     }
@@ -501,28 +664,36 @@ export class Audio {
       return null;
     }
     const src = ctx.createBufferSource();
+    this.alive++;
     src.buffer = buf;
     src.loop = !o.once;
     const [a, b] = loopRegion(buf, def).loop;
     src.loopStart = a;
     src.loopEnd = b;
-    setRate(src, (o.rate ?? 1) * (def.rate ?? 1));
+    const rate = clampRate((o.rate ?? 1) * (def.rate ?? 1));
+    setRate(src, rate);
     const g = ctx.createGain();
     const vol = def.volume * (o.volume ?? 1);
     g.gain.value = o.fadeIn ? 0 : vol;
     if (o.fadeIn) this.ramp(g.gain, vol, o.fadeIn / 3);
-    src.connect(g).connect(def.kind === 'amb' ? this.ambBus! : this.sfxBus!);
+    src.connect(g);
+    g.connect(def.kind === 'amb' ? this.ambBus! : this.sfxBus!);
     // start somewhere inside a long bed, so a scene change doesn't always restart the same birdsong
     const from = o.once ? 0 : def.kind === 'amb' ? a + Math.random() * (b - a) : a;
     src.start(ctx.currentTime, from);
     let stopped = false;
+    // a one-shot is let go of when it's done even if nobody stops it
+    const done = { at: o.once ? ctx.currentTime + buf.duration / rate + 0.1 : Infinity, nodes: [src, g] };
+    this.trash.push(done);
     return {
       stop: (fade = 0.08) => {
         if (stopped) return;
         stopped = true;
         this.ramp(g.gain, 0, fade / 3);
+        const at = ctx.currentTime + fade + 0.05;
+        done.at = Math.min(done.at, at + 0.05);
         try {
-          src.stop(ctx.currentTime + fade + 0.05);
+          src.stop(at);
         } catch {
           /* already stopped */
         }
@@ -594,7 +765,8 @@ export class Audio {
     const g2 = ctx.createGain();
     g2.gain.value = 0.5;
     osc.connect(g);
-    sub.connect(g2).connect(g);
+    sub.connect(g2);
+    g2.connect(g);
     g.connect(this.sfxBus);
     osc.start(now);
     sub.start(now);
@@ -609,8 +781,12 @@ export class Audio {
         if (stopped) return;
         stopped = true;
         this.ramp(g.gain, 0, 0.03);
-        osc.stop(ctx.currentTime + 0.2);
-        sub.stop(ctx.currentTime + 0.2);
+        try {
+          osc.stop(ctx.currentTime + 0.2);
+          sub.stop(ctx.currentTime + 0.2);
+        } catch {
+          /* its context has been replaced */
+        }
       },
     };
   }
@@ -691,6 +867,7 @@ export class Audio {
     const file = this.fileOf(id);
     const fdef = this.defs[file] ?? def;
     const src = ctx.createBufferSource();
+    this.alive++;
     src.buffer = buf;
     src.loop = true;
     const { loop, lead } = loopRegion(buf, fdef);
@@ -707,7 +884,8 @@ export class Audio {
       filter.type = 'lowpass';
       filter.frequency.value = def.lowpass;
       filter.Q.value = 0.6;
-      src.connect(filter).connect(g);
+      src.connect(filter);
+      filter.connect(g);
     } else src.connect(g);
     g.connect(this.musicBus!);
     // where it left off last time, else its intro (`from`), else the top of the loop
@@ -783,6 +961,8 @@ export class Audio {
   }
 }
 
+const errText = (e: unknown) => String((e as { errMsg?: string; message?: string })?.errMsg ?? (e as { message?: string })?.message ?? e).slice(0, 120);
+
 function decode(ctx: AudioContext, data: ArrayBuffer): Promise<AudioBuffer> {
   // Callback form for older Safari and the wx WebAudio context.
   return new Promise((resolve, reject) => {
@@ -807,15 +987,43 @@ function setRate(src: AudioBufferSourceNode, r: number) {
  * don't click.
  */
 function loopRegion(buf: AudioBuffer, def: SoundDef | undefined): { loop: [number, number]; lead: number } {
-  const d = buf.getChannelData(0);
-  let a = 0;
-  let b = d.length - 1;
-  while (a < b && Math.abs(d[a]) < 1e-4) a++;
+  const [a, b] = soundEdges(buf);
   const lead = a / buf.sampleRate;
   if (def?.loopAt) {
     const end = Math.min(buf.duration, lead + def.loopAt[1]);
     return { loop: [Math.min(end - 0.05, lead + def.loopAt[0]), end], lead };
   }
-  while (b > a && Math.abs(d[b]) < 1e-4) b--;
   return { loop: [lead, (b + 1) / buf.sampleRate], lead };
+}
+
+const edges = new WeakMap<AudioBuffer, [number, number]>();
+/** How far the encoder's padding reaches into each end of a file. */
+const EDGE = 1 << 15;
+
+/**
+ * First and last sample that aren't the encoder's silent padding: worked out once per buffer, and only from its two
+ * ends (WeChat's getChannelData copies the whole track out of its engine every time it's asked).
+ */
+function soundEdges(buf: AudioBuffer): [number, number] {
+  let e = edges.get(buf);
+  if (e) return e;
+  const n = buf.length;
+  const k = Math.min(n, EDGE);
+  const head = new Float32Array(k);
+  const tail = new Float32Array(k);
+  try {
+    buf.copyFromChannel(head, 0, 0);
+    buf.copyFromChannel(tail, 0, n - k);
+  } catch {
+    const d = buf.getChannelData(0);
+    head.set(d.subarray(0, k));
+    tail.set(d.subarray(n - k));
+  }
+  let a = 0;
+  while (a < k - 1 && Math.abs(head[a]) < 1e-4) a++;
+  let b = k - 1;
+  while (b > 0 && Math.abs(tail[b]) < 1e-4) b--;
+  e = [a, Math.max(a, n - k + b)];
+  edges.set(buf, e);
+  return e;
 }

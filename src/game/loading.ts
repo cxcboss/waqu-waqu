@@ -1,4 +1,5 @@
 // The wait for the first load: a progress bar, and a tiny snake game with a frog to pass the time.
+// The mini game loads in a few seconds, so it has no snake: a frog hops across the river instead.
 // Everything here is drawn with plain shapes, since none of the art has arrived yet. It is made
 // to look unlike the real game (dashed board, "loading" ribbon) so nobody takes it for the day's work.
 import { TOD, drawBaked, grainRect } from '../art/kit';
@@ -12,6 +13,9 @@ const COLS = 11;
 const STEP_T = 0.2;
 const MIN_STEP = 0.11;
 const BOARD_TOP = 410;
+/** The mini game keeps the health notice up at least this long before going in by itself. */
+const NOTICE_SEC = 3;
+const HEALTH_NOTICE = ['抵制不良游戏，拒绝盗版游戏。注意自我保护，谨防受骗上当。', '适度游戏益脑，沉迷游戏伤身。合理安排时间，享受健康生活。'];
 
 type Dir = { x: number; y: number };
 interface Cell {
@@ -25,6 +29,11 @@ export interface LoaderHost {
   readonly safeB: number;
   /** 0–1 */
   progress(): number;
+  /**
+   * Running as the WeChat mini game: the health notice and age rating every game in China shows before
+   * it starts go along the bottom, and there's no page to reload.
+   */
+  readonly mini: boolean;
   vibrate(ms: number): void;
   /** The load is over and the player has said they're ready: go to the game. */
   enter(): void;
@@ -85,7 +94,7 @@ export class Loader {
     this.t += dt;
     this.shownP += (this.host.progress() - this.shownP) * Math.min(1, dt * 6);
     this.tongue = Math.max(0, this.tongue - dt);
-    if (this.finished && !this.entering) {
+    if (this.canGo && !this.entering) {
       // nobody was playing: straight in after a beat; otherwise wait for the button
       if (!this.touched && this.t - this.finished > 1.1) this.go();
     }
@@ -104,8 +113,13 @@ export class Loader {
     }
   }
 
+  /** Loaded, and (in the mini game) the health notice has been up long enough. */
+  private get canGo() {
+    return !!this.finished && (!this.host.mini || this.t >= NOTICE_SEC);
+  }
+
   private go() {
-    if (this.entering) return;
+    if (this.entering || !this.canGo) return;
     this.entering = true;
     this.host.enter();
   }
@@ -140,8 +154,10 @@ export class Loader {
   }
 
   down(x: number, y: number, id: number) {
+    // nothing to play in the mini game: it goes in by itself
+    if (this.host.mini) return;
     this.touched = true;
-    if (this.finished && this.hitGo(x, y)) {
+    if (this.canGo && this.hitGo(x, y)) {
       this.pressedGo = true;
       return;
     }
@@ -149,6 +165,7 @@ export class Loader {
   }
 
   move(x: number, y: number, id: number) {
+    if (this.host.mini) return;
     const s = this.start;
     if (!s || s.id !== id || s.used) return;
     const dx = x - s.x, dy = y - s.y;
@@ -160,6 +177,7 @@ export class Loader {
   }
 
   up(x: number, y: number, id: number) {
+    if (this.host.mini) return;
     if (this.pressedGo) {
       this.pressedGo = false;
       if (this.hitGo(x, y)) this.go();
@@ -198,6 +216,10 @@ export class Loader {
     ctx.fillStyle = P.paper;
     ctx.fillRect(0, 0, 750, H);
     grainRect(ctx, 0, 0, 750, H, 0.5);
+    if (this.host.mini) {
+      this.renderMini(ctx);
+      return;
+    }
     // how many rows fit under the header
     const room = H - this.host.safeB - (top + BOARD_TOP) - 150;
     const rows = Math.max(7, Math.min(13, Math.floor(room / CELL)));
@@ -206,14 +228,95 @@ export class Loader {
       this.reset();
     }
 
-    // the title and the bar come first: this is a loading screen
-    const dots = '.'.repeat(1 + (Math.floor(this.t * 2.5) % 3));
-    text(ctx, this.finished ? '加载完成' : `加载中${dots}`, 375, top + 70, 56, { bold: true, color: this.finished ? P.lilyDeep : INK });
-    const secs = this.t;
-    const note = this.finished ? '加载完成！' : secs > 60 ? '网络有点慢，等不及可以刷新页面再试' : secs > 18 ? '网络有点慢，再等一下就好' : '第一次进来要多等一会儿，下次就快了';
-    text(ctx, note, 375, top + 124, 26, { color: this.finished ? P.lilyDeep : P.inkSoft, bold: !!this.finished });
+    this.drawBar(ctx, top + 70);
 
-    const bx = 75, bw = 600, by = top + 160, bh = 40;
+    // the label that says what the thing below is
+    const ty = top + 240;
+    roundRect(ctx, 105, ty, 540, 56, 28);
+    ctx.fillStyle = '#FBE6CF';
+    ctx.fill();
+    ctx.setLineDash([10, 8]);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = P.orangeDeep;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    text(ctx, '下面是加载小游戏，不是正式游戏', 375, ty + 29, 28, { bold: true, color: P.orangeDeep });
+    text(ctx, '贪吃蛙：滑动屏幕转向，吃苍蝇涨分', 375, ty + 94, 26, { color: INK });
+    text(ctx, `得分 ${this.score}${this.best ? `　最高 ${this.best}` : ''}`, 375, ty + 130, 26, { color: P.inkSoft });
+
+    this.drawBoard(ctx);
+    // a strip of the river along the bottom, if there's room under the board
+    const foot = H - 156;
+    if (foot > this.board().y + this.rows * CELL + 40) drawBaked(ctx, 'loadfoot', 0, foot, [0, -60, 750, 260], (c) => river(c));
+
+    // done: say so, loudly
+    if (this.canGo && this.touched) {
+      const w = 420, h = 200, x = 375 - w / 2, y = top + BOARD_TOP + (this.rows * CELL) / 2 - h / 2;
+      panel(ctx, x, y, w, h, { r: 26, stitch: P.gold });
+      text(ctx, '加载完成！', 375, y + 56, 46, { bold: true, color: P.lilyDeep });
+      this.goRect = { x: x + 50, y: y + 96, w: w - 100, h: 80 };
+      button(ctx, this.goRect.x, this.goRect.y, this.goRect.w, this.goRect.h, '进入游戏', { primary: true, pressed: this.pressedGo, size: 36 });
+    }
+  }
+
+  /** The mini game's wait: the bar, a frog hopping from pad to pad, and the health notice. */
+  private renderMini(ctx: Ctx) {
+    const H = this.host.H;
+    const y = Math.max(this.host.safeT + 150, H * 0.3);
+    this.drawBar(ctx, y);
+    const ry = y + 250;
+    drawBaked(ctx, 'loadfoot', 0, ry, [0, -60, 750, 260], (c) => river(c));
+    this.drawHopper(ctx, ry);
+    this.drawNotice(ctx);
+  }
+
+  /** A frog going back and forth over the three lily pads of the river strip (drawn at `y`). */
+  private drawHopper(ctx: Ctx, y: number) {
+    const pads: [number, number][] = [[150, 92], [430, 104], [610, 96]];
+    const order = [0, 1, 2, 1];
+    const HOP = 0.9;
+    const n = Math.floor(this.t / HOP);
+    const k = this.t / HOP - n;
+    const [ax, ay] = pads[order[n % 4]];
+    const [bx, by] = pads[order[(n + 1) % 4]];
+    // sits for a moment, then a hop in an arc
+    const j = k < 0.45 ? 0 : (k - 0.45) / 0.55;
+    const x = ax + (bx - ax) * j, base = ay + (by - ay) * j - 18;
+    const fy = y + base - Math.sin(j * Math.PI) * 70 - (j === 0 ? Math.abs(Math.sin(k * 14)) * 3 : 0);
+    const dir = bx >= ax ? 1 : -1;
+    ellipse(ctx, x, y + base + 16, 26 * (1 - Math.sin(j * Math.PI) * 0.4), 7);
+    ctx.fillStyle = 'rgba(46,58,40,0.25)';
+    ctx.fill();
+    ellipse(ctx, x, fy, 30, 25);
+    ctx.fillStyle = P.frog;
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = INK;
+    ctx.stroke();
+    for (const s of [-1, 1]) {
+      const ex = x + s * 15 + dir * 3, ey = fy - 20;
+      ellipse(ctx, ex, ey, 10, 10);
+      ctx.fillStyle = P.white;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ellipse(ctx, ex + dir * 3, ey, 4.5, 4.5);
+      ctx.fillStyle = INK;
+      ctx.fill();
+    }
+  }
+
+  /** 加载中 (or 加载完成), the line under it and the progress bar, from `y` down. */
+  private drawBar(ctx: Ctx, y: number) {
+    const dots = '.'.repeat(1 + (Math.floor(this.t * 2.5) % 3));
+    text(ctx, this.finished ? '加载完成' : `加载中${dots}`, 375, y, 56, { bold: true, color: this.finished ? P.lilyDeep : INK });
+    const secs = this.t;
+    const slow = this.host.mini ? '网络有点慢，等不及可以退出再进' : '网络有点慢，等不及可以刷新页面再试';
+    const first = this.host.mini ? '马上就好' : '第一次进来要多等一会儿，下次就快了';
+    const note = this.finished ? (this.host.mini ? '马上进入游戏' : '加载完成！') : secs > 60 ? slow : secs > 18 ? '网络有点慢，再等一下就好' : first;
+    text(ctx, note, 375, y + 54, 26, { color: this.finished ? P.lilyDeep : P.inkSoft, bold: !!this.finished });
+
+    const bx = 75, bw = 600, by = y + 90, bh = 40;
     const p = Math.max(0.02, this.finished ? 1 : this.shownP);
     roundRect(ctx, bx, by, bw, bh, bh / 2);
     ctx.fillStyle = P.paperShade;
@@ -239,34 +342,19 @@ export class Loader {
     ctx.strokeStyle = INK;
     ctx.stroke();
     text(ctx, `${Math.round(p * 100)}%`, bx + bw / 2, by + bh / 2 + 1, 26, { bold: true, color: p > 0.5 ? P.white : INK });
+  }
 
-    // the label that says what the thing below is
-    const ty = top + 240;
-    roundRect(ctx, 105, ty, 540, 56, 28);
-    ctx.fillStyle = '#FBE6CF';
+  /** 健康游戏忠告 along the bottom and the age rating up in the corner. */
+  private drawNotice(ctx: Ctx) {
+    const y = this.host.H - this.host.safeB - 124;
+    text(ctx, '健康游戏忠告', 375, y, 24, { bold: true, color: INK });
+    HEALTH_NOTICE.forEach((line, i) => text(ctx, line, 375, y + 38 + i * 34, 22, { color: P.inkSoft }));
+    const top = this.host.safeT;
+    roundRect(ctx, 28, top + 22, 92, 40, 10);
+    ctx.fillStyle = P.lilyDeep;
     ctx.fill();
-    ctx.setLineDash([10, 8]);
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = P.orangeDeep;
-    ctx.stroke();
-    ctx.setLineDash([]);
-    text(ctx, '下面是加载小游戏，不是正式游戏', 375, ty + 29, 28, { bold: true, color: P.orangeDeep });
-    text(ctx, '贪吃蛙：滑动屏幕转向，吃苍蝇涨分', 375, ty + 94, 26, { color: INK });
-    text(ctx, `得分 ${this.score}${this.best ? `　最高 ${this.best}` : ''}`, 375, ty + 130, 26, { color: P.inkSoft });
-
-    this.drawBoard(ctx);
-    // a strip of the river along the bottom, if there's room under the board
-    const foot = H - 156;
-    if (foot > this.board().y + this.rows * CELL + 40) drawBaked(ctx, 'loadfoot', 0, foot, [0, -60, 750, 260], (c) => river(c));
-
-    // done: say so, loudly
-    if (this.finished && this.touched) {
-      const w = 420, h = 200, x = 375 - w / 2, y = top + BOARD_TOP + (this.rows * CELL) / 2 - h / 2;
-      panel(ctx, x, y, w, h, { r: 26, stitch: P.gold });
-      text(ctx, '加载完成！', 375, y + 56, 46, { bold: true, color: P.lilyDeep });
-      this.goRect = { x: x + 50, y: y + 96, w: w - 100, h: 80 };
-      button(ctx, this.goRect.x, this.goRect.y, this.goRect.w, this.goRect.h, '进入游戏', { primary: true, pressed: this.pressedGo, size: 36 });
-    }
+    text(ctx, '8+', 74, top + 43, 26, { bold: true, color: P.white });
+    text(ctx, '适龄提示', 74, top + 82, 18, { color: P.inkSoft });
   }
 
   private drawBoard(ctx: Ctx) {
