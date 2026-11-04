@@ -4,6 +4,8 @@
   npm run build:wx                      # tourist AppID (touristappid): runs in DevTools, can't be uploaded
   npm run build:wx -- --appid wx123…    # the mini game's own AppID (mp.weixin.qq.com → 开发 → 开发管理)
   npm run build:wx -- --tm              # also send play statistics (only once their server is a 服务器域名)
+  npm run build:wx -- --rank            # with the friends' ranking (open data context; only once the admin allows it,
+                                        # see docs/ARCHITECTURE.md 「好友排行榜」)
 
 What it does:
   game.js     src/main.wx.ts and the whole game bundled by esbuild (src/platform/wx.ts is the wx side)
@@ -36,6 +38,7 @@ KEEP = {'project.private.config.json'}
 ap = argparse.ArgumentParser()
 ap.add_argument('--appid', default=os.environ.get('WX_APPID', 'touristappid'))
 ap.add_argument('--tm', action='store_true', help='send play statistics (see docs/telemetry.md)')
+ap.add_argument('--rank', action='store_true', help="the friends' ranking (wx/opendata, game.json openDataContext)")
 args = ap.parse_args()
 
 
@@ -64,6 +67,7 @@ def clean():
 def bundle():
     run(['npx', 'esbuild', 'src/main.wx.ts', '--bundle', '--minify', '--target=es2019', '--format=iife', '--legal-comments=none',
          f'--define:__BUILD__={json.dumps(build_id())}', f'--define:__WX_TM__={"true" if args.tm else "false"}',
+         f'--define:__WX_RANK__={"true" if args.rank else "false"}',
          '--outfile=' + os.path.join(OUT, 'game.js'), '--log-level=warning'])
 
 
@@ -206,6 +210,10 @@ def project():
         # the art comes down alongside the main package, so the first day rarely waits for it
         'parallelPreloadSubpackages': [{'name': 'art'}],
     }
+    if args.rank:
+        # the friends' ranking is drawn in the open data context, a folder of its own (wx/opendata/index.js)
+        shutil.copytree(os.path.join(ROOT, 'wx', 'opendata'), os.path.join(OUT, 'opendata'))
+        game['openDataContext'] = 'opendata'
     json.dump(game, open(os.path.join(OUT, 'game.json'), 'w'), ensure_ascii=False, indent=2)
     cfg = {
         'appid': args.appid,
