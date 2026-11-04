@@ -56,8 +56,10 @@ export interface Platform {
   screen(): ScreenInfo;
   onResize(cb: () => void): void;
   onTouch(cb: (kind: TouchKind, t: TouchPoint) => void): void;
-  /** Mouse wheel / trackpad scroll, in screen pixels (web only). */
+  /** Mouse wheel / trackpad scroll, in screen pixels (a browser, or WeChat on a computer). */
   onWheel?(cb: (dy: number) => void): void;
+  /** A key pressed (KeyboardEvent.key names; held keys don't repeat). Only with a keyboard: a browser, or WeChat on a computer. */
+  onKey?(cb: (key: string) => void): void;
   onVisibility(cb: (visible: boolean) => void): void;
   /**
    * Every event the system counts as a user gesture (on phones that's the finger lifting, not landing),

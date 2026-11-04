@@ -134,6 +134,11 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
   - 存照片是直接存进手机相册（`saveImageToPhotosAlbum`，没权限会引导去设置），没有「长按图片保存」（`platform.longPressSave = false`）。
   - 分享走右上角菜单和 `shareAppMessage`（分享给朋友、朋友圈），配图是当前画面裁 5:4，没有就用 `core/share.jpg`。
   - 有新版本时弹窗问要不要重新打开（`getUpdateManager`）。
+  - **电脑微信（PC 端，2026-11-04）**：没开大屏（`game.json` 不写 `resizable`/`displayMode`），电脑上固定 414×736 竖屏窗口；鼠标左键平台当成触摸，所以弹弓、点按不用改。开大屏会变成 768×1024，而游戏按细长竖屏排版，审核又不许非最大化时有黑边或蒙层，所以先不开。做了的适配（官方《PC小游戏接入指南》）：
+    - 最小化不会触发 `onHide`，`wx.ts` 用 `wx.onWindowStateChange`（`minimize` 算切后台，`normalize`/`maximize` 算回来），走和 `onHide` 一样的路：停声音、送货那天暂停；最小化期间 `requestFrame` 改成每 0.5 秒一帧（超过 0.25 秒的帧游戏只走一步，也不算进降画布的统计）。
+    - `wx.onWheel` 接到 `platform.onWheel`（路线图等能滚的界面）。
+    - `wx.onKeyDown` 接到 `platform.onKey`（网页版用 `keydown`），Esc 调场景的 `escape()`：先关开着的弹窗或卡片，没有就等于点「返回」；送货中是暂停／继续。微信没有按住重复的标记，`wx.ts` 自己按 keyup 去重。
+    - 游戏圈按钮电脑上建不出来，已兜底隐藏。
   - **默认不发试玩数据**：小游戏只能请求后台配好且已 ICP 备案的「服务器域名」，Supabase 的域名配不进去。要发得先把数据中转到自己备案的域名，再用 `--tm` 打包（见 `docs/telemetry.md`）。
 - 测试：没有官方模拟器可在云端跑，用的是一个浏览器里的 `wx` 假接口（会检查分包加载了才读里面的文件）加测试机器人；真机效果以开发者工具和手机预览为准。
 - 上架步骤（注册、软著、自审报告、备案、隐私、提审）见上架清单：https://claude.ai/artifact/HJeppnDd52Y5vBzfpF8Ahj

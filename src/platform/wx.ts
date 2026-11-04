@@ -45,6 +45,10 @@ export class WxPlatform implements Platform {
   private club: any = null;
   private clubAt = '';
   private clubFailed = false;
+  /** On a computer: the window is minimized. WeChat doesn't send onHide for that (the game is meant to keep running), so it's passed on as going to the background here. */
+  private minimized = false;
+  /** Keys held down, and when each last sent a keydown: WeChat has no "repeat" flag, and a held Esc mustn't flick the pause menu open and shut. */
+  private keys: Record<string, { held: boolean; t: number }> = {};
 
   constructor() {
     // the first canvas made is the screen
@@ -190,9 +194,56 @@ export class WxPlatform implements Platform {
   onVisibility(cb: (visible: boolean) => void): void {
     wx.onShow(() => cb(true));
     wx.onHide(() => cb(false));
+    // WeChat on a computer: minimizing doesn't count as hiding (pc-game guide), so the music would play on and a day
+    // would keep running; it's treated as going to the background, and coming back (normalize, maximize) as returning
+    try {
+      wx.onWindowStateChange?.((r: { state?: string }) => {
+        this.log('info', `window ${r?.state}`);
+        const min = r?.state === 'minimize';
+        if (min === this.minimized) return;
+        this.minimized = min;
+        cb(!min);
+      });
+    } catch {
+      /* not on this client */
+    }
     // after a phone call or an alarm the sound has to be resumed (WeChat's audio notes); the start of one
     // isn't passed on: a real call sends the game to the background anyway
     wx.onAudioInterruptionEnd?.(() => cb(true));
+  }
+
+  onWheel(cb: (dy: number) => void): void {
+    // WeChat on a computer (no wheel on phones)
+    try {
+      wx.onWheel?.((r: { deltaY?: number }) => {
+        const dy = Number(r?.deltaY) || 0;
+        if (dy) cb(dy);
+      });
+    } catch {
+      /* not on this client */
+    }
+  }
+
+  onKey(cb: (key: string) => void): void {
+    // WeChat on a computer, once the window has been clicked; keys the system uses itself (Esc out of full screen) don't come
+    try {
+      wx.onKeyDown?.((r: { key?: string }) => {
+        const key = String(r?.key ?? '');
+        if (!key) return;
+        const t = Date.now();
+        const k = this.keys[key];
+        // a repeat while held (they come every few dozen ms); a key-up lost to a focus change is let go of after a second's quiet
+        const repeat = !!k && k.held && t - k.t < 1000;
+        this.keys[key] = { held: true, t };
+        if (!repeat) cb(key);
+      });
+      wx.onKeyUp?.((r: { key?: string }) => {
+        const k = r?.key ? this.keys[r.key] : undefined;
+        if (k) k.held = false;
+      });
+    } catch {
+      /* not on this client */
+    }
   }
 
   onGesture(cb: () => void): void {
@@ -495,6 +546,9 @@ export class WxPlatform implements Platform {
   }
 
   requestFrame(cb: (t: number) => void): void {
-    requestAnimationFrame(() => cb(this.now()));
+    // minimized on a computer the game keeps getting frames; nothing can be seen, so it ticks over slowly instead
+    // (each tick is over the 0.25 s the game treats as a hiccup: it moves things on one step only, and never counts towards lowering the resolution)
+    if (this.minimized) setTimeout(() => cb(this.now()), 500);
+    else requestAnimationFrame(() => cb(this.now()));
   }
 }

@@ -88,6 +88,12 @@ export class WebPlatform implements Platform {
     }, { passive: false });
   }
 
+  onKey(cb: (key: string) => void): void {
+    document.addEventListener('keydown', (e) => {
+      if (!e.repeat) cb(e.key);
+    });
+  }
+
   onVisibility(cb: (visible: boolean) => void): void {
     document.addEventListener('visibilitychange', () => cb(document.visibilityState === 'visible'));
   }

@@ -370,6 +370,12 @@ export class HubScene implements Scene {
     }
   }
 
+  escape() {
+    if (this.hop || !this.profile) return;
+    this.game.audio.play('ui_close');
+    this.profile = null;
+  }
+
   /** WeChat's game club button sits under the coins and switches, once the player is past day 1 and nothing is open over it. */
   gameClub() {
     if (this.newbie || this.profile || this.hop) return null;

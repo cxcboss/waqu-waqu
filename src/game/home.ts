@@ -103,6 +103,12 @@ export class HomeScene implements Scene {
     }
   }
 
+  escape() {
+    if (this.modal) return this.closeModal();
+    this.game.audio.play('ui_back');
+    this.game.go(new HubScene(this.game), true);
+  }
+
   private lastFrame() {
     const s = this.game.save;
     return s.room.frames.find(Boolean)?.frame ?? 'frame_wood';

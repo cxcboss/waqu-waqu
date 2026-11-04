@@ -3348,6 +3348,18 @@ export class PlayScene implements Scene {
   }
 
   /** The pause menu stops everything that makes noise, music included, and picks it up again after. */
+  /** Esc: the pause button, or 继续 when paused. */
+  escape() {
+    if (this.paused) {
+      this.pressed = null;
+      this.menu('resume');
+    } else if (!this.ended && !this.off && this.step !== 'intro') {
+      this.pressed = null;
+      this.setPaused(true);
+      this.game.audio.play('ui_open');
+    }
+  }
+
   private setPaused(on: boolean) {
     if (this.paused === on) return;
     this.paused = on;

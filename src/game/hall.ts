@@ -125,6 +125,12 @@ export class HallScene implements Scene {
 
   // ---------------------------------------------------------------- album
 
+  escape() {
+    if (this.viewer) return this.viewerAction('close', 0);
+    this.game.audio.play('ui_back');
+    this.game.go(new HubScene(this.game), true);
+  }
+
   private photos(): ViewerPhoto[] {
     const al = this.game.album;
     return al.list.map((a) => ({ key: a.id, img: () => al.image(a.id), caption: a.caption, footer: `蛙趣快递 · ${dayLabel(a.day)} · ${shortDate(a.at)}` }));

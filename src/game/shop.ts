@@ -114,6 +114,17 @@ export class ShopScene implements Scene {
     }
   }
 
+  escape() {
+    if (this.pick) {
+      this.game.audio.play('ui_close');
+      this.pick = null;
+      this.tryOn = null;
+      return;
+    }
+    this.game.audio.play('ui_back');
+    this.game.go(new HubScene(this.game), true);
+  }
+
   /** What the open card costs, or null when it can't be bought (maxed, owned, not for sale). */
   private cost(p: Pick): number | null {
     const s = this.game.save;

@@ -492,6 +492,10 @@ export class HqScene implements Scene {
       (id, k) => this.viewAction(id, k), '今日精彩瞬间');
   }
 
+  escape() {
+    if (this.viewer) this.viewAction('close', 0);
+  }
+
   private viewAction(id: string, i: number) {
     const v = this.viewer!;
     if (id === 'close') {

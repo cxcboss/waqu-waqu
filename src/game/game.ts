@@ -28,6 +28,8 @@ export interface Scene {
   cancel?(id: number): void;
   /** Wheel scroll in design pixels. */
   wheelBy?(dy: number): void;
+  /** The Esc key (keyboards only): close what's open over the screen, else what its back button does (pause, in a day). */
+  escape?(): void;
   /** Called when the app goes to the background. */
   blur?(): void;
   /** Where WeChat's game club button goes on this screen (design units), or null for none right now. */
@@ -217,6 +219,9 @@ export class Game {
     });
     this.platform.onWheel?.((dy) => {
       if (this.ready && !this.fade) this.scene?.wheelBy?.(dy * (this.W / this.cssW));
+    });
+    this.platform.onKey?.((key) => {
+      if (key === 'Escape' && this.ready && !this.fade && !this.waiting) this.scene?.escape?.();
     });
     this.platform.onVisibility((v) => {
       if (v) this.audio.resume();
