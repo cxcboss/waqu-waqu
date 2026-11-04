@@ -292,6 +292,10 @@ export class HubScene implements Scene {
   /** The hour's look: morning, day, dusk or night (the same hours as the room's window). */
   private tod = todAt();
   private profile: { t: number } | null = null;
+  /** The friends' ranking dialog (mini game, `--rank` builds): opened from the staff card. */
+  private rank: { t: number } | null = null;
+  /** Waiting on WeChat (privacy consent, sending the score) after 好友排行 was tapped. */
+  private rankBusy = false;
   private spots: Record<Place, Pt> = { hq: { x: 0, y: 0 }, shop: { x: 0, y: 0 }, home: { x: 0, y: 0 }, work: { x: 0, y: 0 } };
   private frogAt: Pt = { x: 375, y: 0 };
 
@@ -300,12 +304,15 @@ export class HubScene implements Scene {
     game.audio.setAmbience(hubAmbience(this.tod.stars));
     game.tm.day = null;
     game.tm.log('hub', { unlocked: game.save.day, coins: game.save.coins, notes: unreadNotes(game.save) });
+    // back from a day: friends see the new count (only once the player has opened the ranking)
+    game.platform.friendRank?.score(stampCount(game.save), game.save.day);
   }
 
   update(dt: number) {
     this.t += dt;
     this.toast.update(dt);
     if (this.profile) this.profile.t += dt;
+    if (this.rank) this.rank.t += dt;
     this.joy = Math.max(0, this.joy - dt);
     const h = this.hop;
     if (h && !h.done && (h.t += dt) >= HOP_T) {
@@ -335,8 +342,17 @@ export class HubScene implements Scene {
     const id = this.taps.up(x, y);
     if (!id) return;
     const au = this.game.audio;
+    if (this.rank) {
+      if (id === 'rankRemind') void this.remind();
+      else if (id === 'rankOut' || id === 'rankClose') {
+        au.play('ui_close');
+        this.rank = null;
+      }
+      return;
+    }
     if (this.profile) {
       if (id === 'rename') this.rename();
+      else if (id === 'rankOpen') void this.openRank();
       else if (id === 'profileOut' || id === 'close') {
         au.play('ui_close');
         this.profile = null;
@@ -372,8 +388,44 @@ export class HubScene implements Scene {
 
   /** WeChat's game club button sits under the coins and switches, once the player is past day 1 and nothing is open over it. */
   gameClub() {
-    if (this.newbie || this.profile || this.hop) return null;
+    if (this.newbie || this.profile || this.rank || this.hop) return null;
     return { x: CLUB.x, y: this.game.safeT + CLUB.y, w: CLUB.s, h: CLUB.s };
+  }
+
+  /** The ranking list (WeChat's canvas, drawn by the open data context) fills the dialog's middle once it has opened. */
+  friendRank() {
+    if (!this.rank || this.rank.t < 0.25) return null;
+    const d = this.rankBox();
+    return { x: d.x + 30, y: d.y + 128, w: d.w - 60, h: d.h - 128 - 176 };
+  }
+
+  private rankBox() {
+    const g = this.game;
+    const w = 660, h = Math.min(1080, g.H - g.safeT - g.safeB - 80);
+    return { x: 375 - w / 2, y: clamp(g.H / 2 - h / 2, g.safeT + 20, g.H - h - 20), w, h };
+  }
+
+  private async openRank() {
+    const fr = this.game.platform.friendRank;
+    if (!fr || this.rankBusy) return;
+    this.rankBusy = true;
+    this.game.audio.play('ui_open');
+    const s = this.game.save;
+    const ok = await fr.open(stampCount(s), s.day).catch(() => false);
+    this.rankBusy = false;
+    if (!ok) {
+      this.toast.show('没有同意隐私保护指引，暂时看不了好友排行');
+      return;
+    }
+    this.profile = null;
+    this.rank = { t: 0 };
+  }
+
+  private async remind() {
+    const fr = this.game.platform.friendRank;
+    if (!fr) return;
+    const r = await fr.remind();
+    this.toast.show(r === 'accept' ? '好啦，有好友超过你时微信会提醒你' : r === 'reject' ? '没有打开提醒，想要时再点一次' : '现在开不了提醒，稍后再试');
   }
 
   /** Until day 1 is passed, only work is open, so a new player has one obvious place to go. */
@@ -504,6 +556,7 @@ export class HubScene implements Scene {
     } else this.workBar(ctx, by, label, day, workDown, mapDown);
 
     if (this.profile) this.drawProfile(ctx);
+    if (this.rank) this.drawRank(ctx);
     // clear of the staff card's bottom edge
     this.toast.render(ctx, g.safeT + 140);
   }
@@ -885,7 +938,31 @@ export class HubScene implements Scene {
       text(ctx, k, cx + 20, cy + 27, 24, { align: 'left', color: P.inkSoft });
       text(ctx, v, cx + (d.w - 80) / 2 - 32, cy + 27, 26, { align: 'right', bold: true });
     });
-    button(ctx, 375 - 120, y + d.h - 104, 240, 80, '好的', { primary: true, pressed: this.taps.add('close', { x: 255, y: y + d.h - 104, w: 240, h: 80 }), size: 30 });
+    if (g.platform.friendRank) {
+      // two buttons: the friends' ranking, and done
+      button(ctx, 375 - 260, y + d.h - 104, 250, 80, this.rankBusy ? '请稍等…' : '好友排行', { pressed: this.taps.add('rankOpen', { x: 115, y: y + d.h - 104, w: 250, h: 80 }), size: 30, icon: 'trophy' });
+      button(ctx, 375 + 10, y + d.h - 104, 250, 80, '好的', { primary: true, pressed: this.taps.add('close', { x: 385, y: y + d.h - 104, w: 250, h: 80 }), size: 30 });
+    } else button(ctx, 375 - 120, y + d.h - 104, 240, 80, '好的', { primary: true, pressed: this.taps.add('close', { x: 255, y: y + d.h - 104, w: 240, h: 80 }), size: 30 });
+    ctx.restore();
+  }
+
+  /** The friends' ranking: a frame with WeChat's list laid into its middle (see `friendRank`). */
+  private drawRank(ctx: Ctx) {
+    const g = this.game;
+    const t = this.rank!.t;
+    const b = this.rankBox();
+    ctx.save();
+    const d = dialog(ctx, g, this.taps, 'rank', b.w, b.h, t);
+    text(ctx, '好友排行', 375, d.y + 50, 36, { bold: true });
+    text(ctx, '比比谁的好评章多 · 只列出也在玩的微信好友', 375, d.y + 94, 22, { color: P.inkSoft, maxWidth: d.w - 60 });
+    // the list's bed: WeChat's canvas lies on it once the dialog has opened (and is gone while it pops in)
+    const L = { x: d.x + 30, y: d.y + 128, w: d.w - 60, h: d.h - 128 - 176 };
+    roundRect(ctx, L.x, L.y, L.w, L.h, 16);
+    ctx.fillStyle = P.cream;
+    ctx.fill();
+    if (t < 0.25) text(ctx, '加载中…', 375, L.y + L.h / 2, 26, { color: P.inkSoft });
+    pill(ctx, this.taps, 'rankRemind', 375 - 200, d.y + d.h - 160, 400, 52, '好友超过我时提醒我', { size: 22, icon: 'letter' });
+    button(ctx, 375 - 120, d.y + d.h - 94, 240, 76, '关闭', { primary: true, pressed: this.taps.add('rankClose', { x: 255, y: d.y + d.h - 94, w: 240, h: 76 }), size: 30 });
     ctx.restore();
   }
 }

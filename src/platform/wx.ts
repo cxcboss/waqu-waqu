@@ -4,11 +4,13 @@
 //   art/    the rest of the art                                                                         subpackage "art"
 //   audio/  sound and music                                                                             subpackage "audio"
 // The game asks for files by their web paths (art/x.webp, audio/…, fonts/x.woff2); `where` maps them to the package.
-import type { Canvas, ImageSource, Platform, SaveResult, ScreenInfo, Stream, TouchKind, TouchPoint } from './types';
+import type { Canvas, FriendRank, ImageSource, Platform, SaveResult, ScreenInfo, Stream, TouchKind, TouchPoint } from './types';
 
 // The wx global and its objects, typed loosely: only what's used here.
 declare const wx: any;
 declare const __BUILD__: string;
+/** Built with the friends' ranking (npm run build:wx -- --rank): game.json then has the open data context. */
+declare const __WX_RANK__: boolean;
 type WxTouch = { identifier: number; clientX: number; clientY: number };
 type WxTouchEvent = { changedTouches: WxTouch[] };
 
@@ -24,6 +26,114 @@ const SHARE_TITLE = '蛙趣送包裹：小青蛙在河上跳来跳去送快递';
 
 const call = <T = any>(api: string, o: Record<string, unknown> = {}): Promise<T> =>
   new Promise((resolve, reject) => wx[api]({ ...o, success: resolve, fail: reject }));
+
+/** a >= b for dotted versions ("3.6.6"). */
+function atLeast(a: string, b: string) {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return true;
+}
+
+/** The ranking's key: the same as the one set up in the admin (游戏能力地图 → 微信排行榜配置). */
+const RANK_KEY = 'stamps';
+/** Set once the player has opened the ranking: only then is their score sent to WeChat. */
+const RANK_ON = 'waqu-rank-on';
+
+/**
+ * The friends' ranking. The list itself is drawn by wx/opendata/index.js (the open data context, the only place
+ * friends' data can be read) on WeChat's shared canvas in screenCanvas mode: an on-screen canvas laid over the
+ * game, so the game's own canvas has none of the offscreen mode's limits (the river photos copy it). That mode
+ * is fixed the first time the context is asked for, so it's asked for at startup, and only from base library
+ * 3.6.6, where screenCanvas exists; before that there's no ranking at all.
+ */
+class WxFriendRank {
+  private odc: any;
+  private at = '';
+  private sent = '';
+
+  constructor(private pl: WxPlatform) {
+    this.odc = wx.getOpenDataContext({ sharedCanvasMode: 'screenCanvas' });
+    this.hide();
+  }
+
+  private get on() {
+    return this.pl.storageGet(RANK_ON) === '1';
+  }
+
+  private hide() {
+    const c = this.odc.canvas;
+    c.width = 1;
+    c.height = 1;
+    Object.assign(c.style, { width: '1px', height: '1px', left: '-10px', top: '-10px' });
+  }
+
+  /** Sends the score unless WeChat already has this one. */
+  private upload(stamps: number, day: number): Promise<boolean> {
+    const value = JSON.stringify({ wxgame: { score: Math.max(0, Math.round(stamps)), update_time: Math.floor(Date.now() / 1000) }, day });
+    const same = `${stamps}:${day}`;
+    if (same === this.sent) return Promise.resolve(true);
+    return call('setUserCloudStorage', { KVDataList: [{ key: RANK_KEY, value }] })
+      .then(() => {
+        this.sent = same;
+        return true;
+      })
+      .catch((e) => {
+        this.pl.log('warn', `rank upload ${String(e?.errMsg ?? e).slice(0, 120)}`);
+        return false;
+      });
+  }
+
+  score(stamps: number, day: number) {
+    if (this.on) void this.upload(stamps, day);
+  }
+
+  async open(stamps: number, day: number) {
+    // the privacy guide lists 微信朋友关系: WeChat shows its consent first if the player hasn't agreed yet
+    if (wx.requirePrivacyAuthorize) {
+      try {
+        await call('requirePrivacyAuthorize');
+      } catch {
+        this.pl.log('info', 'rank privacy declined');
+        return false;
+      }
+    }
+    this.pl.storageSet(RANK_ON, '1');
+    await this.upload(stamps, day);
+    // the list fetches friends' scores now (the first time WeChat asks to use 微信朋友信息)
+    this.odc.postMessage({ cmd: 'load' });
+    this.pl.log('info', 'rank open');
+    return true;
+  }
+
+  place(rect: { x: number; y: number; w: number; h: number } | null) {
+    const at = rect ? `${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.w)},${Math.round(rect.h)}` : '';
+    if (at === this.at) return;
+    this.at = at;
+    if (!rect) {
+      this.hide();
+      this.odc.postMessage({ cmd: 'hide' });
+      return;
+    }
+    const w = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync();
+    const dpr = Math.min(w.pixelRatio || 2, 3);
+    const c = this.odc.canvas;
+    c.width = Math.round(rect.w * dpr);
+    c.height = Math.round(rect.h * dpr);
+    Object.assign(c.style, { width: `${Math.round(rect.w)}px`, height: `${Math.round(rect.h)}px`, left: `${Math.round(rect.x)}px`, top: `${Math.round(rect.y)}px` });
+    // resizing cleared it: the list draws itself again (and takes its touches from inside this box)
+    this.odc.postMessage({ cmd: 'show', x: rect.x, y: rect.y, w: rect.w, h: rect.h, dpr });
+  }
+
+  async remind(): Promise<'accept' | 'reject' | 'failed'> {
+    try {
+      const r = await call<Record<string, string>>('requestSubscribeSystemMessage', { msgTypeList: ['SYS_MSG_TYPE_RANK'] });
+      return r.SYS_MSG_TYPE_RANK === 'accept' ? 'accept' : 'reject';
+    } catch (e) {
+      this.pl.log('warn', `rank remind ${String((e as { errMsg?: string })?.errMsg ?? e).slice(0, 120)}`);
+      return 'failed';
+    }
+  }
+}
 
 export class WxPlatform implements Platform {
   readonly kind = 'wx' as const;
@@ -45,6 +155,8 @@ export class WxPlatform implements Platform {
   private club: any = null;
   private clubAt = '';
   private clubFailed = false;
+  /** Only in a `--rank` build on a base library with screenCanvas (3.6.6). */
+  readonly friendRank?: FriendRank;
 
   constructor() {
     // the first canvas made is the screen
@@ -60,6 +172,14 @@ export class WxPlatform implements Platform {
       .then(() => this.sub('audio'))
       .catch(() => undefined);
     this.startLog();
+    if (typeof __WX_RANK__ !== 'undefined' && __WX_RANK__ && wx.getOpenDataContext) {
+      const sdk = String((wx.getAppBaseInfo ? wx.getAppBaseInfo() : wx.getSystemInfoSync()).SDKVersion || '0');
+      try {
+        if (atLeast(sdk, '3.6.6')) this.friendRank = new WxFriendRank(this);
+      } catch (e) {
+        this.log('warn', `rank ${String((e as Error)?.message ?? e).slice(0, 80)}`);
+      }
+    }
     wx.showShareMenu?.({ menus: ['shareAppMessage', 'shareTimeline'] });
     wx.onShareAppMessage?.(() => ({ title: SHARE_TITLE, imageUrl: 'core/share.jpg' }));
     wx.onShareTimeline?.(() => ({ title: SHARE_TITLE, imageUrl: 'core/share.jpg' }));

@@ -47,6 +47,24 @@ export interface ScreenInfo {
   safeBottom: number;
 }
 
+/**
+ * The friends' ranking (wx.setUserCloudStorage + the open data context, see wx/opendata/index.js and
+ * docs/ARCHITECTURE.md 「好友排行榜」). Nothing about friends is touched until the player opens it once.
+ */
+export interface FriendRank {
+  /** The player's latest score: sent to WeChat only once they've opened the ranking (and only when it changed). */
+  score(stamps: number, day: number): void;
+  /**
+   * The player asked to see it (call inside the tap): asks for the privacy consent if needed, sends the score,
+   * then fills the list. False if they said no or it can't be used.
+   */
+  open(stamps: number, day: number): Promise<boolean>;
+  /** Puts the list (drawn by WeChat's side, over the game) at `rect` in CSS pixels; null takes it away. Every frame. */
+  place(rect: { x: number; y: number; w: number; h: number } | null): void;
+  /** Asks WeChat to tell the player when a friend passes them (排行榜超越提醒). Inside a tap. */
+  remind(): Promise<'accept' | 'reject' | 'failed'>;
+}
+
 export interface Platform {
   readonly kind: 'web' | 'wx';
   readonly canvas: Canvas;
@@ -119,6 +137,11 @@ export interface Platform {
    * game canvas' top-left); null hides it. Called every frame, acts only on a change. Mini game only.
    */
   gameClub?(rect: { x: number; y: number; w: number; h: number } | null): void;
+  /**
+   * WeChat friends' ranking by 好评章 (mini game only, and only in a build made with `--rank`): see FriendRank.
+   * Missing when this client can't show it, so the game hides the way in.
+   */
+  readonly friendRank?: FriendRank;
   /** A small JPEG of `canvas` as a data URL, for keeping photos in storage; null if it can't be made. */
   encodeImage(canvas: Canvas, quality: number): string | null;
   /** Asks the player to type a short text (the frog's name); null when cancelled. */

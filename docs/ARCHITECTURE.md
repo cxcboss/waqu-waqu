@@ -137,3 +137,15 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
   - **默认不发试玩数据**：小游戏只能请求后台配好且已 ICP 备案的「服务器域名」，Supabase 的域名配不进去。要发得先把数据中转到自己备案的域名，再用 `--tm` 打包（见 `docs/telemetry.md`）。
 - 测试：没有官方模拟器可在云端跑，用的是一个浏览器里的 `wx` 假接口（会检查分包加载了才读里面的文件）加测试机器人；真机效果以开发者工具和手机预览为准。
 - 上架步骤（注册、软著、自审报告、备案、隐私、提审）见上架清单：https://claude.ai/artifact/HJeppnDd52Y5vBzfpF8Ahj
+
+## 好友排行榜（2026-11-04，`friend-rank`，默认关闭）
+- 按好评章数排的微信好友排行。**只有 `npm run build:wx -- --rank` 打的包才有**（定义 `__WX_RANK__`，`game.json` 加 `openDataContext: "opendata"`，把 `wx/opendata/` 拷进包），不加 `--rank` 打出来跟以前一模一样（相关代码被 esbuild 去掉）。
+- 为什么默认关：好友的托管数据（`wx.setUserCloudStorage`/`getFriendCloudStorage`）在官方隐私指南里算「微信朋友关系」个人信息。后台现在是「单机游戏、承诺不处理用户信息」，要上排行榜得先在后台「版本管理 → 网络类型设置」改成联网模式，再在「用户隐私保护指引」里勾上「微信朋友关系」，最好也开「隐私授权弹窗」组件。
+- 后台配置：「游戏能力地图 → 微信排行榜配置」已建好 key `stamps`（好评章排行，永久，整数，降序，单位「枚」，2026-11-04 提交审核）。上报格式按官方：`{"wxgame":{"score":好评章数,"update_time":秒},"day":解锁到第几天}`。基础库最低可用版本要设成 3.6.6 以上（见下）。
+- 代码：
+  - `src/platform/wx.ts` 的 `WxFriendRank`：启动时就用 `wx.getOpenDataContext({ sharedCanvasMode: 'screenCanvas' })` 定下在屏模式（只在基础库 ≥ 3.6.6 时；更早的没有排行榜）。**不能用默认的 offscreenCanvas 模式**：那个模式下主画布不能被画到别的画布上，而送货时拍照（`play.ts` 的 `takeShots`）就是从主画布裁图。
+  - 玩家第一次点「好友排行」之前什么都不上报；点的时候先 `wx.requirePrivacyAuthorize`（隐私同意），同意后记住（本地 `waqu-rank-on`），以后每次回主页上报一次（分数没变不重复报）。
+  - 入口在主页「我的工牌」弹窗底部（`hub.ts` 的 `openRank`/`drawRank`）。弹窗打开后，`Scene.friendRank()` 给出列表的位置，`Game.placeFriendRank` 每帧换算成 CSS 像素交给平台，平台把共享画布摆过去；弹窗关了就缩成 1×1 挪出屏幕。
+  - `wx/opendata/index.js`（开放数据域，纯 JS，跟游戏代码不能互相引用）：拉好友数据、排序、画列表（前三名奖牌、头像、昵称、第几天、章数，自己那行高亮），列表里手指拖动可以滚动（触摸事件开放数据域自己也收得到）。用不了自定义字体，用系统字体。
+  - 「好友超过我时提醒我」：`wx.requestSubscribeSystemMessage(['SYS_MSG_TYPE_RANK'])`，被超越时微信发服务通知（要排行榜配置审核通过才会发）。
+- 测试：浏览器里用假的 `friendRank`（在 `window.__game.platform` 上挂）把真的 `wx/opendata/index.js` 跑在一块页面画布上，测过打开、列表、滚动、提醒、关闭、拒绝授权；真机要用开发者工具和手机预览再看一遍（尤其 PC 微信）。

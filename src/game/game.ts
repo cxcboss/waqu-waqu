@@ -32,6 +32,8 @@ export interface Scene {
   blur?(): void;
   /** Where WeChat's game club button goes on this screen (design units), or null for none right now. */
   gameClub?(): { x: number; y: number; w: number; h: number } | null;
+  /** Where the friends' ranking list goes right now (design units), or null; see Platform.friendRank. */
+  friendRank?(): { x: number; y: number; w: number; h: number } | null;
 }
 
 export interface SaveData {
@@ -362,6 +364,7 @@ export class Game {
       }
     }
     this.placeGameClub();
+    this.placeFriendRank();
     this.platform.requestFrame(this.frame);
   };
 
@@ -371,6 +374,15 @@ export class Game {
     const r = this.ready && this.scene && !this.fade && !this.waiting && !this.medals.length ? (this.scene.gameClub?.() ?? null) : null;
     const k = this.cssScale;
     this.platform.gameClub(r && { x: r.x * k, y: r.y * k, w: r.w * k, h: r.h * k });
+  }
+
+  /** The friends' ranking list is WeChat's own canvas over the game: only while the scene's dialog is fully open. */
+  private placeFriendRank() {
+    const fr = this.platform.friendRank;
+    if (!fr) return;
+    const r = this.ready && this.scene && !this.fade && !this.waiting && !this.medals.length ? (this.scene.friendRank?.() ?? null) : null;
+    const k = this.cssScale;
+    fr.place(r && { x: r.x * k, y: r.y * k, w: r.w * k, h: r.h * k });
   }
 
   /** A line to the remote log: where the player is, the frame rate since the last one, and the sound's state. */
