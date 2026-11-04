@@ -41,6 +41,10 @@ export class WxPlatform implements Platform {
   private canvases = { n: 0, px: 0 };
   /** Player errors logged so far (a broken file mustn't fill the log). */
   private streamErrors = 0;
+  /** The game club button (made the first time a screen wants it), and where it sits now ('' when hidden). */
+  private club: any = null;
+  private clubAt = '';
+  private clubFailed = false;
 
   constructor() {
     // the first canvas made is the screen
@@ -404,6 +408,35 @@ export class WxPlatform implements Platform {
       /* the stock picture */
     }
     wx.shareAppMessage({ title: opts.title, imageUrl });
+  }
+
+  gameClub(rect: { x: number; y: number; w: number; h: number } | null): void {
+    if (this.clubFailed) return;
+    if (!rect) {
+      if (this.clubAt) {
+        this.club?.hide();
+        this.clubAt = '';
+      }
+      return;
+    }
+    const style = { left: Math.round(rect.x), top: Math.round(rect.y), width: Math.round(rect.w), height: Math.round(rect.h) };
+    const at = `${style.left},${style.top},${style.width},${style.height}`;
+    if (at === this.clubAt) return;
+    try {
+      if (!this.club) {
+        // WeChat's own icon (green on a white rounded tile), so players know it as the game club
+        this.club = wx.createGameClubButton({ type: 'image', icon: 'light', style });
+        this.club.onTap?.(() => this.log('info', 'game club tap'));
+      } else {
+        Object.assign(this.club.style, style);
+        this.club.show();
+      }
+      this.clubAt = at;
+    } catch (e) {
+      // an old WeChat (before 2.0.3) or the PC client: no game club
+      this.clubFailed = true;
+      this.log('warn', `game club button ${String((e as Error)?.message ?? e).slice(0, 80)}`);
+    }
   }
 
   encodeImage(canvas: Canvas, quality: number): string | null {

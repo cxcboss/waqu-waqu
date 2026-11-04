@@ -45,6 +45,16 @@ interface Layout {
 }
 
 const HOP_T = 0.42;
+/** WeChat's game club button: left edge, top under the safe area (below where toasts drop in), and size, in design units. */
+const CLUB = { x: 660, y: 214, s: 60 };
+
+/** "游戏圈" on a little pill under the game club button. */
+function clubLabel(ctx: Ctx, x: number, y: number) {
+  roundRect(ctx, x - 40, y - 15, 80, 30, 15);
+  ctx.fillStyle = alpha(P.white, 0.88);
+  ctx.fill();
+  text(ctx, '游戏圈', x, y, 18, { color: P.inkSoft, bold: true });
+}
 
 /** What the locked places are called, for the newbie toast. */
 const PLACE_NAMES: Record<string, string> = { hq: '河湾总部', shop: '福利社', home: '我的家', map: '路线图' };
@@ -360,6 +370,12 @@ export class HubScene implements Scene {
     }
   }
 
+  /** WeChat's game club button sits under the coins and switches, once the player is past day 1 and nothing is open over it. */
+  gameClub() {
+    if (this.newbie || this.profile || this.hop) return null;
+    return { x: CLUB.x, y: this.game.safeT + CLUB.y, w: CLUB.s, h: CLUB.s };
+  }
+
   /** Until day 1 is passed, only work is open, so a new player has one obvious place to go. */
   private get newbie() {
     return this.game.save.day <= 1;
@@ -460,6 +476,8 @@ export class HubScene implements Scene {
 
     this.drawFrog(ctx);
     this.drawHeader(ctx);
+    // the game club button itself is WeChat's own control on top; its name goes underneath
+    if (g.platform.kind === 'wx' && this.gameClub()) clubLabel(ctx, CLUB.x + CLUB.s / 2, g.safeT + CLUB.y + CLUB.s + 18);
 
     // back to work
     const day = this.workDay;

@@ -114,6 +114,11 @@ export interface Platform {
    */
   showImage(canvas: Canvas | null, rect?: { x: number; y: number; w: number; h: number }): void;
   share(opts: { title: string; canvas?: Canvas }): void;
+  /**
+   * WeChat's own game club button (游戏圈, wx.createGameClubButton) over the game at `rect` (CSS pixels from the
+   * game canvas' top-left); null hides it. Called every frame, acts only on a change. Mini game only.
+   */
+  gameClub?(rect: { x: number; y: number; w: number; h: number } | null): void;
   /** A small JPEG of `canvas` as a data URL, for keeping photos in storage; null if it can't be made. */
   encodeImage(canvas: Canvas, quality: number): string | null;
   /** Asks the player to type a short text (the frog's name); null when cancelled. */

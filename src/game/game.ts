@@ -30,6 +30,8 @@ export interface Scene {
   wheelBy?(dy: number): void;
   /** Called when the app goes to the background. */
   blur?(): void;
+  /** Where WeChat's game club button goes on this screen (design units), or null for none right now. */
+  gameClub?(): { x: number; y: number; w: number; h: number } | null;
 }
 
 export interface SaveData {
@@ -359,8 +361,17 @@ export class Game {
         ctx.fillRect(0, 0, this.W, this.H);
       }
     }
+    this.placeGameClub();
     this.platform.requestFrame(this.frame);
   };
+
+  /** WeChat's game club button is a native control over the canvas: only shown while nothing is moving over its spot. */
+  private placeGameClub() {
+    if (!this.platform.gameClub) return;
+    const r = this.ready && this.scene && !this.fade && !this.waiting && !this.medals.length ? (this.scene.gameClub?.() ?? null) : null;
+    const k = this.cssScale;
+    this.platform.gameClub(r && { x: r.x * k, y: r.y * k, w: r.w * k, h: r.h * k });
+  }
 
   /** A line to the remote log: where the player is, the frame rate since the last one, and the sound's state. */
   private heartbeat(t: number) {
