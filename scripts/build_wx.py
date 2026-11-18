@@ -40,7 +40,11 @@ ap.add_argument('--out', help='create a new output directory instead of rebuildi
 ap.add_argument('--tm', action='store_true', help='send play statistics (see docs/telemetry.md)')
 ap.add_argument('--club-plugin', action='store_true',
                 help='declare the MiniGameCommon plugin in game.json; only after the MP plugin permission is granted')
+ap.add_argument('--club-provider', default=os.environ.get('WX_CLUB_PLUGIN_PROVIDER', ''),
+                help='MiniGameCommon provider from WeChat, also accepted via WX_CLUB_PLUGIN_PROVIDER')
 args = ap.parse_args()
+if args.club_plugin and not args.club_provider.strip():
+    ap.error('--club-plugin requires --club-provider or WX_CLUB_PLUGIN_PROVIDER')
 if args.out:
     OUT = os.path.abspath(args.out)
 
@@ -222,7 +226,7 @@ def project():
         game['plugins'] = {
             'MiniGameCommon': {
                 'version': 'latest',
-                'provider': 'wxaed5ace05d92b218',
+                'provider': args.club_provider.strip(),
                 'contexts': [{'type': 'isolatedContext'}],
             },
         }

@@ -124,6 +124,7 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
   - 主包：`game.js`（esbuild 打的整个游戏）、`fonts/`（霞鹜文楷子集转成 TTF，字体内的名字改成 `WK`/`WKB`，因为 `wx.loadFont` 按字体文件里写的名字注册）、`core/art/`（`CORE` 那些首屏精灵、`manifest.json`、`files.json` 精灵名→文件）、`core/share.jpg`。
   - 分包 `art/`：其余精灵，`parallelPreloadSubpackages` 让它跟主包一起下载；分包 `audio/`：`public/audio`，但每个循环的声音（音乐、环境声、引擎、水泡）剪成正好一个循环（小游戏里声音用系统播放器整首循环，见 `docs/audio.md`），剪好的缓存在 `node_modules/.cache/wx-audio`。
   - 小游戏包不收 WebP、woff2、md，所以打包时 WebP 转回 PNG（不透明的转 JPEG），转好的缓存在 `node_modules/.cache/wx-art`。
+- 已开通游戏圈插件权限时，可用 `--club-plugin` 启用 MiniGameCommon。通过 `WX_CLUB_PLUGIN_PROVIDER` 或 `--club-provider` 传入微信平台提供的插件 AppID。
 - `wx.ts` 把网页路径翻译成包内路径（`where()`：`art/x.webp` 查 `files.json`、`.woff2` 换 `.ttf`），读分包里的文件前先等 `wx.loadSubpackage`（失败会重试 5 次）。
 - 和网页版的不同：
   - 加载页没有贪吃蛇（几秒就加载完），只有进度条、一只在荷叶间跳的青蛙；底部显示「健康游戏忠告」全文，左上角「8+ 适龄提示」，至少停 3 秒，加载完自己进（`loading.ts` 的 `mini`）。

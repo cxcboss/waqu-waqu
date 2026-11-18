@@ -26,6 +26,8 @@ import { Weather, type Light } from './weather';
 const FROG_S = 0.92; // frog sprite scale on top of K, matching the concept art
 const TILE = TILE_H * K;
 
+export const AUTOPLAY_TOUCH = -1;
+
 type How = 'jump' | 'climb' | 'auto';
 
 interface Jump {
@@ -578,6 +580,7 @@ export class PlayScene implements Scene {
       floaters: this.floaters.filter((x) => x.t >= 0).map((p) => ({ x: p.x, y: this.sy(p.y) })),
       swim: swim ? {
         wheel: this.wheel(), target: this.leapTarget()?.p,
+        lesson: this.step === 'rescue',
         green: !!this.gauge && Math.abs(this.gaugeNeedle(this.gauge.t) - 0.5) < this.gaugeZone() / 2,
       } : null,
     };
@@ -5465,6 +5468,10 @@ export class PlayScene implements Scene {
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+    }
+    if (a.id === AUTOPLAY_TOUCH) {
+      ctx.globalAlpha = Math.min(1, a.t * 18);
+      this.game.sprites.draw(ctx, 'hand', a.x, a.y, 0.85);
     }
     ctx.restore();
   }

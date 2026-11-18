@@ -28,7 +28,7 @@ const ctx = new Proxy({
   createLinearGradient: () => ({ addColorStop: noop }), createRadialGradient: () => ({ addColorStop: noop }),
 }, { get: (obj, key) => key in obj ? obj[key] : noop });
 
-function play(day, H) {
+function play(day, H, watch) {
   const save = upgradeSave({});
   applyUnlockAll(save);
   const events = [];
@@ -37,12 +37,12 @@ function play(day, H) {
     sprites: { ensure: noop, has: () => false, draw: noop },
     audio: new Proxy({}, { get: () => noop }),
     platform: { now: () => game.ms, vibrate: noop, createCanvas: () => ({ getContext: () => ctx }) },
-    tm: { run: 0, count: () => 1, log: (event, data) => events.push([event, data]) },
+    tm: { run: 0, count: () => 1, log: (event, data, time) => events.push([event, data, time]) },
     writeSave: noop, go: (next) => { game.scene = next; }, album: { keptId: () => null },
   };
   const scene = new PlayScene(game, day);
   game.scene = scene;
-  const autoplay = new CourierAutoplay();
+  const autoplay = new CourierAutoplay(0, day);
   for (let frame = 0; frame < 60 * 360 && game.scene === scene; frame++) {
     game.ms += 1000 / 60;
     scene.update(1 / 60);
@@ -50,9 +50,33 @@ function play(day, H) {
     if (scene.step === 'intro') scene.drawCoach(ctx);
     if (scene.cod) scene.drawCod(ctx);
     autoplay.update(scene);
+    if (watch?.(scene, events) === false) break;
   }
   return { game, scene, events };
 }
+
+test('loading at an early stop leads into a visible pull and a normal jump', () => {
+  const pullLengths = [];
+  let delay, held, launched, landed;
+  play(2, 1542, (scene, events) => {
+    const aim = scene.aim;
+    if (aim && scene.frog.on === scene.lv.truck) {
+      delay ??= scene.time - events.findLast(([name]) => name === 'pickup')[2];
+      pullLengths.push(Math.hypot(aim.x - aim.sx, aim.y - aim.sy));
+      held = aim.t;
+    }
+    if (scene.frog.jump?.info?.from === 'truck') launched = true;
+    if (launched && scene.frog.on) {
+      landed = scene.frog.on.kind;
+      return false;
+    }
+  });
+  const full = Math.max(...pullLengths);
+  const intermediate = new Set(pullLengths.filter((length) => length > full * 0.1 && length < full * 0.9).map(Math.round));
+  assert.ok(delay < 1.1, `the courier waited ${delay?.toFixed(2)} s on the truck after loading`);
+  assert.ok(held >= 0.4 && intermediate.size >= 5, `only ${intermediate.size} visible pull positions over ${held?.toFixed(2)} s`);
+  assert.equal(landed, 'lily');
+});
 
 const requested = process.env.WAQU_TEST_DAYS?.split(',').map(Number);
 const heights = process.env.WAQU_TEST_HEIGHTS?.split(',').map(Number) ?? [1334, 1623];

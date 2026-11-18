@@ -77,7 +77,7 @@ if (controls) void import('./game/autopilot').then(({ CourierAutoplay, center, t
     if (scene instanceof PlayScene) {
       if (scene !== play) {
         play = scene;
-        courier = new CourierAutoplay(retries);
+        courier = new CourierAutoplay(retries, scene.day);
         nextDay = play.day;
       }
       courier?.update(scene);
