@@ -270,6 +270,24 @@ def report(rows):
     buys = [r['d'] for r in by_ev['shop_buy']]
     say(f"福利社 {len(by_ev['shop'])} 次 · 买了 {len(buys)} 件，花 {sum(b.get('price') or 0 for b in buys)} 金币：" + top(Counter(b['what'] for b in buys), 10))
     say('成就：' + top(Counter(r['d']['id'] for r in by_ev['ach']), 10))
+    watched = Counter(r['d'].get('where') for r in by_ev['ad_show'])
+    rewarded = Counter(r['d'].get('where') for r in by_ev['ad_done'] if r['d'].get('ok'))
+    used = Counter(r['d'].get('kind') for r in by_ev['supply_use'])
+    if watched or used:
+        say('\n## 自愿广告和补给')
+        for placement, name in [('rope', '救命绳'), ('wrap', '防水袋'), ('whistle', '缓流哨'),
+                                ('hq', '工资翻倍'), ('revive', '继续本局'), ('shop', '外观礼物')]:
+            if watched[placement] or used[placement]:
+                line = f'{name}：主动请求 {watched[placement]} 次，发奖 {rewarded[placement]} 次'
+                if placement in ('rope', 'wrap', 'whistle'):
+                    line += f'，道具消耗 {used[placement]} 件'
+                say(line)
+    for day in (15, 25, 35):
+        results = [r['d'] for r in by_ev['run_end'] if r['day'] == day
+                   and r['d'].get('how') in ('done', 'off', 'thrown') and 'unassistedClear' in r['d']]
+        if results:
+            clears = sum(bool(d.get('unassistedClear')) for d in results)
+            say(f'第{day}天结算 {len(results)} 局，其中 {clears} 局未用补给或视频复活并通关')
     gear = [r['d']['gear'] for r in by_ev['run_start'] if r['d'].get('gear')]
     if gear:
         say('开局时的装备等级（中位）：' + ' · '.join(f"{k} {med([g.get(k, 0) for g in gear])}" for k in sorted({k for g in gear for k in g})))

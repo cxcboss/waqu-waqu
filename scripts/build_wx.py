@@ -3,6 +3,7 @@
 
   npm run build:wx                      # tourist AppID (touristappid): runs in DevTools, can't be uploaded
   npm run build:wx -- --appid wx123…    # the mini game's own AppID (mp.weixin.qq.com → 开发 → 开发管理)
+  npm run build:wx -- --appid wx123… --out ../发行包  # build a separate, new release directory
   npm run build:wx -- --tm              # also send play statistics (only once their server is a 服务器域名)
 
 What it does:
@@ -35,8 +36,13 @@ KEEP = {'project.private.config.json'}
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--appid', default=os.environ.get('WX_APPID', 'touristappid'))
+ap.add_argument('--out', help='create a new output directory instead of rebuilding dist-wx')
 ap.add_argument('--tm', action='store_true', help='send play statistics (see docs/telemetry.md)')
+ap.add_argument('--club-plugin', action='store_true',
+                help='declare the MiniGameCommon plugin in game.json; only after the MP plugin permission is granted')
 args = ap.parse_args()
+if args.out:
+    OUT = os.path.abspath(args.out)
 
 
 def run(cmd, **kw):
@@ -53,6 +59,11 @@ def build_id():
 
 
 def clean():
+    if args.out:
+        if os.path.lexists(OUT):
+            sys.exit(f'output directory already exists: {OUT}')
+        os.makedirs(OUT)
+        return
     os.makedirs(OUT, exist_ok=True)
     for f in os.listdir(OUT):
         if f in KEEP:
@@ -206,6 +217,15 @@ def project():
         # the art comes down alongside the main package, so the first day rarely waits for it
         'parallelPreloadSubpackages': [{'name': 'art'}],
     }
+    if args.club_plugin:
+        # The account must be granted this plugin in MP first, otherwise uploading the package fails.
+        game['plugins'] = {
+            'MiniGameCommon': {
+                'version': 'latest',
+                'provider': 'wxaed5ace05d92b218',
+                'contexts': [{'type': 'isolatedContext'}],
+            },
+        }
     json.dump(game, open(os.path.join(OUT, 'game.json'), 'w'), ensure_ascii=False, indent=2)
     cfg = {
         'appid': args.appid,

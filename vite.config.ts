@@ -14,8 +14,12 @@ function build() {
 }
 
 // base './' so the build works from any sub-path (GitHub Pages serves it under /waqu-waqu/).
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   base: './',
   build: { target: 'es2019', assetsInlineLimit: 0 },
-  define: { __BUILD__: JSON.stringify(build()) },
-});
+  define: {
+    __BUILD__: JSON.stringify(build()),
+    __UNLOCK_ALL__: JSON.stringify(mode === 'trial' || process.env.WAQU_UNLOCK_ALL === '1'),
+    __AUTO_DEMO__: JSON.stringify(mode === 'trial' || process.env.WAQU_AUTO === '1'),
+  },
+}));

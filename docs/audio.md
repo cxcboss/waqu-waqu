@@ -122,7 +122,7 @@ venv/bin/python tools/audio/build.py build/dl build/synth build/amb <旧版母�
 |---|---|---|
 | `parcel_soaked` | 背包里的包裹泡水了 | play |
 | `bag_full` | 背包满了/太重 | play |
-| `coin_loss` | 扣钱（救命绳、罚款） | play |
+| `coin_loss` | 旧版扣金币音效，现保留素材 | — |
 | `urgent_alert` | 新的加急件/加急快超时 | play |
 | `urgent_tick` | 加急倒计时的一声嘀嗒（play.ts 越来越快地播） | play |
 | `urgent_late` | 加急超时 | play |

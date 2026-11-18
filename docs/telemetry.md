@@ -57,10 +57,13 @@
 - `map`：`sel`、`unlocked` · `map_go` / `map_back`：`sel`、`sec`（在路线图待了几秒）· `map_locked`：点了没解锁的 `day`
 - `hq`：`grade`（10-26 起没通过的一天一律记 D，S 还要求全部送达）、`pass`、`stamps`（三枚章）、`fresh`（本局新拿的）、`income`（含升职加薪和新章奖励）、`coins`、`photos`、`rankUp`（升到的职级，没升是 null）、`ach`（这一局达成的成就 id）、`news`（新增的河湾动态条数）
 - `hq_btn`：`id`（retry/home/next；10-27 起还有 slow 慢一点再试 / skip 跳过这一天 / ending 年终总结）、`open`（下一天是否已解锁）、`sec`（结算页看了几秒）
-- `hq` 10-27 起多两个字段：`fails`（这一天连续没通过几次，过了是 0；两次起出「慢一点再试」，三次起出「跳过这一天」）、`story`（这一局捡到的乌龟爷爷的第几封信，没捡到是 null）。第 0 天是隐藏关「第0号快递」
+- `hq` 10-27 起多两个字段：`fails`（这一天连续没通过几次，过了是 0；两次起出「慢一点再试」，三次起可跳过尚有下一天的关卡，第 35 天继续提供免费减速重试）、`story`（这一局捡到的乌龟爷爷的第几封信，没捡到是 null）。第 0 天是隐藏关「第0号快递」
 - `ending`（10-27）：第 30 天第一次通过后看年终总结 `found`（乌龟爷爷的信找到几封）、`secret`（0 没开 / 1 第0号快递已开 / 2 已送到）· `ending_page`：翻到第 `i` 页（0 除夕夜、1 这一年、2 猫头鹰、3 信、4 新年快乐），没翻到 4 就是中途跳出去了
 - `photo`：看大图 `i`、`kind` · `photo_save`：`res`（shared/downloaded/longpress/cancelled/failed）
+- `photo_share` / `photo_club`（11-09 起）：照片大图里的「分享海报」和「发到游戏圈」。`from`（`album` 相册 / `hq` 今日精彩瞬间）、`i`（第几张）。只记点击，不记用户最终有没有发出去（平台不给回执）。游戏圈入口只在 MiniGameCommon 插件可用时才出现。
 - `photo_keep`：点照片上的 ♥ `i`、`kind`、`on`（true 收进相册 / false 取消）、`n`（相册现在几张）
+- `ad_show` 在玩家主动请求视频时记录，`ad_done` 在回调后记录。两者带 `where`，回调另带 `ok`。游戏天数可取事件行的 `day`；新补给的两条事件也在详情里记录 `day`。工资翻倍、失败复活、外观礼物分别使用 `hq`、`revive`、`shop`。11-18 新增的救命绳、防水袋和缓流哨分别使用 `rope`、`wrap`、`whistle`。提前关闭或请求失败会记为 `ok: false`。同一广告位用于这些入口，`ad_show` 仅表示点击请求，实际展示与收入以微信流量主后台为准。
+- `supply_use` 记录实际扣除的一件道具。字段 `kind` 取 `rope`、`wrap` 或 `whistle`，`day` 是使用时的游戏天数。库存最多各 3 件。工资翻倍和外观礼物每天各 1 次，视频复活每局最多 1 次。正式微信包沿用默认关闭的游戏内统计。
 
 **总部大厅、我的家、福利社**
 
@@ -68,7 +71,7 @@
 - `home`：进家 `frames`（墙上挂了几张）、`decos`（有几件家具）· `home_open`：`what`（hang 挂照片 / wardrobe 衣柜 / records 个人记录 / letters 信箱 / decor 布置）
 - `story_read`（10-27）：在信箱里读乌龟爷爷的第 `n` 封信（0 是送到阿灰手里的第一封）· `secret_start`：从信箱点「去送信」开始第0号快递
 - `photo_hang`：挂上照片 `slot`、`frame`（相框）、`hung`（一共挂了几张）· `wear`：换装 `slot`（hat/neck）、`id`（null 是不戴）
-- `shop`：进福利社 `tab`、`coins` · `shop_tab`：`tab` · `shop_buy`：`what`（装备是 `bag3` 这样的「装备+升到的级」，其余是物品 id）、`price`、`coins`（买完剩多少）
+- `shop`：进福利社 `tab`、`coins` · `shop_tab`：`tab` · `shop_buy`：`what`（装备是 `bag3` 这样的「装备+升到的级」，其余是物品 id）、`price`、`coins`（买完剩多少）· `shop_ad_gift`（11-09 起）：`item`（看短片免费领到的外观道具 id）。每天 1 次，只发衣帽/家居/相框，不发装备和成就专属物品；同一次点击还会记 `ad_show` / `ad_done`（`where: 'shop'`）
 
 **一局**
 
@@ -80,7 +83,7 @@
 - `tired`：按住超过 3 秒脚累了，`step`、`on`
 - `miss`：在等别的操作时点了没用的地方，`where`：intro（说明卡上没点按钮）/ pick / deliver（引导要点卡片时）/ rescue（落水教学时没碰轮盘）/ cod（找零时没点到选项）（每种每局最多 5 条）
 - `idle`：隔了 ≥8 秒才再点屏幕，`sec`、`step`、`state`、`on`（站在车上等房子是正常的）
-- `fall`：落水 `n` 掉出几个包裹、`gone` 被冲走几个、`fy`
+- `fall`：落水 `n` 掉出几个包裹、`gone` 被冲走几个、`fy`。11-18 起另带 `protectedCount`，表示防水袋这次保住的随身包裹数。
 - `climb`：在水里点出指针后第二下点击（跳出水）。`ok`、`off`（指针离中间多远）、`zone`（绿区宽度）、`w`、`on`（会跳上的东西，null 是够不着）、`d`（离它边缘多远）、`wait`（指针出来几秒后才点）。第四轮之前是「扒住边后点一下」，还有 `climbEarly`，现在没了
 - `swim_out`：出水，`sec`、`strokes`（蹬腿次数）、`fails`（没点中绿区、原地蹦的次数）、`to`（跳上了什么；yank 表示被车拽走）；10-22 起还有 `gauges`（这次落水跳出指针自动出现了几次）、`wheel`（落水后几秒第一次蹬腿，null 是一下没蹬）、`gear`（脚蹼的推力倍数，1 是没买）
 - `rescue`：捞回包裹 `code`、`how`（tongue，第四轮起包裹进了舌头范围就自动卷回）、`after`（漂了几秒）、`late`（房子已经过去了）· `sunk`：包裹被冲出屏幕底部 `code`
@@ -122,6 +125,7 @@
   计数 `taps`、`tired`、`miss`、`far`（舌头够不着，或在水里点出指针时离哪儿都太远）、`climbOk`、`climbFail`、`strokes`、`swimSec`、`warn`、`warnSec`、`rush`、`pauses`、`putBack`、`bagFull`、`exhaust`、`rescued`、`sunk`、`idle`、`kicked`、`hints`、`misses`，
   `real`（实际秒数，含暂停）、`fps`、`slow`（卡顿帧数）、`state`/`on`/`step`（结束时青蛙在干什么）；
   10-27 起还有 `feats`：`spoiled`（坏了几件）、`careful`/`careOk`（要小心的件 / 完好送到的）、`returns`/`returned`（退货 / 收回的）、`woke`、`snatched`、`pecked`、`nagLate`、`nagTips`、`knocks`、`assist`
+- 11-18 起，局内汇总包含 `suppliesUsed`（三种补给本局各用 0 或 1 件）和 `videoRevived`。正常结算的 `run_end` 带 `passed` 和 `unassistedClear`，后者表示没有使用补给或视频复活且已经过关。免费减速重试仍可单看 `assist`。
 - `run_snap`：切到后台时的同样汇总（`how: hidden`）。一局没有 `run_end`，就看最后一条 `run_snap`，那多半是中途关掉了
 
 ## 埋点在代码哪里
@@ -134,11 +138,12 @@
 | `src/game/hub.ts`（主页小镇） | `game.tm.log(...)` | hub、hub_go、hub_locked、profile、rename |
 | `src/game/map.ts`（路线图） | 同上 | map、map_go、map_back、map_locked |
 | `src/game/play.ts`（一局） | `this.log(...)`，自动带 `day`、`t`、`d.p`（路线进度） | run_start、step、step_fix、jump、tap、tired、miss、idle、fall、climb、swim_out、rescue、sunk、pickup、bag_full、put_back、deliver、cod、missed、urgent_late、warn、thrown、rush、road、exhaust、all_out、hurry、route_end、yank、haul_land、driver_say、kicked、egg、hint、pause、menu、run_end、run_snap，章节机关的 feat_hint、owl_say、give_way、ice、whirl、knock、spoiled、collect、return_in、woke、gull、gull_miss、snatch、shoo、snatch_lost、peck、nag_late、restock、story、old_letter |
-| `src/game/hq.ts`（下班结算） | `game.tm.log(...)` | hq、hq_btn、photo、photo_save、photo_keep |
+| `src/game/hq.ts`（下班结算） | `game.tm.log(...)` | hq、hq_btn、photo、photo_save、photo_share、photo_club、photo_keep、ad_show、ad_done |
 | `src/game/ending.ts`（年终总结） | 同上 | ending、ending_page |
-| `src/game/hall.ts`（总部大厅） | 同上 | hall、hall_tab、album_view、album_del |
+| `src/game/hall.ts`（总部大厅） | 同上 | hall、hall_tab、album_view、album_del、photo_share、photo_club |
 | `src/game/home.ts`（我的家） | 同上 | home、home_open、photo_hang、wear、story_read、secret_start |
-| `src/game/shop.ts`（福利社） | 同上 | shop、shop_tab、shop_buy |
+| `src/game/shop.ts`（福利社） | 同上 | shop、shop_tab、shop_buy、shop_ad_gift、ad_show、ad_done |
+| `src/game/supplies.ts`（福利社和开工单共用补给） | 同上 | ad_show、ad_done、supply_use |
 
 在代码里找某个事件：`grep -n "log('事件名'" src/game/*.ts`。play.ts 里的计数器（`this.tally`）不单独发，汇总在 `run_end` / `run_snap`。
 

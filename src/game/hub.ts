@@ -20,6 +20,7 @@ import { Taps, Toast, coinPill, dialog, dot, drawDressedFrog, iconButton, iconBu
 import { PlayScene } from './play';
 import { ShopScene } from './shop';
 import { SCENE_MUSIC, hubAmbience } from './sound';
+import { SIDEBAR_GIFT, sidebarClaim, sidebarGiftLeft } from './sidebar';
 
 type Place = 'hq' | 'shop' | 'home' | 'work';
 type Pt = { x: number; y: number };
@@ -292,6 +293,8 @@ export class HubScene implements Scene {
   /** The hour's look: morning, day, dusk or night (the same hours as the room's window). */
   private tod = todAt();
   private profile: { t: number } | null = null;
+  /** Douyin's side bar gift dialog, while it's open (its own clock, like the staff card's). */
+  private side: { t: number } | null = null;
   private spots: Record<Place, Pt> = { hq: { x: 0, y: 0 }, shop: { x: 0, y: 0 }, home: { x: 0, y: 0 }, work: { x: 0, y: 0 } };
   private frogAt: Pt = { x: 375, y: 0 };
 
@@ -306,6 +309,17 @@ export class HubScene implements Scene {
     this.t += dt;
     this.toast.update(dt);
     if (this.profile) this.profile.t += dt;
+    if (this.side) this.side.t += dt;
+    // opened from Douyin's home side bar: hand over today's gift, once
+    const back = this.game.platform.fromSidebar?.() ?? false;
+    if (back) {
+      const got = sidebarClaim(this.game);
+      if (got) {
+        this.side = null;
+        this.toast.show(`抖音侧边栏礼包 +${got} 金币`, 'coin');
+        this.game.audio.play('coin', { volume: 0.8 });
+      }
+    }
     this.joy = Math.max(0, this.joy - dt);
     const h = this.hop;
     if (h && !h.done && (h.t += dt) >= HOP_T) {
@@ -343,6 +357,18 @@ export class HubScene implements Scene {
       }
       return;
     }
+    if (this.side) {
+      if (id === 'sideGo') {
+        au.play('ui_confirm');
+        this.game.platform.openSidebar?.();
+        this.game.tm.log('sidebar_open');
+        this.side = null;
+      } else if (id === 'sideOut' || id === 'close') {
+        au.play('ui_close');
+        this.side = null;
+      }
+      return;
+    }
     if (this.newbie && (id === 'hq' || id === 'shop' || id === 'home' || id === 'map')) {
       au.play('ui_error', { volume: 0.6 });
       this.toast.show(`先去上班，通过第 1 天就开放${PLACE_NAMES[id]}啦`, 'lock');
@@ -353,7 +379,7 @@ export class HubScene implements Scene {
     else if (id === 'map') {
       au.play('ui_confirm');
       this.game.tm.log('hub_go', { to: 'map' });
-      this.game.go(new MapScene(this.game), true);
+      this.game.go(new MapScene(this.game, this.game.demo ? this.workDay : undefined), true);
     } else if (id === 'music' || id === 'sfx') {
       const s = this.game.save;
       const on = id === 'music' ? !s.music : !s.sfx;
@@ -364,6 +390,10 @@ export class HubScene implements Scene {
       au.play('ui_open');
       this.profile = { t: 0 };
       this.game.tm.log('profile');
+    } else if (id === 'side') {
+      au.play('ui_open');
+      this.side = { t: 0 };
+      this.game.tm.log('sidebar_tap', { left: sidebarGiftLeft(this.game.save) });
     } else if (id === 'frog') {
       this.joy = 0.6;
       au.play('frog_croak', { jitter: true });
@@ -371,15 +401,47 @@ export class HubScene implements Scene {
   }
 
   escape() {
-    if (this.hop || !this.profile) return;
+    if (this.hop || (!this.profile && !this.side)) return;
     this.game.audio.play('ui_close');
     this.profile = null;
+    this.side = null;
   }
 
   /** WeChat's game club button sits under the coins and switches, once the player is past day 1 and nothing is open over it. */
   gameClub() {
-    if (this.newbie || this.profile || this.hop) return null;
+    if (this.newbie || this.profile || this.side || this.hop) return null;
     return { x: CLUB.x, y: this.game.safeT + CLUB.y, w: CLUB.s, h: CLUB.s };
+  }
+
+  /** Whether Douyin's side bar gift button belongs on the screen right now. */
+  private sideGiftOn() {
+    return !this.profile && !this.side && !this.hop && !!this.game.platform.sidebarAvailable?.();
+  }
+
+  private drawSideGift(ctx: Ctx, top: number) {
+    iconButton(ctx, this.taps, 'side', 690, top + 136, 58, 'gift');
+    if (sidebarGiftLeft(this.game.save)) dot(ctx, 690 + 24, top + 136 - 24, 10);
+  }
+
+  /**
+   * Douyin's 侧边栏 gift: the platform wants a visible entry on the home screen that sends players to
+   * the game's icon in Douyin's home side bar, where coming back earns a small daily gift.
+   */
+  private drawSideDialog(ctx: Ctx) {
+    const g = this.game;
+    const t = this.side!.t;
+    ctx.save();
+    const d = dialog(ctx, g, this.taps, 'side', 620, 500, t);
+    const x = d.x, y = d.y;
+    text(ctx, '抖音侧边栏礼包', 375, y + 54, 36, { bold: true });
+    icon(ctx, 'gift', 375, y + 148, 96);
+    const left = sidebarGiftLeft(g.save);
+    text(ctx, left ? `从抖音首页侧边栏进来，每天可领 ${SIDEBAR_GIFT} 金币` : '今天的礼包领过了，明天再来', 375, y + 232, 26, { maxWidth: d.w - 60 });
+    text(ctx, '点下面的按钮会跳到抖音首页的侧边栏，点「蛙趣送包裹」就回到游戏，礼包自动进账。', 375, y + 286, 21, { color: P.inkSoft, maxWidth: d.w - 70 });
+    button(ctx, x + 40, y + d.h - 108, d.w - 80, 80, left ? '去侧边栏看看' : '知道啦', {
+      primary: true, pressed: this.taps.add(left ? 'sideGo' : 'close', { x: x + 40, y: y + d.h - 108, w: d.w - 80, h: 80 }), size: 30,
+    });
+    ctx.restore();
   }
 
   /** Until day 1 is passed, only work is open, so a new player has one obvious place to go. */
@@ -393,6 +455,7 @@ export class HubScene implements Scene {
    */
   private get workDay() {
     const s = this.game.save;
+    if (this.game.demo) return DAYS.find((c) => !s.stamps[c.day]?.[0])?.day ?? 1;
     if (!s.cleared) return clamp(s.day, 1, DAYS.length);
     return DAYS.find((c) => !s.stamps[c.day] || s.stamps[c.day].some((got) => !got))?.day ?? DAYS.length;
   }
@@ -484,6 +547,8 @@ export class HubScene implements Scene {
     this.drawHeader(ctx);
     // the game club button itself is WeChat's own control on top; its name goes underneath
     if (g.platform.kind === 'wx' && this.gameClub()) clubLabel(ctx, CLUB.x + CLUB.s / 2, g.safeT + CLUB.y + CLUB.s + 18);
+    // Douyin's mandatory side bar gift, under the switches
+    if (this.sideGiftOn()) this.drawSideGift(ctx, g.safeT + 16);
 
     // back to work
     const day = this.workDay;
@@ -510,6 +575,7 @@ export class HubScene implements Scene {
     } else this.workBar(ctx, by, label, day, workDown, mapDown);
 
     if (this.profile) this.drawProfile(ctx);
+    if (this.side) this.drawSideDialog(ctx);
     // clear of the staff card's bottom edge
     this.toast.render(ctx, g.safeT + 140);
   }
@@ -820,7 +886,7 @@ export class HubScene implements Scene {
     ctx.stroke();
     pressOut(ctx, down, () => roundRect(ctx, card.x, card.y, card.w, card.h, 20));
 
-    coinPill(ctx, sp, 422, top + 2, s.coins, 0, { w: 140 });
+    coinPill(ctx, sp, 422, top + 2, this.game.balance, 0, { w: 140 });
     iconButton(ctx, taps, 'music', 612, top + 30, 58, s.music ? 'music' : 'musicOff');
     iconButton(ctx, taps, 'sfx', 690, top + 30, 58, s.sfx ? 'speaker' : 'mute');
     roundRect(ctx, 432, top + 68, 290, 34, 17);

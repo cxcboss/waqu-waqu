@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
+    "build:trial": "tsc --noEmit && vite build --mode trial",
     "preview": "vite preview --host",
     "font": "python3 scripts/subset_font.py",
     "deploy": "bash scripts/deploy.sh",
-    "build:wx": "python3 scripts/build_wx.py"
+    "build:wx": "python3 scripts/build_wx.py",
+    "build:tt": "python3 scripts/build_tt.py"
   },
   "devDependencies": {
     "typescript": "~5.6.3",

@@ -151,6 +151,26 @@ export class PhotoViewer {
     return SAVED[res];
   }
 
+  /** Shares the keepsake card through WeChat's image menu (chat / Moments / status). */
+  async sharePoster(name: string): Promise<string> {
+    const c = this.card(this.current);
+    if (!c) return '照片还没准备好';
+    if (!this.game.platform.shareImage) return '这个版本还不能分享';
+    const ok = await this.game.platform.shareImage(c, name);
+    return ok ? '' : '没能打开分享，试试存到手机';
+  }
+
+  /** Posts the keepsake card to the WeChat game club (needs the MiniGameCommon plugin). */
+  async postToClub(title: string): Promise<string> {
+    const c = this.card(this.current);
+    if (!c) return '照片还没准备好';
+    if (!this.game.platform.clubImage) return '这个版本还不能发游戏圈';
+    const ok = await this.game.platform.clubImage(c, title, '蛙趣送包裹 · 今天也在河上送快递');
+    if (!ok) return '没发出去，稍后再试';
+    this.game.audio.play('photo_shutter', { volume: 0.6 });
+    return '已经发到游戏圈啦';
+  }
+
   render(ctx: Ctx) {
     const g = this.game;
     const H = g.H;

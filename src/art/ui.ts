@@ -220,7 +220,8 @@ export function codeTag(ctx: Ctx, x: number, y: number, code: number, color: str
   ctx.fill();
   ctx.stroke();
   ctx.restore();
-  text(ctx, String(code), x, y + 4 * size, 28 * size, { color: color === P.gold ? INK : P.white, bold: true });
+  const fontSize = code >= 10 ? 22 : 28;
+  text(ctx, String(code), x, y + 4 * size, fontSize * size, { color: color === P.gold ? INK : P.white, bold: true });
 }
 
 /** Small house-number plate in the house's color. */

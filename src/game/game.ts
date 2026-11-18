@@ -12,6 +12,7 @@ import { stampCount, upgradeSave, type Achievement, type AlbumPhoto, type Career
 import { item, type GearId } from './catalog';
 import { DAYS } from './config';
 import { Loader } from './loading';
+import type { SupplyId } from './supplies';
 
 export interface Scene {
   /** Short name for the play statistics. */
@@ -89,9 +90,26 @@ export interface SaveData {
   secret: number;
   /** The year's ending has been shown (after day 30 was first passed). */
   ending: boolean;
+  // ---- voluntary rewarded video ads (save v4; older saves are filled in by upgradeSave)
+  /** The local calendar day (YYYY-MM-DD) the two counters below belong to. */
+  adDay: string;
+  /** Wage doublings used that day. */
+  adWage: number;
+  /** In-run revives used that day. */
+  adRevive: number;
+  /** Free cosmetic shop items claimed by watching a video that day (save v5). */
+  adGift: number;
+  // ---- Douyin's side bar gift (save v6; older saves are filled in by upgradeSave)
+  /** The local day the side bar gift was last handed over. */
+  sideDay: string;
+  /** How many times it has been handed over, for statistics. */
+  sideGift: number;
+  /** Single-use supplies the courier has in stock. */
+  supplies: Record<SupplyId, number>;
 }
 
 const SAVE_KEY = 'waqu.save.v1';
+const DEMO_SAVE_KEY = 'waqu.demo.save.v1';
 
 /** Saves from before the separate music and effects switches take both from the old `sound`. */
 function audioPrefs(s: SaveData) {
@@ -144,7 +162,7 @@ export class Game {
   /** Fade through black between scenes: out over the old one, then in over the new one. */
   private fade: { next: Scene | null; t: number } | null = null;
 
-  constructor(readonly platform: Platform, tm: TelemetryOptions = {}) {
+  constructor(readonly platform: Platform, tm: TelemetryOptions = {}, readonly demo = false) {
     const self = this;
     this.ctx = platform.canvas.getContext('2d')!;
     this.sprites = new SpriteBank(platform);
@@ -341,9 +359,10 @@ export class Game {
       }
     }
     if (!(dt >= 0) || dt > 0.25) dt = STEP; // tab switches, hiccups
+    const maxSteps = 5;
     this.acc += dt;
     let steps = 0;
-    while (this.acc >= STEP && steps < 5) {
+    while (this.acc >= STEP && steps < maxSteps) {
       this.stepFade(STEP);
       if (this.ready) this.scene?.update(STEP);
       else this.loader.update(STEP);
@@ -351,7 +370,7 @@ export class Game {
       this.acc -= STEP;
       steps++;
     }
-    if (steps === 5) this.acc = 0;
+    if (steps === maxSteps) this.acc = 0;
     const ctx = this.ctx;
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     if (this.ready && this.scene) this.scene.render(ctx);
@@ -403,7 +422,7 @@ export class Game {
 
   readSave(): SaveData {
     try {
-      const raw = this.platform.storageGet(SAVE_KEY);
+      const raw = (this.demo ? this.platform.storageGet(DEMO_SAVE_KEY) : null) ?? this.platform.storageGet(SAVE_KEY);
       // upgradeSave fills in and repairs whatever it's given, even something that isn't a save
       if (raw) return upgradeSave(JSON.parse(raw));
     } catch {
@@ -413,7 +432,15 @@ export class Game {
   }
 
   writeSave() {
-    this.platform.storageSet(SAVE_KEY, JSON.stringify(this.save));
+    this.platform.storageSet(this.demo ? DEMO_SAVE_KEY : SAVE_KEY, JSON.stringify(this.save));
+  }
+
+  get balance() {
+    return this.demo ? Infinity : this.save.coins;
+  }
+
+  get interactiveScene() {
+    return this.ready && !this.fade && !this.waiting ? this.scene : null;
   }
 
   /** Shows a ribbon for a rank-up, then one for each newly reached achievement. */

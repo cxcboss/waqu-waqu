@@ -131,6 +131,11 @@ export class EndingScene implements Scene {
     this.game.tm.log('ending_page', { i });
   }
 
+  get autoplayPage() {
+    if (this.pt < this.revealT() + 1.2) return null;
+    return this.btn.w ? { x: this.btn.x + this.btn.w / 2, y: this.btn.y + this.btn.h / 2 } : { x: 375, y: this.game.H * 0.61 };
+  }
+
   /** When the current page's words are all in. */
   private revealT() {
     const p = this.pages[this.page];

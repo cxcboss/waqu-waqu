@@ -15,7 +15,7 @@ export class WebPlatform implements Platform {
   private urls = new WeakMap<Canvas, string>();
   private overlay: { el: HTMLImageElement; src: Canvas | null; key: string } | null = null;
 
-  constructor() {
+  constructor(private toolbar: HTMLElement | null = null) {
     this.canvas = document.getElementById('game') as Canvas;
     this.probe = document.getElementById('safe-probe');
     // Keep iOS from scrolling or zooming the page while playing.
@@ -29,7 +29,7 @@ export class WebPlatform implements Platform {
 
   screen(): ScreenInfo {
     const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const vh = window.innerHeight - (this.toolbar?.offsetHeight ?? 0);
     let w = vw;
     let h = vh;
     // On wide screens (desktop, landscape) play in a centered portrait column.
@@ -37,11 +37,12 @@ export class WebPlatform implements Platform {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     this.canvas.style.width = `${w}px`;
     this.canvas.style.height = `${h}px`;
+    if (this.toolbar) this.toolbar.style.width = `${w}px`;
     let safeTop = 0;
     let safeBottom = 0;
     if (this.probe) {
       const cs = getComputedStyle(this.probe);
-      safeTop = parseFloat(cs.paddingTop) || 0;
+      safeTop = this.toolbar ? 0 : parseFloat(cs.paddingTop) || 0;
       safeBottom = parseFloat(cs.paddingBottom) || 0;
     }
     return { width: w, height: h, dpr, safeTop, safeBottom };
@@ -285,6 +286,23 @@ export class WebPlatform implements Platform {
     const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
     nav.share?.({ title: opts.title, url: location.href }).catch(() => undefined);
   }
+
+  async shareImage(canvas: Canvas, filename: string): Promise<boolean> {
+    const blob = this.blobs.get(canvas) ?? (await this.encode(canvas));
+    if (!blob) return false;
+    const file = new File([blob], filename, { type: blob.type });
+    const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean; share?: (d: ShareData) => Promise<void> };
+    if (!nav.share || !nav.canShare?.({ files: [file] })) return false;
+    try {
+      await nav.share({ files: [file], title: '蛙趣送包裹' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  clubImageAvailable(): boolean { return false; }
+  async clubImage(): Promise<boolean> { return false; }
 
   encodeImage(canvas: Canvas, quality: number): string | null {
     try {

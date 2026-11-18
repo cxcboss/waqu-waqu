@@ -4,11 +4,12 @@
 //   art/    the rest of the art                                                                         subpackage "art"
 //   audio/  sound and music                                                                             subpackage "audio"
 // The game asks for files by their web paths (art/x.webp, audio/…, fonts/x.woff2); `where` maps them to the package.
-import type { Canvas, ImageSource, Platform, SaveResult, ScreenInfo, Stream, TouchKind, TouchPoint } from './types';
+import type { Canvas, ImageSource, Platform, RewardedAdReason, SaveResult, ScreenInfo, Stream, TouchKind, TouchPoint } from './types';
 
 // The wx global and its objects, typed loosely: only what's used here.
 declare const wx: any;
 declare const __BUILD__: string;
+declare const requirePlugin: any;
 type WxTouch = { identifier: number; clientX: number; clientY: number };
 type WxTouchEvent = { changedTouches: WxTouch[] };
 
@@ -21,6 +22,13 @@ const BOTTOM_MIN = 24;
 const BOTTOM_AIR = 10;
 
 const SHARE_TITLE = '蛙趣送包裹：小青蛙在河上跳来跳去送快递';
+
+/**
+ * 流量主 → 广告位 里创建的「激励视频」广告位 id。留空时游戏完全不出现广告入口（旧版行为），
+ * 也不调用任何广告 API；拿到 id 后填这里、重新打包即可，玩法代码不用改。
+ * 注意：广告位通常要等版本发布后才审核通过，审核期间 show() 会失败，这里一律静默降级。
+ */
+const REWARDED_AD_UNIT_ID = 'adunit-fd1ac8ed1a768bbd';
 
 const call = <T = any>(api: string, o: Record<string, unknown> = {}): Promise<T> =>
   new Promise((resolve, reject) => wx[api]({ ...o, success: resolve, fail: reject }));
@@ -45,6 +53,21 @@ export class WxPlatform implements Platform {
   private club: any = null;
   private clubAt = '';
   private clubFailed = false;
+  /** MiniGameCommon's game club, for posting a photo into the game club. Null when the plugin is absent. */
+  private clubPost: any = null;
+  private clubPostTried = false;
+  /** WeChat asks for one global RewardedVideoAd for the whole game, created on first use. */
+  private ad: any = null;
+  /** One video at a time: a second tap while the first is up must not stack two rewards. */
+  private adBusy = false;
+  private failAd: (() => void) | null = null;
+  /**
+   * WeChat caps how many rewarded videos one user can watch per day (the number is not published).
+   * Once the platform stops filling (1004) or the unit is unusable (1002/1005-1008/2001-2003),
+   * the entrance quietly disappears until an ad loads again. This is the daily revive ceiling:
+   * we deliberately don't keep a local daily counter for revives.
+   */
+  private adBlocked = false;
   /** On a computer: the window is minimized. WeChat doesn't send onHide for that (the game is meant to keep running), so it's passed on as going to the background here. */
   private minimized = false;
   /** Keys held down, and when each last sent a keydown: WeChat has no "repeat" flag, and a held Esc mustn't flick the pause menu open and shut. */
@@ -461,6 +484,61 @@ export class WxPlatform implements Platform {
     wx.shareAppMessage({ title: opts.title, imageUrl });
   }
 
+  /**
+   * The MiniGameCommon plugin is optional: it only exists once the account has been granted the
+   * plugin AND game.json declares it (build:wx --club-plugin). Nothing here throws when it hasn't —
+   * clubImageAvailable() then stays false and the "post to game club" button is simply not drawn.
+   */
+  private clubPoster(): any {
+    if (this.clubPostTried) return this.clubPost;
+    this.clubPostTried = true;
+    try {
+      if (typeof requirePlugin === 'undefined') return null;
+      const make = requirePlugin('MiniGameCommon', { enableRequireHostModule: true, customEnv: { wx } }).default;
+      const common = typeof make === 'function' ? make() : null;
+      if (common && typeof common.canIUse === 'function' && common.canIUse('shareImageToGameCenter')) {
+        this.clubPost = common.createGameClub?.() ?? null;
+      }
+    } catch (e) {
+      this.log?.('info', `club plugin off: ${String((e as Error)?.message ?? e).slice(0, 60)}`);
+    }
+    return this.clubPost;
+  }
+
+  async shareImage(canvas: Canvas, _filename: string): Promise<boolean> {
+    try {
+      // the image menu has to open inside the tap, so export the picture synchronously
+      const path = (canvas as any).toTempFilePathSync({ fileType: 'jpg', quality: 0.92 });
+      await call('showShareImageMenu', { path });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  clubImageAvailable(): boolean {
+    return !!this.clubPoster();
+  }
+
+  async clubImage(canvas: Canvas, title: string, content: string): Promise<boolean> {
+    const club = this.clubPoster();
+    if (!club) return false;
+    try {
+      const path = await new Promise<string>((resolve, reject) => {
+        (canvas as any).toTempFilePath({
+          fileType: 'jpg', quality: 0.92,
+          success: (r: { tempFilePath: string }) => resolve(r.tempFilePath),
+          fail: reject,
+        });
+      });
+      await club.shareImageToGameCenter({ path, title, content });
+      return true;
+    } catch (e) {
+      this.log?.('warn', `club share ${String((e as Error)?.message ?? e).slice(0, 80)}`);
+      return false;
+    }
+  }
+
   gameClub(rect: { x: number; y: number; w: number; h: number } | null): void {
     if (this.clubFailed) return;
     if (!rect) {
@@ -538,6 +616,96 @@ export class WxPlatform implements Platform {
       const r = e.reason;
       cb(String(r?.message ?? r).slice(0, 200), `promise ${r?.stack?.split('\n').slice(0, 3).join(' | ') ?? ''}`.slice(0, 400));
     });
+  }
+
+  /**
+   * Only the mini game has rewarded videos. With no ad unit configured, or once WeChat's own
+   * per-user daily cap has stopped filling ads, no ad entrance is shown at all. This is what
+   * makes the platform's cap the ceiling instead of a hard-coded daily number in the game.
+   */
+  adsAvailable(): boolean {
+    return !!REWARDED_AD_UNIT_ID && typeof wx !== 'undefined'
+      && typeof wx.createRewardedVideoAd === 'function' && !this.adBlocked;
+  }
+
+  /**
+   * One global RewardedVideoAd, as WeChat asks. The promise settles on the ad's close event
+   * (isEnded), and every failure quietly resolves false: an ad must never gate a run or a reward.
+   * Error codes 1002/1004/1005-1008/2001-2003 (unit not approved, no fill, too many views a day,
+   * wrong id, etc.) all land here as "no ad this time".
+   */
+  async showRewardedAd(reason: RewardedAdReason): Promise<boolean> {
+    if (!this.adsAvailable() || this.adBusy) return false;
+    if (!this.ad) {
+      try {
+        this.ad = wx.createRewardedVideoAd({ adUnitId: REWARDED_AD_UNIT_ID });
+        // registered once, as the docs ask; onLoad means there is an ad to show again
+        this.ad.onLoad(() => { this.adBlocked = false; });
+        this.ad.onError((e: { errCode?: number; errMsg?: string }) => {
+          const code = e?.errCode ?? 0;
+          this.log?.('warn', `waqu ad err ${code} ${e?.errMsg ?? ''}`);
+          // 1000/1003 are temporary backend errors; everything else means no ad for now
+          if (code && code !== 1000 && code !== 1003) this.adBlocked = true;
+          this.failAd?.();
+        });
+      } catch (e) {
+        this.log?.('warn', `waqu ad create ${String(e)}`);
+        this.adBlocked = true;
+        return false;
+      }
+    }
+    const ad = this.ad;
+    this.adBusy = true;
+    try {
+      return await new Promise<boolean>((resolve) => {
+        let settled = false;
+        let retried = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const finish = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          ad.offClose?.(onClose);
+          resolve(ok);
+        };
+        // Old clients omit the close result for legacy rewards. New supplies require confirmed completion.
+        const onClose = (res: { isEnded?: boolean } | undefined) => finish(res?.isEnded === true || (!res && reason !== 'supply'));
+        this.failAd = () => finish(false);
+        ad.onClose(onClose);
+        // a stuck ad must never leave the game waiting
+        timer = setTimeout(() => finish(false), 180000);
+        const show = () => {
+          try {
+            const p = ad.show();
+            if (p && typeof p.catch === 'function') p.catch(async () => {
+              // the documented retry: not loaded yet, so load() once and show() again
+              if (retried || settled) return finish(false);
+              retried = true;
+              try {
+                await ad.load();
+                if (!settled) show();
+              } catch {
+                this.adBlocked = true;
+                finish(false);
+              }
+            });
+          } catch { finish(false); }
+        };
+        show();
+      });
+    } catch {
+      return false;
+    } finally {
+      this.adBusy = false;
+      this.failAd = null;
+      this.log?.('info', `waqu ad ${reason} done`);
+      // warm up the next video; no fill is normal while the unit is under review or the day's cap is spent.
+      // load() rejects asynchronously, so a plain try/catch would leave an unhandled rejection behind.
+      try {
+        const p = this.ad?.load();
+        if (p && typeof p.catch === 'function') p.catch(() => { /* stay quiet */ });
+      } catch { /* stay quiet */ }
+    }
   }
 
   now(): number {

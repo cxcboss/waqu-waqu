@@ -7,6 +7,7 @@ export type Ctx = CanvasRenderingContext2D;
 export type ImageSource = CanvasImageSource & { width: number; height: number };
 
 export type TouchKind = 'start' | 'move' | 'end' | 'cancel';
+export type RewardedAdReason = 'wage' | 'revive' | 'gift' | 'supply';
 /** 'album': it's in the phone's photos (WeChat); 'denied': the player hasn't let the game save there. */
 export type SaveResult = 'shared' | 'downloaded' | 'album' | 'longpress' | 'cancelled' | 'denied' | 'failed';
 /** Pointer position in CSS pixels relative to the main canvas. */
@@ -48,7 +49,7 @@ export interface ScreenInfo {
 }
 
 export interface Platform {
-  readonly kind: 'web' | 'wx';
+  readonly kind: 'web' | 'wx' | 'tt';
   readonly canvas: Canvas;
   /** Pictures laid over the game with `showImage` can be long-pressed and saved (browsers; not the mini game). */
   readonly longPressSave: boolean;
@@ -117,10 +118,36 @@ export interface Platform {
   showImage(canvas: Canvas | null, rect?: { x: number; y: number; w: number; h: number }): void;
   share(opts: { title: string; canvas?: Canvas }): void;
   /**
+   * Opens WeChat's picture share menu (chat / Moments / status) with a real image, or the web
+   * share sheet. Resolves false when the client is too old or the player cancelled.
+   */
+  shareImage?(canvas: Canvas, filename: string): Promise<boolean>;
+  /** Whether the MiniGameCommon plugin is usable for posting a picture to the game club. */
+  clubImageAvailable?(): boolean;  /** Posts a keepsake card to WeChat's game club. Mini game only; never throws. */
+  clubImage?(canvas: Canvas, title: string, content: string): Promise<boolean>;
+  /**
    * WeChat's own game club button (游戏圈, wx.createGameClubButton) over the game at `rect` (CSS pixels from the
    * game canvas' top-left); null hides it. Called every frame, acts only on a change. Mini game only.
    */
   gameClub?(rect: { x: number; y: number; w: number; h: number } | null): void;
+  /**
+   * Douyin's 侧边栏复访 (a mandatory capability there): whether the game may offer the "from Douyin's
+   * home side bar" gift, and sending the player there with tt.navigateToScene. Absent elsewhere.
+   */
+  sidebarAvailable?(): boolean;
+  openSidebar?(): void;
+  /** True once if this open came from the side bar, so the gift can be handed over. Absent elsewhere. */
+  fromSidebar?(): boolean;
+  /**
+   * Whether a rewarded video ad unit is configured and can be offered. Mini game only; with no
+   * unit (or before it has been approved) the game shows no ad buttons at all.
+   */
+  adsAvailable?(): boolean;
+  /**
+   * Shows a rewarded video ad. Resolves true only when the player watched it to the end and the
+   * reward is due; false when it was skipped, unavailable or failed. Never throws. Mini game only.
+   */
+  showRewardedAd?(reason: RewardedAdReason): Promise<boolean>;
   /** A small JPEG of `canvas` as a data URL, for keeping photos in storage; null if it can't be made. */
   encodeImage(canvas: Canvas, quality: number): string | null;
   /** Asks the player to type a short text (the frog's name); null when cancelled. */

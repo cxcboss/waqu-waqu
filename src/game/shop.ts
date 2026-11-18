@@ -6,12 +6,14 @@ import { button, ellipse, roundRect, text, wrapText, type Rect } from '../art/ui
 import { clamp } from '../engine/math';
 import type { Ctx } from '../platform/types';
 import { ACHIEVEMENTS, checkAchievements, spend } from './career';
+import { adAllowed, adClaim, watchAd } from './ads';
 import { GEAR, ITEMS, dailyDeal, gearDef, gearMax, item, priceOf, type GearId, type Item, type ItemKind } from './catalog';
 import type { Game, Scene } from './game';
 import { itemIcon } from './home';
 import { HubScene } from './hub';
 import { Scroller, Taps, Toast, dialog, drawDressedFrog, header, iconAt, pill, tabs } from './menu';
 import { SCENE_MUSIC } from './sound';
+import { canShowSupplies, SupplyPanel } from './supplies';
 
 const TABS = ['装备', '衣帽', '家居', '相框'];
 const TAB_ICONS = ['cat_gear', 'cat_hat', 'cat_deco', 'cat_frame'];
@@ -39,6 +41,9 @@ export class ShopScene implements Scene {
   /** Seconds left of the hamster's worried look (not enough coins) and of the parcel on the counter. */
   private think = 0;
   private gift = 0;
+  /** One rewarded video for the daily free cosmetic at a time. */
+  private adGiftBusy = false;
+  private supplyPanel: SupplyPanel | null = null;
 
   constructor(private game: Game, tab = 0) {
     this.tab = tab;
@@ -71,20 +76,24 @@ export class ShopScene implements Scene {
   }
 
   down(x: number, y: number) {
+    if (this.supplyPanel) return this.supplyPanel.down(x, y);
     this.taps.down(x, y);
     if (!this.pick) this.scroll.down(x, y);
   }
   move(x: number, y: number) {
+    if (this.supplyPanel) return;
     this.taps.move(x, y);
     this.scroll.move(x, y);
   }
   up(x: number, y: number) {
+    if (this.supplyPanel) return this.supplyPanel.up(x, y);
     this.scroll.up();
     const id = this.taps.up(x, y);
     if (!id) return;
     const au = this.game.audio;
     if (this.pick) {
       if (id === 'buy') this.buy();
+      else if (id === 'adGift') void this.adGift();
       else if (id === 'wear') this.wear();
       else if (id === 'pickOut' || id === 'close') {
         au.play('ui_close');
@@ -96,6 +105,9 @@ export class ShopScene implements Scene {
     if (id === 'back') {
       au.play('ui_back');
       this.game.go(new HubScene(this.game), true);
+    } else if (id === 'supplies' && canShowSupplies(this.game)) {
+      au.play('ui_open');
+      this.supplyPanel = new SupplyPanel(this.game, () => { this.supplyPanel = null; });
     } else if (id.startsWith('tab')) {
       const i = Number(id.slice(3));
       if (i === this.tab) return;
@@ -115,6 +127,7 @@ export class ShopScene implements Scene {
   }
 
   escape() {
+    if (this.supplyPanel) return this.supplyPanel.escape();
     if (this.pick) {
       this.game.audio.play('ui_close');
       this.pick = null;
@@ -143,7 +156,7 @@ export class ShopScene implements Scene {
     const s = g.save;
     const price = this.cost(p);
     if (price === null) return;
-    if (s.coins < price) {
+    if (g.balance < price) {
       g.audio.play('ui_error');
       g.audio.play('hamster_hmm', { delay: 0.2 });
       this.say(`还差 ${price - s.coins} 金币哦，多送几单再来！`);
@@ -154,13 +167,13 @@ export class ShopScene implements Scene {
       const lv = (s.gear[p.gear] ?? 1) + 1;
       s.gear[p.gear] = lv;
       const d = gearDef(p.gear);
-      spend(s, `升级${d.name}（${d.looks[lv - 1]}）`, price);
+      spend(s, `升级${d.name}（${d.looks[lv - 1]}）`, price, undefined, g.demo);
       g.audio.play('upgrade', { delay: 0.15 });
       this.toast.show(`${d.name}升级了：${d.effect(lv)}`);
     } else {
       const it = item(p.item)!;
       s.owned.push(it.id);
-      spend(s, `买了${it.name}`, price);
+      spend(s, `买了${it.name}`, price, undefined, g.demo);
       if (it.kind === 'hat' || it.kind === 'neck') {
         s.wear[it.kind] = it.id;
         this.toast.show('已经戴上啦，回家的衣柜里可以换');
@@ -177,6 +190,41 @@ export class ShopScene implements Scene {
     g.celebrate(checkAchievements(s));
     g.writeSave();
     if ('item' in p) this.pick = null;
+    this.tryOn = null;
+  }
+
+  /** Claim one cosmetic for the daily video, including any achievement earned by owning it. */
+  private async adGift() {
+    const p = this.pick;
+    if (!p || !('item' in p) || this.adGiftBusy) return;
+    const g = this.game, s = g.save;
+    const id = p.item;
+    const it = item(id)!;
+    if (s.owned.includes(id) || it.price === null) return;
+    if (!g.platform.adsAvailable?.() || !adAllowed(s, 'gift')) return;
+    this.adGiftBusy = true;
+    g.audio.play('ui_tap');
+    g.tm.log('ad_show', { where: 'shop', day: s.day });
+    const ok = await watchAd(g, 'gift');
+    g.tm.log('ad_done', { where: 'shop', day: s.day, ok });
+    this.adGiftBusy = false;
+    if (!ok) return;
+    // the day may have rolled over, or the same tap may have fired twice while the video was up
+    if (!adAllowed(s, 'gift') || s.owned.includes(id)) return;
+    adClaim(s, 'gift');
+    s.owned.push(id);
+    if (it.kind === 'hat' || it.kind === 'neck') s.wear[it.kind] = id;
+    g.celebrate(checkAchievements(s));
+    g.writeSave();
+    g.audio.play('purchase');
+    g.audio.play('hamster_thanks', { delay: 0.5 });
+    g.tm.log('shop_ad_gift', { item: id });
+    this.toast.show(`${it.name} 到手啦！`);
+    this.flash = 1;
+    this.cheer = 0.8;
+    this.gift = 1.1;
+    this.say('今天的免费礼，收好啦～');
+    if (this.pick && 'item' in this.pick && this.pick.item === id) this.pick = null;
     this.tryOn = null;
   }
 
@@ -200,6 +248,7 @@ export class ShopScene implements Scene {
     this.taps.clear();
     const bannerTop = top + 96, bannerBot = bannerTop + 330;
     this.drawCounter(ctx, bannerTop, bannerBot);
+    if (canShowSupplies(g)) pill(ctx, this.taps, 'supplies', 281, bannerBot - 58, 188, 52, '送件补给', { icon: 'parcel', size: 23 });
 
     const sheetTop = bannerBot + 70;
     tabs(ctx, this.taps, 'tab', 24, sheetTop - 58, 702, TABS, this.tab, [], { sp: this.game.sprites, names: TAB_ICONS });
@@ -218,6 +267,7 @@ export class ShopScene implements Scene {
     header(ctx, g, this.taps, '福利社', { flash: this.flash });
     if (this.pick) this.drawPick(ctx);
     this.toast.render(ctx, top + 110);
+    this.supplyPanel?.render(ctx);
   }
 
   /** The shop window: shelves behind, the hamster at the till, the frog on this side. */
@@ -432,7 +482,7 @@ export class ShopScene implements Scene {
     const s = g.save;
     ctx.save();
     const d = dialog(ctx, g, this.taps, 'pick', 640, 640, p.t);
-    pill(ctx, this.taps, 'close', d.x + d.w - 84, d.y + 18, 64, 56, '✕', { size: 28 });
+    pill(ctx, this.taps, 'close', d.x + d.w - 84, d.y + 18, 64, 56, '×', { size: 28 });
     const cost = this.cost(p);
     let name: string, lines: string[], status = '';
     roundRect(ctx, d.x + 40, d.y + 90, d.w - 80, 220, 18);
@@ -477,10 +527,21 @@ export class ShopScene implements Scene {
       }
     }
     const by = d.y + d.h - 110;
+    // Cosmetics can also be had for a short video, once a day. Gear upgrades never can, and
+    // achievement-only items stay locked behind their achievement.
+    const giftOK = 'item' in p && cost !== null && !this.adGiftBusy
+      && !!g.platform.adsAvailable?.() && adAllowed(s, 'gift') && item(p.item)!.price !== null;
     if (cost !== null) {
       const enough = s.coins >= cost;
-      const down = this.taps.add('buy', { x: 375 - 170, y: by, w: 340, h: 88 });
-      button(ctx, 375 - 170, by, 340, 88, enough ? `${cost} 金币 · ${'gear' in p ? '升级' : '买下'}` : `还差 ${cost - s.coins} 金币`, { primary: enough, pressed: down, size: 30 });
+      if (giftOK) {
+        const down = this.taps.add('buy', { x: 105, y: by, w: 250, h: 88 });
+        button(ctx, 105, by, 250, 88, enough ? `${cost} 金币` : `还差 ${cost - s.coins}`, { primary: enough, pressed: down, size: 26 });
+        const gDown = this.taps.add('adGift', { x: 375, y: by, w: 270, h: 88 });
+        button(ctx, 375, by, 270, 88, '看短片 · 免费领', { primary: !enough, pressed: gDown, size: 26 });
+      } else {
+        const down = this.taps.add('buy', { x: 375 - 170, y: by, w: 340, h: 88 });
+        button(ctx, 375 - 170, by, 340, 88, enough ? `${cost} 金币 · ${'gear' in p ? '升级' : '买下'}` : `还差 ${cost - s.coins} 金币`, { primary: enough, pressed: down, size: 30 });
+      }
     } else {
       text(ctx, status, 375, by - 10, 26, { bold: true, color: P.lilyDeep, maxWidth: d.w - 60 });
       if ('item' in p && s.owned.includes(p.item) && ['hat', 'neck'].includes(item(p.item)!.kind)) {

@@ -1,5 +1,6 @@
 // The frog's working life outside a single day: career totals, the work log, river news, the money
 // book, ranks and achievements. Everything here is worked out from finished days and kept in the save.
+import { SUPPLY_CAP } from './ads';
 import { GEAR, STARTER_ITEMS, gearMax, item, type GearId } from './catalog';
 import { DAYS, YEAR_END, dayLabel } from './config';
 import type { SaveData } from './game';
@@ -186,6 +187,20 @@ export function upgradeSave(raw: unknown): SaveData {
   // note and photo ids come from this counter: never hand out one that's already taken
   const used = [...s.notes.map((n) => n.id), ...s.album.map((a) => Number(a.id.replace(/^p/, '')) || 0)];
   s.seq = Math.max(int(o.seq, 0), ...used, 0);
+  // rewarded-video counters: new in saves that predate ads, otherwise kept as they were
+  s.adDay = isStr(o.adDay) && /^\d{4}-\d{2}-\d{2}$/.test(o.adDay) ? o.adDay : '';
+  s.adWage = int(o.adWage, 0);
+  s.adRevive = int(o.adRevive, 0);
+  s.adGift = int(o.adGift, 0);
+  // the Douyin side bar gift: new in saves that predate it
+  s.sideDay = isStr(o.sideDay) && /^\d{4}-\d{2}-\d{2}$/.test(o.sideDay) ? o.sideDay : '';
+  s.sideGift = int(o.sideGift, 0);
+  const supplies = isObj(o.supplies) ? o.supplies : {};
+  s.supplies = {
+    rope: int(supplies.rope, 0, 0, SUPPLY_CAP),
+    wrap: int(supplies.wrap, 0, 0, SUPPLY_CAP),
+    whistle: int(supplies.whistle, 0, 0, SUPPLY_CAP),
+  };
 
   // a day passed before later days existed (or before the unlock was saved) still opens the next one
   for (let d = DAYS.length - 1; d >= 1; d--) if (s.stamps[d]?.[0]) { s.day = Math.max(s.day, d + 1); break; }
@@ -438,8 +453,8 @@ export function recordDay(
 }
 
 /** Buying something in the shop: coins out, a line in the book, and any achievement it brings. */
-export function spend(s: SaveData, text: string, price: number, now = Date.now()) {
-  s.coins -= price;
+export function spend(s: SaveData, text: string, price: number, now = Date.now(), unlimited = false) {
+  if (!unlimited) s.coins -= price;
   s.career.spent += price;
   addEntry(s, text, -price, now);
 }

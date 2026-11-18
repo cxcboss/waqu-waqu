@@ -254,7 +254,7 @@ export function iconButton(ctx: Ctx, taps: Taps, id: string, cx: number, cy: num
  * right edge is at x and it grows to the left to fit the number.
  */
 export function coinPill(ctx: Ctx, _sp: SpriteBank, x: number, y: number, coins: number, flash = 0, o: { w?: number; right?: boolean } = {}) {
-  const h = 56, s = String(coins);
+  const h = 56, s = coins === Infinity ? '∞' : String(coins);
   ctx.save();
   ctx.font = font(28, true);
   const tw = ctx.measureText(s).width;
@@ -307,7 +307,7 @@ function headerBar(ctx: Ctx, game: Game, title: string, o: { back?: string; flas
     icon(ctx, o.icon, 375 - tw / 2 - 2, top + 48, 44);
     text(ctx, title, 375 + 24, top + 49, 34, { bold: true, maxWidth: 250 });
   } else text(ctx, title, 375, top + 49, 34, { bold: true, maxWidth: 300 });
-  coinPill(ctx, game.sprites, 724, top + 20, game.save.coins, o.flash ?? 0, { right: true });
+  coinPill(ctx, game.sprites, 724, top + 20, game.balance, o.flash ?? 0, { right: true });
 }
 
 /** Draws a painted sprite centred on (x, y) with its longer side `size` long; false while it isn't loaded. */

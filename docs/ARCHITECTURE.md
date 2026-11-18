@@ -46,9 +46,9 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 
 ## 部署
 
-- `npm run deploy`：打包后把 `dist/` **强推**到 `gh-pages`，GitHub Pages 约 1 分钟生效：https://cxcboss.github.io/waqu-waqu/
-- 旧的预览地址（/preview/、/preview-play/、/preview-residents/、/preview-home/）由 deploy.sh 生成跳转页，自动跳回正式版。
-- 以后要再发预览：把 dist 放进 gh-pages 的 `preview-xxx/` 子目录，在现有 gh-pages 上叠普通提交，不要强推；`/preview…/` 路径不发试玩数据。下一次 `npm run deploy` 会冲掉预览。
+- `npm run deploy` 打包试玩版，把 `dist/` 提交到现有 `gh-pages` 的根目录。试玩入口：https://cxcboss.github.io/waqu-waqu/
+- 旧的预览地址（/preview/、/preview-play/、/preview-residents/、/preview-home/）跳回试玩版，优先保留已发出的入口。
+- `npm run build:trial` 为试玩、直播使用。自动玩由 `game/autopilot.ts` 规划操作，沿用 `PlayScene` 的输入和结算。普通网页仍使用 `npm run build`。
 - 改了文案要先 `npm run font` 重新裁剪霞鹜文楷字体。
 
 ## 分支状态（2026-10-22）
@@ -66,7 +66,7 @@ TypeScript + Canvas 2D + Vite，没有游戏引擎。一个 `Game` 对象管画�
 旧分支保留没删，以后的新工作从 `main` 开新分支。
 
 ## 部署（两处）
-- GitHub Pages：`npm run deploy`（scripts/deploy.sh，强推 gh-pages）。
+- GitHub Pages：`npm run deploy`（scripts/deploy.sh，更新 gh-pages）。
 - Cloudflare Pages：`scripts/deploy-cf.sh`，项目名 `waqu-waqu`，凭据从环境变量 `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` 读，不要写进仓库。缓存规则在 `public/_headers`。
 - 加载页：`src/game/loading.ts`（贪吃蛙小游戏，素材加载完前显示，明确标注「加载中」）。
 

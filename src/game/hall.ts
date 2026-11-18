@@ -17,7 +17,7 @@ import { HubScene } from './hub';
 import { drawStamp } from './map';
 import { Scroller, Taps, Toast, dot, header, iconAt, shortDate, tabs } from './menu';
 import { SCENE_MUSIC } from './sound';
-import { PhotoViewer, type ViewerPhoto } from './viewer';
+import { PhotoViewer, type ViewerAction, type ViewerPhoto } from './viewer';
 
 const TABS = ['送单', '日志', '相册', '荣誉', '动态'];
 const TAB_ICONS = ['tab_record', 'tab_log', 'tab_album', 'tab_honour', 'tab_news'];
@@ -138,8 +138,15 @@ export class HallScene implements Scene {
 
   private openPhoto(i: number) {
     this.game.tm.log('album_view', { i, n: this.game.album.list.length });
-    this.viewer = new PhotoViewer(this.game, this.photos(), i,
-      () => [{ id: 'close', label: '关闭' }, { id: 'del', label: '移出相册' }, { id: 'save', label: '存到手机', primary: true }],
+    const acts: ViewerAction[] = [
+      { id: 'close', label: '关闭' },
+      { id: 'del', label: '移出相册' },
+      { id: 'save', label: '存到手机', primary: true },
+    ];
+    const pl = this.game.platform;
+    if (pl.shareImage) acts.push({ id: 'poster', label: '分享海报' });
+    if (pl.clubImageAvailable?.()) acts.push({ id: 'club', label: '发到游戏圈' });
+    this.viewer = new PhotoViewer(this.game, this.photos(), i, () => acts,
       (id, k) => this.viewerAction(id, k), '相册');
   }
 
@@ -153,6 +160,14 @@ export class HallScene implements Scene {
     } else if (id === 'save') {
       this.game.audio.play('ui_tap');
       void v.save(`waqu-album-${i + 1}.jpg`).then((m) => m && this.toast.show(m));
+    } else if (id === 'poster') {
+      this.game.audio.play('ui_tap');
+      this.game.tm.log('photo_share', { from: 'album', i });
+      void v.sharePoster(`waqu-album-${i + 1}.jpg`).then((m) => m && this.toast.show(m));
+    } else if (id === 'club') {
+      this.game.audio.play('ui_tap');
+      this.game.tm.log('photo_club', { from: 'album', i });
+      void v.postToClub('蛙趣快递 · 相册').then((m) => m && this.toast.show(m));
     } else if (id === 'del') {
       const a = al.list[i];
       if (!a) return;

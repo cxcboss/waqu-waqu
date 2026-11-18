@@ -85,8 +85,8 @@ export const DAYS: DayConfig[] = [
       rows: [
         ['box0', '从运输车上【取包裹】'],
         ['code', '送到挂着【相同取件码】的房子'],
-        ['hand', '按住【屏幕中间】往下拉，松手就跳'],
-        ['frog_swim', '别掉进河里；每天有【一次救命绳】'],
+        ['hand', '朝目标的【反方向拖】，松手就跳'],
+        ['frog_swim', '掉进河里，游到【荷叶旁】再跳上去'],
         ['frog_nervous', '按住别太久，【5 秒】不松手脚会累'],
       ],
     },
@@ -175,7 +175,7 @@ export const chapterOf = (day: number) => Math.max(0, Math.floor((day - 1) / DAY
 /** The last day of the year: passing it plays the ending and opens the seventh chapter. */
 export const YEAR_END = 30;
 
-/** The two storm days are allowed to be failed with half the parcels. */
+/** Delivering half the parcels is enough to pass either storm day. */
 const HARD_DAYS = [15, 25];
 /** Share of parcels that have to reach the right house for the day to count as passed. */
 export const PASS_RATE = 0.6;
@@ -250,7 +250,7 @@ const LATER: Later[] = [
   L('河狸的水坝', 56, 9, 9, 1, 1, 20, MIX, { kind: 'returns', label: '退货件全部收回' }, '河狸修了水坝，还有退货要收', { dam: 2, return: 2, rapids: 1 }, ['dam', 'return']),
   L('下雨了', 58, 9, 10, 2, 1, 20, MIX, noWet, '雨天石头滑，别泡了包裹', { slip: 6, rain: 1, rapids: 1 }, ['slip']),
   L('漩涡湾', 58, 10, 10, 2, 2, 20, MIX, fast(20), '漩涡卷着荷叶转，看准再跳', { whirl: 2, slip: 2, rain: 1 }, ['whirl']),
-  L('暴雨夜班', 62, 10, 10, 3, 2, 20, [1, 2, 2, 1], noWrong, '超难关：暴雨夜，送对五成就算过', { storm: 1, rain: 1, slip: 2, whirl: 1 }, ['storm']),
+  L('暴雨夜班', 65, 10, 10, 3, 2, 20, [1, 2, 2, 1], noWrong, '超难关：暴雨夜，送对五成就算过', { storm: 1, rain: 1, slip: 2, whirl: 1 }, ['storm']),
   // 秋 · 枫叶溪
   L('枫叶飘落', 54, 9, 9, 1, 1, 20, MIX, noFall, '落叶只能踩一次', { leaf: 8 }, ['leaf']),
   L('起风了', 56, 9, 10, 1, 1, 20, MIX, fast(18), '起风了，风里跳会被吹偏', { gust: 1, leaf: 4 }, ['gust']),
@@ -262,7 +262,7 @@ const LATER: Later[] = [
   L('薄冰', 58, 9, 10, 1, 2, 20, MIX, noWet, '薄冰踩两次就会裂', { thin: 7, floe: 3, snow: 1 }, ['thin']),
   L('熊宝宝在冬眠', 54, 9, 9, 1, 1, 20, MIX, { kind: 'quiet', label: '没吵醒熊宝宝' }, '熊宝宝在冬眠，它家附近轻轻跳', { quiet: 1, floe: 3, thin: 2, snow: 1 }, ['quiet']),
   L('冰河急弯', 62, 10, 10, 2, 2, 20, MIX, intact('保温件全部热乎乎送到'), '保温件放久了会凉', { warm: 3, thin: 3, floe: 3, snow: 1 }, ['warm']),
-  L('暴风雪', 66, 10, 10, 3, 2, 20, [1, 2, 2, 1], noWrong, '超难关：暴风雪，送对五成就算过', { blizzard: 1, snow: 1, floe: 3, thin: 2 }, ['blizzard']),
+  L('暴风雪', 69, 10, 10, 3, 2, 20, [1, 2, 2, 1], noWrong, '超难关：暴风雪，送对五成就算过', { blizzard: 1, snow: 1, floe: 3, thin: 2 }, ['blizzard']),
   // 年末 · 港口集市
   L('港口初到', 58, 10, 10, 1, 1, 20, MIX, noFall, '港口有栈桥和渡船', { pier: 3, ferry: 3 }, ['pier', 'ferry']),
   L('起重机', 60, 10, 10, 2, 1, 20, [1, 1, 2, 2], multi(2), '跳上吊钩荡过去', { hook: 3, pier: 2, ferry: 2 }, ['hook']),
@@ -274,7 +274,7 @@ const LATER: Later[] = [
   L('春风落叶', 62, 10, 10, 2, 2, 20, MIX, noFall, '阵风里踩落叶，看准风向', { gust: 1, leaf: 7, turtle: 2 }),
   L('渡口冷链', 62, 10, 11, 3, 2, 20, MIX, fast(18), '渡船来回开，冷藏件别化了', { ferry: 4, pier: 2, cold: 3, rapids: 1 }),
   L('夜雨急流', 64, 10, 10, 2, 2, 20, MIX, { kind: 'returns', label: '退货件全部收回' }, '夜里下雨，急流里收退货', { night: 1, rain: 1, rapids: 2, slip: 3, return: 2 }),
-  L('环河大联运', 68, 11, 12, 3, 3, 20, MIX, allIn, '全河段大联运：一年的本事全用上', { bud: 3, turtle: 2, whirl: 1, leaf: 3, floe: 3, ferry: 2, hook: 1, fragile: 2, cold: 2, gull: 1 }),
+  L('环河大联运', 71, 11, 12, 3, 3, 20, MIX, allIn, '全河段大联运：一年的本事全用上', { bud: 3, turtle: 2, whirl: 1, leaf: 3, floe: 3, ferry: 2, hook: 1, fragile: 2, cold: 2, gull: 1 }),
 ];
 
 for (const [i, d] of LATER.entries()) {
@@ -413,8 +413,6 @@ export const TUNING = {
   // Money
   wrongPenalty: 5,
   wetPenalty: 5,
-  /** The lifeline costs a little: the truck's tow isn't free. */
-  ropePenalty: 5,
   /** A landing this close to a pad's edge (design units) counts as on it; less on later days and with a heavy bag. */
   snapEarly: 50,
   snapLate: 30,

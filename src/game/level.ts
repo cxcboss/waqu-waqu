@@ -129,7 +129,7 @@ export type OrderState = 'pool' | 'bag' | 'float' | 'delivered' | 'wrong' | 'wet
 
 export interface Order {
   id: number;
-  /** Pickup code 0–9, unique within the day; shown on the card and on the house waiting for it. */
+  /** All parcels for a house share its pickup code. Each recipient house has its own code that day. */
   code: number;
   house: House;
   size: Size;
@@ -331,17 +331,13 @@ export function buildLevel(cfg: DayConfig, H: number): Level {
       state: 'pool', deadline: 0, urgentAt: 0, pickedAt: 0, late: false, deliveredTo: null,
     });
   }
-  // Early days count up the river: the first house waits for 1, the next for 2, and so on.
-  // From day 4 on the codes are shuffled, so every card has to be read.
-  if (cfg.ordered) orders.slice().sort((a, b) => a.house.id - b.house.id || a.id - b.id).forEach((o, i) => (o.code = i + 1));
-  else if (cfg.feats.bulk) {
-    // a house that takes several gets one code for all of them, so there are never more codes than ten
-    const codes = shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], ro);
-    for (const o of orders) o.code = codes[o.house.id % codes.length];
-  } else {
-    const codes = shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], ro);
-    orders.forEach((o, i) => (o.code = codes[i % codes.length]));
-  }
+  // Count the distinct stops, even when several parcels go to one door. Keep the original
+  // single-digit draw (including its seed sequence) and extend it for routes with more stops.
+  const recipients = [...new Set(orders.map((o) => o.house.id))];
+  if (cfg.ordered || cfg.feats.bulk) recipients.sort((a, b) => a - b);
+  const digits = cfg.ordered ? [] : shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], ro);
+  const houseCodes = new Map(recipients.map((id, i) => [id, cfg.ordered ? i + 1 : digits[i] ?? i]));
+  for (const o of orders) o.code = houseCodes.get(o.house.id)!;
   // Urgent parcels go to houses that are not the very first ones, so there's time to plan.
   const urgentCandidates = shuffle(orders.filter((o) => o.house.id >= 2), ro);
   urgentCandidates.slice(0, cfg.urgent).forEach((o) => (o.urgent = true));

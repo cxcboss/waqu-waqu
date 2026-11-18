@@ -5,6 +5,6 @@
 - 试玩埋点（事件表、代码位置、怎么加、怎么读、Supabase 设置）：`docs/telemetry.md`。改埋点必须同步改这份文档和 `scripts/stats.py`。
 - 在线站点测试一律加 `?tm=off`，否则测试数据会混进真实玩家数据。
 - 不要把 Supabase 的 secret key 或数据库密码写进仓库；只有 publishable key 可以出现在代码里。
-- 部署：`npm run deploy`（会强推 gh-pages，冲掉所有预览子目录）。
+- 部署：`npm run deploy` 打包试玩版，提交到现有 gh-pages 分支，保留旧的预览入口。
 - 浏览器 API 只能写在 `src/platform/web.ts`，微信 API 只能写在 `src/platform/wx.ts`，游戏代码要保持网页和微信小游戏通用。
 - 微信小游戏：`npm run build:wx` 打包到 `dist-wx/`（说明见 `docs/ARCHITECTURE.md` 末尾「微信小游戏」）。不要把小程序的 AppSecret 或代码上传密钥写进仓库，AppID 可以。

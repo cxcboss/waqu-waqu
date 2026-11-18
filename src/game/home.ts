@@ -194,7 +194,7 @@ export class HomeScene implements Scene {
           m.open = have[i];
           au.play('paper_flip', { volume: 0.7 });
         }
-      } else if (id === 'secret' && s.secret === 1) {
+      } else if (id === 'secret' && (s.secret === 1 || g.demo && s.secret >= 1)) {
         au.play('ui_confirm');
         g.tm.log('secret_start', {});
         g.go(new PlayScene(g, 0), true);
@@ -404,7 +404,7 @@ export class HomeScene implements Scene {
     else if (m.kind === 'records') this.drawRecords(ctx, d, m);
     else if (m.kind === 'letters') this.drawLetters(ctx, d, m);
     else this.drawDecor(ctx, d);
-    pill(ctx, this.taps, 'close', d.x + d.w - 84, d.y + 18, 64, 56, '✕', { size: 28 });
+    pill(ctx, this.taps, 'close', d.x + d.w - 84, d.y + 18, 64, 56, '×', { size: 28 });
     ctx.restore();
   }
 
@@ -565,7 +565,7 @@ export class HomeScene implements Scene {
       y += 50;
     } else {
       // the money book
-      const tiles: [string, string, string][] = [['现有', `${s.coins}`, INK], ['累计收入', `+${k.earned}`, P.lilyDeep], ['累计花费', k.spent ? `-${k.spent}` : '0', P.red]];
+      const tiles: [string, string, string][] = [['现有', this.game.demo ? '∞' : String(s.coins), INK], ['累计收入', `+${k.earned}`, P.lilyDeep], ['累计花费', k.spent ? `-${k.spent}` : '0', P.red]];
       tiles.forEach(([a, b, c], i) => {
         const tx = d.x + 30 + i * ((d.w - 60) / 3);
         roundRect(ctx, tx + 4, y - 10, (d.w - 60) / 3 - 8, 90, 14);
@@ -633,14 +633,16 @@ export class HomeScene implements Scene {
       envelope(ctx, r.x + 70, r.y + 66, 1.1, true, '0');
       text(ctx, '第0号快递', r.x + 136, r.y + 44, 30, { bold: true, align: 'left' });
       const sub = s.secret === 1 ? '把第一封信送到上游，交给鹈鹕阿灰' : '阿灰收到了。点开读读第一封信';
-      text(ctx, sub, r.x + 136, r.y + 88, 21, { align: 'left', color: P.inkSoft, maxWidth: s.secret === 1 ? 300 : r.w - 160 });
+      const canPlay = s.secret === 1 || this.game.demo;
+      text(ctx, sub, r.x + 136, r.y + 88, 21, { align: 'left', color: P.inkSoft, maxWidth: canPlay ? 276 : r.w - 160 });
       const sr = this.mScroll.screen(r);
-      if (s.secret === 1) {
+      if (sr && s.secret >= 2) this.taps.add('st_0', sr);
+      if (canPlay) {
         const b = { x: r.x + r.w - 180, y: r.y + 34, w: 160, h: 64 };
         const sb = this.mScroll.screen(b);
         const down = !!sb && this.taps.add('secret', sb);
-        button(ctx, b.x, b.y, b.w, b.h, '去送信', { primary: true, pressed: down, size: 26 });
-      } else if (sr) this.taps.add('st_0', sr);
+        button(ctx, b.x, b.y, b.w, b.h, s.secret === 1 ? '去送信' : '再送一次', { primary: true, pressed: down, size: 26 });
+      }
       y += r.h + 20;
     }
     const cols = 5, gap = 12, cw = (d.w - 68 - gap * (cols - 1)) / cols, ch = 132;

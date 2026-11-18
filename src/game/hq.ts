@@ -6,7 +6,8 @@ import { K } from '../art/sprites';
 import { button, ellipse, hit, panel, pressIn, pressOut, roundRect, text, type Rect } from '../art/ui';
 import { clamp, easeInCubic, easeOutBack, easeOutCubic } from '../engine/math';
 import type { Canvas, Ctx } from '../platform/types';
-import { rankOf, recordDay, type DayRecord } from './career';
+import { addEntry, rankOf, recordDay, type DayRecord } from './career';
+import { adAllowed, adClaim, watchAd } from './ads';
 import { DAYS_PER_CHAPTER, PASS_RATE, TUNING, YEAR_END, chapterOf, dayLabel, passRate } from './config';
 import { EndingScene } from './ending';
 import { dayConfig } from './level';
@@ -16,7 +17,7 @@ import { drawStamp } from './map';
 import { PlayScene } from './play';
 import { earnedStamps, passed } from './progress';
 import { SCENE_MUSIC } from './sound';
-import { PhotoViewer, type ViewerPhoto } from './viewer';
+import { PhotoViewer, type ViewerAction, type ViewerPhoto } from './viewer';
 
 export interface Photo {
   img: Canvas;
@@ -48,7 +49,7 @@ export interface DayResult {
   codTotal: number;
   /** All of the day's cash-on-delivery parcels, handed over or not (the 到付 challenge wants every one). */
   codOrders: number;
-  /** Times the lifeline rope hauled the frog back (at most once a day). */
+  /** Times the lifeline rope hauled the frog back during this run. */
   rope: number;
   codRight: number;
   codTips: number;
@@ -117,14 +118,16 @@ const ORDER = 'SABCD';
 const ROW_GAP = 0.28;
 /** First row of the report and the distance between rows, on the sheet. */
 const ROW_Y = 154;
-const ROW_H = 42;
+const ROW_H = 38;
 const SHEET_H = 622;
+const WAGE_HIT_PAD = 16;
+const SLOW_RETRY = '免费减速 10% 重试';
 /** Share of the wide shot the polaroid shows. */
 const THUMB_CROP = 0.6;
 
 
 interface Row {
-  icon: 'ok' | 'wrong' | 'wet' | 'miss' | 'rope' | 'urgent' | 'cod' | 'stamp' | 'feat';
+  icon: 'ok' | 'wrong' | 'wet' | 'miss' | 'urgent' | 'cod' | 'stamp' | 'feat';
   /** The character on a 'feat' row's badge. */
   glyph?: string;
   label: string;
@@ -167,14 +170,15 @@ export class HqScene implements Scene {
   private stamped = false;
   private ticks = 0;
   private snaps = 0;
-  /** Rows on the report a little closer together when there's an extra line for the day's mechanics. */
-  private rowH = ROW_H;
   /** Runs of this day in a row that didn't pass (the help on offer grows with it). */
   private fails = 0;
   /** The year's ending is waiting to be seen: the next button goes there. */
   private ending = false;
   /** Toasts waiting their turn after the stamp. */
   private queue: string[] = [];
+  private wageButton: Rect | null = null;
+  private wageClaimed = false;
+  private adCard: { t: number; busy: boolean; btns: Rect[] } | null = null;
 
   constructor(private game: Game, private r: DayResult) {
     const f = r.feats;
@@ -195,26 +199,25 @@ export class HqScene implements Scene {
     this.fresh = this.stamps.map((v, i) => v && !had[i]);
     const s0 = game.save;
     if (!secret) {
-      // a day that keeps beating the frog: after two goes the river can run slower, after three it can be skipped
       if (this.pass) {
         delete s0.fails[r.day];
         delete s0.assist[r.day];
         s0.skipped = s0.skipped.filter((d) => d !== r.day);
-      } else if (!had[0]) s0.fails[r.day] = (s0.fails[r.day] ?? 0) + 1;
-      this.fails = s0.fails[r.day] ?? 0;
+      } else if (!had[0]) {
+        this.fails = (s0.fails[r.day] ?? 0) + 1;
+        s0.fails[r.day] = this.fails;
+      }
     }
     // higher ranks get a share more of the base pay
     this.rankCoins = Math.round(r.pay * rankOf(game.save).pay);
     this.owlLine = this.owl(!!had[0]);
     this.note = this.noteLine();
     const pay = r.pay + this.rankCoins;
-    const rope = r.rope || 0;
     this.left = [
       { icon: 'ok', label: '正确配送', value: `${r.delivered} 单`, money: pay ? `+${pay}` : '0' },
       { icon: 'wrong', label: '错误配送', value: `${r.wrong} 单`, money: r.wrong ? `-${r.wrong * TUNING.wrongPenalty}` : '0' },
       { icon: 'wet', label: '落水损坏', value: `${r.wet} 单`, money: r.wet ? `-${r.wet * TUNING.wetPenalty}` : '0' },
       { icon: 'miss', label: '漏送', value: `${r.missed} 单`, money: '—' },
-      { icon: 'rope', label: '救命绳', value: `${rope} 次`, money: rope ? `-${rope * TUNING.ropePenalty}` : '0' },
     ];
     const cod = r.codTips - r.codLoss;
     const extra = secret
@@ -226,8 +229,7 @@ export class HqScene implements Scene {
       ...(extra ? [extra] : []),
       { icon: 'stamp', label: '好评章', value: secret ? '—' : '', money: '' },
     ];
-    if (extra) this.rowH = 38;
-    this.stampAt = 0.7 + (Math.max(this.left.length, this.right.length + 1) + 1) * ROW_GAP + 0.35;
+    this.stampAt = 0.7 + (Math.max(this.left.length, this.right.length) + 1) * ROW_GAP + 0.35;
     this.endAt = this.stampAt + 0.5 + r.photos.length * 0.28 + 0.2;
 
     // Save progress
@@ -267,6 +269,14 @@ export class HqScene implements Scene {
     return this.r.day < this.game.lastDay && this.game.save.day > this.r.day;
   }
 
+  private get canSlow() {
+    return this.fails >= 2 && !this.game.save.assist[this.r.day];
+  }
+
+  private get canSkip() {
+    return this.fails >= 3 && this.r.day < this.game.lastDay;
+  }
+
   /** The owl's line: it never says "tomorrow" about a day that has to be run again, or the other way round. */
   private owl(passedBefore: boolean) {
     const r = this.r;
@@ -275,8 +285,9 @@ export class HqScene implements Scene {
     if (r.thrown && this.fails < 2) return passedBefore ? '被甩出去了？坐稳点。' : '被甩出去了，得重跑！';
     if (!this.pass) {
       if (passedBefore) return '送少了，好在早就过了。';
-      if (this.fails >= 3) return '先跳过吧，回头再补章。';
-      if (this.fails >= 2 && !this.game.save.assist[r.day]) return '要不让河水慢一点？';
+      if (this.canSkip) return '先跳过吧，回头再补章。';
+      if (this.canSlow) return '要不让河水慢一成？';
+      if (this.game.save.assist[r.day]) return '河水已慢一成，再试试？';
       if (r.day <= 1) return '送对一半就算过，再来！';
       if (passRate(r.day) < PASS_RATE) return '五成就算过，再来一次！';
       return '送对的太少，得重跑。';
@@ -304,7 +315,7 @@ export class HqScene implements Scene {
     ];
     const worst = slips.reduce((a, b) => (b[0] > a[0] ? b : a));
     if (worst[0] > 0) return worst[1];
-    if (r.rope) return '“救命绳是救急用的，可别天天拽。”';
+    if (r.rope) return '“幸好这趟带了救命绳。”';
     if (f && f.careful && f.careOk === f.careful) return '“娇贵的东西都完好送到，细心！”';
     if (f && f.returns && f.returned === f.returns) return '“退货一件不落，河狸师傅都夸你。”';
     return '“干净利落，我喜欢。”';
@@ -331,9 +342,72 @@ export class HqScene implements Scene {
     this.game.celebrate(this.rec.unlocked, this.rec.rankUp);
   }
 
+  private get canDoubleWage() {
+    const pl = this.game.platform;
+    return this.income > 0 && !this.wageClaimed && !!pl.showRewardedAd && !!pl.adsAvailable?.() && adAllowed(this.game.save, 'wage');
+  }
+
+  private closeAd() {
+    this.adCard = null;
+    this.pressed = null;
+  }
+
+  /** Only coins ever change here: the report, stamps, grade and rank were saved in the constructor. */
+  private async takeAd() {
+    const c = this.adCard;
+    if (!c || c.busy) return;
+    c.busy = true;
+    this.game.tm.log('ad_show', { where: 'hq', day: this.r.day });
+    const ok = await watchAd(this.game, 'wage');
+    this.game.tm.log('ad_done', { where: 'hq', ok });
+    if (ok && adAllowed(this.game.save, 'wage')) {
+      const bonus = this.income;
+      this.wageClaimed = true;
+      adClaim(this.game.save, 'wage');
+      this.game.save.coins += bonus;
+      addEntry(this.game.save, '广告奖励 · 工资翻倍', bonus);
+      this.game.writeSave();
+      this.game.audio.play('coin');
+      this.toast = { text: `工资翻倍！+${bonus} 金币`, t: 0 };
+    } else {
+      this.toast = { text: '本次未翻倍，工资已照常发放', t: 0 };
+    }
+    this.closeAd();
+  }
+
+  /** Confirmation opened by the wage button on the report. */
+  private drawAd(ctx: Ctx) {
+    const c = this.adCard;
+    if (!c) return;
+    const H = this.game.H;
+    const w = 620, h = 330, x = 65, y = H * 0.44 - h / 2;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, c.t * 4);
+    ctx.fillStyle = 'rgba(36,28,22,0.45)';
+    ctx.fillRect(0, 0, 750, H);
+    panel(ctx, x, y, w, h, { r: 26 });
+    text(ctx, '再领一份工资', 375, y + 62, 32, { color: P.inkSoft });
+    text(ctx, `+${this.income} 金币`, 375, y + 122, 52, { bold: true, color: P.lilyDeep });
+    text(ctx, '每天一次', 375, y + 170, 24, { color: P.inkSoft });
+    const bw = 260, bh = 78, by = y + h - 108;
+    c.btns = [
+      { x: 375 - bw - 12, y: by, w: bw, h: bh },
+      { x: 375 + 12, y: by, w: bw, h: bh },
+    ];
+    button(ctx, c.btns[0].x, by, bw, bh, c.busy ? '广告加载中…' : '看完广告领取', { primary: true, pressed: this.pressed === 'ad0', disabled: c.busy, size: 28 });
+    button(ctx, c.btns[1].x, by, bw, bh, '返回结算', { pressed: this.pressed === 'ad1', disabled: c.busy, size: 28 });
+    ctx.restore();
+  }
+
   /** The buttons work once they're fully shown; before that a tap skips the paperwork. */
   private get live() {
     return this.t >= this.stampAt + 0.3;
+  }
+
+  get autoplayReport() {
+    if (this.t < this.endAt + 2.2 || this.viewer || this.adCard) return null;
+    const id = this.pass ? (this.ending ? 'ending' : 'next') : 'retry';
+    return { day: this.r.day, pass: this.pass, button: this.btns.find((b) => b.id === id)?.rect };
   }
 
   private playStamp() {
@@ -352,12 +426,16 @@ export class HqScene implements Scene {
   update(dt: number) {
     this.t += dt;
     this.viewer?.update(dt);
+    if (this.adCard) {
+      this.adCard.t += dt;
+      if (!this.adCard.busy && !this.canDoubleWage) this.closeAd();
+    }
     if (this.toast && (this.toast.t += dt) > 2.4) this.toast = null;
     if (!this.toast && this.stamped && this.queue.length) this.toast = { text: this.queue.shift()!, t: -0.4 };
     // the paperwork is done: now the rank and achievements
     if (this.t >= this.endAt + 0.3) this.cheer();
     const rowsShown = Math.floor((this.t - 0.7) / ROW_GAP) + 1;
-    const nRows = Math.max(this.left.length, this.right.length + 1) + 1;
+    const nRows = Math.max(this.left.length, this.right.length) + 1;
     if (rowsShown > this.ticks && this.ticks < nRows && this.t >= 0.7) {
       this.ticks++;
       this.game.audio.play('ui_tick');
@@ -376,7 +454,15 @@ export class HqScene implements Scene {
 
   down(x: number, y: number) {
     if (this.viewer) return this.viewer.down(x, y);
+    if (this.adCard) {
+      // while the offer is up, only its two buttons answer; a tap elsewhere just declines
+      const c = this.adCard;
+      if (!c.busy) c.btns.forEach((r, i) => { if (!this.pressed && hit(r, x, y, 8)) this.pressed = `ad${i}`; });
+      if (!this.pressed && !c.busy) this.closeAd();
+      return;
+    }
     if (this.live) for (const b of this.btns) if (hit(b.rect, x, y)) this.pressed = b.id;
+    if (hit(this.wageButton, x, y, WAGE_HIT_PAD)) this.pressed = 'wage';
     this.hearts.forEach((r, i) => {
       if (!this.pressed && hit(r, x, y, 4)) this.pressed = `keep${i}`;
     });
@@ -409,6 +495,23 @@ export class HqScene implements Scene {
     const id = this.pressed;
     this.pressed = null;
     if (!id) return;
+    if (id === 'wage') {
+      if (hit(this.wageButton, x, y, WAGE_HIT_PAD) && this.canDoubleWage) {
+        this.adCard = { t: 0, busy: false, btns: [] };
+        this.game.audio.play('ui_tap');
+      }
+      return;
+    }
+    if (id === 'ad0' || id === 'ad1') {
+      const c = this.adCard;
+      if (!c || c.busy) return;
+      const r = c.btns[Number(id.slice(2))];
+      if (!r || !hit(r, x, y, 8)) return;
+      this.game.audio.play('ui_tap');
+      if (id === 'ad0') void this.takeAd();
+      else this.closeAd();
+      return;
+    }
     if (id.startsWith('keep')) {
       const i = Number(id.slice(4));
       if (this.hearts[i] && hit(this.hearts[i], x, y, 8)) this.keep(i);
@@ -483,17 +586,24 @@ export class HqScene implements Scene {
   private openView(i: number) {
     if (!this.r.photos[i]) return;
     this.game.tm.log('photo', { i, kind: this.r.photos[i].kind });
+    const pl = this.game.platform;
     this.viewer = new PhotoViewer(this.game, this.viewerPhotos(), i,
-      (_p, k) => [
-        { id: 'close', label: '关闭' },
-        { id: 'keep', label: this.game.album.keptId(this.r.photos[k]) ? '已收藏 ♥' : '收藏' },
-        { id: 'save', label: '存到手机', primary: true },
-      ],
+      (_p, k) => {
+        const acts: ViewerAction[] = [
+          { id: 'close', label: '关闭' },
+          { id: 'keep', label: this.game.album.keptId(this.r.photos[k]) ? '已收藏 ♥' : '收藏' },
+          { id: 'save', label: '存到手机', primary: true },
+        ];
+        if (pl.shareImage) acts.push({ id: 'poster', label: '分享海报' });
+        if (pl.clubImageAvailable?.()) acts.push({ id: 'club', label: '发到游戏圈' });
+        return acts;
+      },
       (id, k) => this.viewAction(id, k), '今日精彩瞬间');
   }
 
   escape() {
     if (this.viewer) this.viewAction('close', 0);
+    else if (this.adCard && !this.adCard.busy) this.closeAd();
   }
 
   private viewAction(id: string, i: number) {
@@ -508,6 +618,18 @@ export class HqScene implements Scene {
       const p = this.r.photos[i];
       void v.save(`waqu-day${this.r.day}-${i + 1}.jpg`).then((m) => {
         this.game.tm.log('photo_save', { i, kind: p.kind, res: m });
+        if (m) this.toast = { text: m, t: 0 };
+      });
+    } else if (id === 'poster') {
+      this.game.audio.play('ui_tap');
+      this.game.tm.log('photo_share', { from: 'hq', i });
+      void v.sharePoster(`waqu-day${this.r.day}-${i + 1}.jpg`).then((m) => {
+        if (m) this.toast = { text: m, t: 0 };
+      });
+    } else if (id === 'club') {
+      this.game.audio.play('ui_tap');
+      this.game.tm.log('photo_club', { from: 'hq', i });
+      void v.postToClub(`蛙趣快递 · 第${this.r.day}天`).then((m) => {
         if (m) this.toast = { text: m, t: 0 };
       });
     }
@@ -585,10 +707,7 @@ export class HqScene implements Scene {
 
     // buttons
     const last = (this.r.day >= this.game.lastDay || this.r.day === 0) && !this.ending;
-    // the help on offer once a day has beaten the frog a few times (not for a day already passed)
-    const help = !this.pass && !(this.game.save.stamps[this.r.day] ?? [])[0] && this.r.day > 0;
-    const slow = help && this.fails >= 2 && !this.game.save.assist[this.r.day];
-    const skip = help && this.fails >= 3 && this.r.day < this.game.lastDay;
+    const retryLabel = this.game.save.assist[this.r.day] ? '减速重试' : '再来一次';
     const show = clamp((this.t - this.stampAt) / 0.3, 0, 1);
     if (show < 1) {
       // still filling in the report: the buttons aren't there yet, a tap anywhere skips ahead
@@ -600,28 +719,31 @@ export class HqScene implements Scene {
     }
     ctx.save();
     ctx.globalAlpha = show;
-    if (last) {
+    if (last && !this.canSlow) {
       this.btns = [
         { id: 'retry', rect: { x: 40, y: btnTop, w: 310, h: 84 } },
         { id: 'home', rect: { x: 390, y: btnTop, w: 320, h: 84 } },
       ];
-      button(ctx, 40, btnTop, 310, 84, '再来一次', { pressed: this.pressed === 'retry', size: 32 });
+      button(ctx, 40, btnTop, 310, 84, retryLabel, { pressed: this.pressed === 'retry', size: 32 });
       button(ctx, 390, btnTop, 320, 84, '回主页 →', { primary: true, pressed: this.pressed === 'home', size: 32 });
     } else {
-      const again = slow ? 'slow' : 'retry', on = skip ? 'skip' : this.ending ? 'ending' : 'next';
+      const again = this.canSlow && !last ? 'slow' : 'retry';
+      const on = last ? 'slow' : this.canSkip ? 'skip' : this.ending ? 'ending' : 'next';
       this.btns = [
         { id: again, rect: { x: 24, y: btnTop, w: 220, h: 84 } },
         { id: 'home', rect: { x: 258, y: btnTop, w: 200, h: 84 } },
         { id: on, rect: { x: 472, y: btnTop, w: 254, h: 84 } },
       ];
-      button(ctx, 24, btnTop, 220, 84, slow ? '慢一点再试' : '再来一次', { primary: !this.canNext && !this.ending, pressed: this.pressed === again, size: slow ? 28 : 30 });
+      button(ctx, 24, btnTop, 220, 84, again === 'slow' ? SLOW_RETRY : retryLabel, { primary: !last && !this.canNext && !this.ending, pressed: this.pressed === again, size: 28 });
       button(ctx, 258, btnTop, 200, 84, '回主页', { pressed: this.pressed === 'home', size: 30 });
-      if (skip) button(ctx, 472, btnTop, 254, 84, '跳过这一天', { pressed: this.pressed === 'skip', size: 30 });
+      if (on === 'slow') button(ctx, 472, btnTop, 254, 84, SLOW_RETRY, { primary: true, pressed: this.pressed === 'slow', size: 28 });
+      else if (on === 'skip') button(ctx, 472, btnTop, 254, 84, '跳过这一天', { pressed: this.pressed === 'skip', size: 30 });
       else if (this.ending) button(ctx, 472, btnTop, 254, 84, '年终总结 →', { primary: true, pressed: this.pressed === 'ending', size: 30 });
       else button(ctx, 472, btnTop, 254, 84, '下一天 →', { primary: this.canNext, disabled: !this.canNext, pressed: this.pressed === 'next', size: 30 });
     }
     ctx.restore();
 
+    if (this.adCard) this.drawAd(ctx);
     if (this.viewer) this.viewer.render(ctx);
     if (this.toast && this.toast.t >= 0) {
       const tt = this.toast.t;
@@ -683,7 +805,7 @@ export class HqScene implements Scene {
 
     const shown = (i: number) => clamp((this.t - 0.7 - i * ROW_GAP) / 0.2, 0, 1);
     // the two columns fill in side by side
-    const rh = this.rowH, si = this.right.length - 1;
+    const rh = ROW_H, si = this.right.length - 1;
     this.left.forEach((row, i) => this.drawRow(ctx, row, 34, ROW_Y + i * rh, 296, shown(i)));
     this.right.forEach((row, i) => this.drawRow(ctx, row, 372, ROW_Y + i * rh, 300, shown(i + 0.5)));
     // the day's three stamps, the new ones thumped down one after another
@@ -704,23 +826,30 @@ export class HqScene implements Scene {
       ctx.restore();
     }
     // income box
-    const nRows = Math.max(this.left.length, this.right.length + 1);
+    const nRows = Math.max(this.left.length, this.right.length);
     const ia = shown(nRows);
-    const iy = ROW_Y + (si + 1) * rh - 10;
+    const iy = 298;
+    const sheetTop = this.sheetScreenTop();
+    this.wageButton = null;
     if (ia > 0) {
       ctx.save();
       ctx.globalAlpha = ia;
-      roundRect(ctx, 366, iy, 306, 54, 12);
+      roundRect(ctx, 34, iy, 638, 52, 12);
       ctx.fillStyle = '#F0E2C4';
       ctx.fill();
       ctx.strokeStyle = INK;
       ctx.lineWidth = 2;
       ctx.stroke();
-      text(ctx, '今日收入', 384, iy + 28, 28, { align: 'left', bold: true });
-      sp.draw(ctx, 'coin', 548, iy + 27, 0.75);
+      text(ctx, '今日收入', 54, iy + 26, 28, { align: 'left', bold: true });
+      sp.draw(ctx, 'coin', 217, iy + 25, 0.75);
       const k = clamp((this.t - 0.7 - nRows * ROW_GAP) / 0.6, 0, 1);
-      const v = Math.round(this.income * k);
-      text(ctx, `${v >= 0 ? '+' : ''}${v}`, 656, iy + 29, 34, { align: 'right', bold: true, color: v >= 0 ? P.lilyDeep : P.red });
+      const v = Math.round(this.income * (this.wageClaimed ? 2 : 1) * k);
+      text(ctx, `${v >= 0 ? '+' : ''}${v}`, 244, iy + 27, 34, { align: 'left', bold: true, color: v >= 0 ? P.lilyDeep : P.red });
+      if (this.live && this.canDoubleWage) {
+        const x = 462, y = iy + 1, w = 200, h = 45;
+        this.wageButton = { x: 24 + x, y: sheetTop + y, w, h };
+        button(ctx, x, y, w, h, '看广告翻倍', { pressed: this.pressed === 'wage', size: 25 });
+      } else if (this.wageClaimed) text(ctx, '已翻倍', 648, iy + 26, 25, { align: 'right', bold: true, color: P.lilyDeep });
       ctx.restore();
     }
     // owl's note
@@ -736,7 +865,6 @@ export class HqScene implements Scene {
     ctx.quadraticCurveTo(351, 423, 431, 416);
     ctx.stroke();
     const photos = this.r.photos;
-    const sheetTop = this.sheetScreenTop();
     if (photos.length) {
       this.viewBtn = { x: 24 + 560, y: sheetTop + 380, w: 110, h: 38 };
       const down = this.pressed === 'view0' && this.viewBtnHeld;
@@ -873,7 +1001,7 @@ export class HqScene implements Scene {
   }
 
   private icon(ctx: Ctx, kind: Row['icon'], x: number, y: number) {
-    const bg = { ok: P.lily, wrong: P.gold, wet: P.blueLight, miss: P.paperShade, rope: P.orange, urgent: P.red, cod: P.lilyLight, stamp: P.pink, feat: P.tealDeep }[kind];
+    const bg = { ok: P.lily, wrong: P.gold, wet: P.blueLight, miss: P.paperShade, urgent: P.red, cod: P.lilyLight, stamp: P.pink, feat: P.tealDeep }[kind];
     ellipse(ctx, x, y, 15, 15);
     ctx.fillStyle = bg;
     ctx.fill();
@@ -899,13 +1027,6 @@ export class HqScene implements Scene {
       ctx.fill();
     } else if (kind === 'miss') {
       text(ctx, '…', x, y - 2, 18, { bold: true });
-    } else if (kind === 'rope') {
-      // a coil of rope, as on the lifeline tag in the day
-      ctx.lineWidth = 2.2;
-      ctx.arc(x, y, 8, 0, Math.PI * 2);
-      ctx.moveTo(x + 3.5, y);
-      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-      ctx.stroke();
     } else if (kind === 'urgent') {
       ctx.moveTo(x, y - 8);
       ctx.lineTo(x, y);

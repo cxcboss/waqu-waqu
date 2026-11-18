@@ -12,12 +12,15 @@ import { MAX_SLOTS, gearEffects, type GearEffects } from './catalog';
 import { CHAPTERS, DAYS, FEAT_INFO, SIZE_INFO, TUNING, chapterOf, type Feat } from './config';
 import type { Game, Scene } from './game';
 import { HqScene, type DayFeats, type DayResult, type Photo } from './hq';
+import { adAllowed, adClaim, watchAd } from './ads';
 import { buildLevel, dayConfig, edgeOut, isBox, isPad, shapeN, toLocal, type House, type Level, type Order, type Plat, type PlatKind } from './level';
 import { FRAGILE_HITS } from './levelfeats';
 import { HURRY_LINES, KICK_LINES, LETTERS, OFFWORK_LINES, dealLine } from './lines';
 import { drawHouse, houseSprites, updateResident, type ResidentView } from './resident';
 import { MapScene, drawStamp } from './map';
+import { passed } from './progress';
 import { PLAY_SOUNDS, ambienceForDay, musicForDay, say } from './sound';
+import { SupplyPanel, canShowSupplies, useSupply } from './supplies';
 import { Weather, type Light } from './weather';
 
 const FROG_S = 0.92; // frog sprite scale on top of K, matching the concept art
@@ -137,9 +140,9 @@ const FLY_T = 0.5;
  * Counting out change for a cash-on-delivery parcel: the resident pays with a bill and the frog
  * picks the right change from three. The river holds still meanwhile.
  */
-interface Cod { o: Order; h: House; t: number; opts: number[]; pick: number | null; pickT: number; btns: Rect[] }
+interface Cod { o: Order; h: House; t: number; opts: number[]; btns: Rect[] }
 
-type HintKey = 'go' | 'refill' | 'call' | 'egg' | 'road' | 'swim' | 'rescue' | 'climb' | 'rush' | 'cod' | 'putBack' | 'tired' | 'warn' | 'urgent' | 'heavy' | 'wrongHouse' | 'kick' | `f_${Feat}`;
+type HintKey = 'go' | 'refill' | 'call' | 'egg' | 'road' | 'swim' | 'rescue' | 'climb' | 'rush' | 'cod' | 'putBack' | 'tired' | 'warn' | 'urgent' | 'heavy' | 'wrongHouse' | 'kick' | 'pull' | `f_${Feat}`;
 
 /** A gull after the satchel: coming in, or off again (with a parcel in its beak if it got one). */
 interface Gull { x: number; y: number; t: number; vx: number; vy: number; away: boolean; o: Order | null; dropped: boolean }
@@ -196,6 +199,9 @@ const DIZZY_T = 1.6;
 /** Holding a charge this long makes the frog's legs shake, and this long gives up on the jump. */
 const FOOT_WARN = 3.5;
 const FOOT_T = 5;
+const PULL_COACH_GAP = 3;
+const PULL_COACH_T = 4;
+const PULL_COACH_MAX = 2;
 /** A press made while the frog is still in the air is kept this long (seconds) and used on landing. */
 const BUFFER_T = 0.5;
 /**
@@ -312,6 +318,12 @@ export class PlayScene implements Scene {
   /** Lily the aim step points at. */
   private aimTarget: Plat | null = null;
   private introBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  private supplyBtn: Rect | null = null;
+  private whistleBtn: Rect | null = null;
+  private supplyPanel: SupplyPanel | null = null;
+  private whistleSelected = false;
+  private whistleUsed = false;
+  private wrapUsed = false;
   private off: Offwork | null = null;
   /** Set once the day's result is handed to HQ, while the screen fades out. */
   private leaving = false;
@@ -319,6 +331,11 @@ export class PlayScene implements Scene {
   private camX = 0;
   private panY = 0;
   private banner: { title: string; sub: string; t: number; dur: number } | null = null;
+  /** Shown instead of ending the run when the frog is swept off the screen (voluntary ad revive). */
+  private revive: { t: number; busy: boolean; btns: Rect[] } | null = null;
+  /** One revive per run at most, even if the daily allowance has room for more. */
+  private reviveDone = false;
+  private videoRevived = false;
   private toast: { text: string; t: number } | null = null;
   private ended: null | 'done' | 'thrown' | 'off' = null;
   private endT = 0;
@@ -397,7 +414,7 @@ export class PlayScene implements Scene {
   /** A press that began in mid-air, and a jump released in mid-air: both go off when the frog lands. */
   private early: Pull | null = null;
   private queued: { dx: number; dy: number; held: number; sx: number; sy: number; at: number } | null = null;
-  /** The truck's lifeline, once a day: spent when the frog would have been swept off the screen. */
+  /** An owned lifeline can be spent once per run when the frog is swept off screen. */
   private ropeUsed = 0;
   /** Day 1: the frog has been back to the truck for a second load. */
   private refilled = false;
@@ -410,6 +427,9 @@ export class PlayScene implements Scene {
   /** The swim in progress, summed up when the frog gets out. */
   private swim: { t: number; strokes: number; fails: number; gauges: number; wheel: number | null } | null = null;
   private lastInput = 0;
+  private lastEmptyTap = -Infinity;
+  private pullCoachT = 0;
+  private pullCoaches = 0;
   /** When the truck last started hauling the frog in, for how long the haul took. */
   private yankAt = 0;
   private wall: number;
@@ -498,6 +518,8 @@ export class PlayScene implements Scene {
       cod: orders.filter((o) => o.cod).length, codRight: this.stats.codRight,
       falls: this.stats.falls, jumps: this.stats.jumps, longest: Math.round(this.stats.longest), closeCalls: this.stats.closeCalls, bestTrip: this.stats.bestTrip,
       ...t, swimSec: r1(t.swimSec), warnSec: r1(t.warnSec),
+      suppliesUsed: { rope: this.ropeUsed, wrap: Number(this.wrapUsed), whistle: Number(this.whistleUsed) },
+      videoRevived: this.videoRevived,
       real: Math.round((this.game.platform.now() - this.wall) / 1000),
       fps: perf.time > 1 ? Math.round(perf.frames / perf.time) : null, slow: perf.slow,
       state: this.frog.state, on: this.frog.on?.kind ?? null, step: this.step,
@@ -526,6 +548,9 @@ export class PlayScene implements Scene {
   private get cfg() {
     return this.lv.cfg;
   }
+  private get flowFactor() {
+    return Math.min(this.assist ? 0.9 : 1, this.whistleUsed ? 0.85 : 1);
+  }
   private sy(worldY: number) {
     return worldY - this.camY;
   }
@@ -534,10 +559,113 @@ export class PlayScene implements Scene {
     return this.game.sprites.has(name) ? name : fallback;
   }
 
+  /** Read the river and the same touch targets drawn for the player. Autoplay submits ordinary input. */
+  get autoplayView() {
+    const f = this.frog;
+    const c = this.cod;
+    const g = this.gullS;
+    const swim = f.state === 'swim' && !this.ended;
+    return {
+      height: this.H, safeTop: this.game.safeT, time: this.time, camY: this.camY,
+      frog: { x: f.x, y: f.y, state: f.state, on: f.on, ready: !f.settle && this.tiredT <= 0 },
+      plats: this.lv.plats, truck: this.lv.truck, reach: this.maxJump(),
+      bag: this.bag, free: this.cfg.bagSlots - this.slotsUsed(), cards: this.cards, orders: this.lv.orders,
+      blocked: this.paused || !!this.supplyPanel || !!this.revive || !!this.ended || this.leaving || this.routeEnd,
+      held: this.aim?.id, intro: this.step === 'intro' ? this.introBtn : null,
+      guide: this.step === 'aim' ? this.aimTarget : null, pick: this.step === 'pick',
+      till: !!c, change: c && c.t >= 0.65 ? c.btns[c.opts.indexOf(c.o.cod!.paid - c.o.cod!.price)] : undefined,
+      gull: g && !g.away ? { x: g.x, y: this.sy(g.y) } : null,
+      floaters: this.floaters.filter((x) => x.t >= 0).map((p) => ({ x: p.x, y: this.sy(p.y) })),
+      swim: swim ? {
+        wheel: this.wheel(), target: this.leapTarget()?.p,
+        green: !!this.gauge && Math.abs(this.gaugeNeedle(this.gauge.t) - 0.5) < this.gaugeZone() / 2,
+      } : null,
+    };
+  }
+
+  /** A clear spot to start a drag or tap the swim gauge. */
+  autoplayTouchPoint(x: number, y: number) {
+    return !hit(this.pauseBtn, x, y, 14) && !this.floaterAt(x, y) &&
+      (this.trayMode === 'bag' || !this.cards.some((c) => hit(c.rect, x, y, 4))) &&
+      (this.frog.state !== 'swim' || !this.inWheel(x, y)) &&
+      (!this.gullS || Math.hypot(x - this.gullS.x, y - this.sy(this.gullS.y)) >= 90);
+  }
+
+  /** Estimate a legal pull, compensating for the water, visible wind and movement during the jump. */
+  autoplayPull(p: Plat): { x: number; y: number } | null {
+    if (p.gone || p.used) return null;
+    const f = this.frog;
+    const reach = this.maxJump();
+    const min = TUNING.minJump, max = TUNING.maxDrag;
+    // Land inside the surface. Wide planks, stones and the truck have useful off-centre spots.
+    const edge = p.kind === 'truck' ? [0] : [0, -0.5, 0.5, -0.8, 0.8];
+    for (const side of edge) {
+      let seconds = 0.6;
+      let dx = 0, dy = 0, len = 0;
+      let x = p.x, y = p.y;
+      for (let look = 0; look < 3; look++) {
+        ({ x, y } = this.autoplayPlatform(p, seconds));
+        const tx = p.kind === 'truck' ? x - 58 : x + side * p.rx;
+        const ty = p.kind === 'truck' ? y - 14 : y;
+        // Step onto the near side of a slippery stone to leave space for the skid.
+        const skid = p.kind === 'stone' ? SLIP * 0.45 : 0;
+        const toward = Math.hypot(tx - f.x, ty - f.y) || 1;
+        dx = tx - this.windShift(tx, seconds) - f.x - skid * (tx - f.x) / toward;
+        dy = ty - f.y - skid * 0.6 * (ty - f.y) / toward;
+        len = Math.hypot(dx, dy);
+        if (len < 12 || len > reach + 70) break;
+        const power = clamp((len - min) / (reach - min), (TUNING.deadDrag + 1) / max, 1);
+        seconds = this.jumpTime(this.jumpDist(power, dx / len, dy / len));
+      }
+      if (len < 12 || len > reach + 70) continue;
+      const power = clamp((len - min) / (reach - min), (TUNING.deadDrag + 1) / max, 1);
+      const dist = this.jumpDist(power, dx / len, dy / len);
+      const x0 = f.x + dx / len * dist, x1 = x0 + this.windShift(x0, this.jumpTime(dist));
+      const y1 = f.y + dy / len * dist;
+      const sy = this.sy(y1);
+      if (sy < this.game.safeT + 96 || sy > this.H - 28) continue;
+      if (p.house?.goose && this.gooseOn(p.house, this.runT + seconds + 0.04)) continue;
+      if (p.dam && this.gateUnder(p, x1)) continue; // use the solid crossbeams beside the gates
+      if (p.kind === 'truck') {
+        if (Math.abs(x1 - x) > p.rx - 4 || Math.abs(y1 - y) > p.ry * 0.72) continue;
+      } else if (shapeN(p, x1 - x + p.x, y1 - y + p.y) > 0.86) continue;
+      return { x: -dx / len * power * max, y: -dy / len * power * max };
+    }
+    return null;
+  }
+
+  private autoplayPlatform(p: Plat, dt: number) {
+    const t = this.time + dt;
+    if (p.kind === 'truck') {
+      // The first tutorial jump starts the river moving; every later one already has a speed.
+      const speed = this.step === 'aim' ? this.cfg.speed : this.cfg.speed * this.speedK * this.flowFactor;
+      return { x: p.x, y: this.camY - speed * dt + this.H * TUNING.truckAnchor + Math.sin(t * 0.55 + 2.1) * 26 };
+    }
+    if (p.orbit) {
+      const o = p.orbit, angle = o.a + dt * o.w;
+      return { x: o.cx + Math.cos(angle) * o.r, y: o.cy + Math.sin(angle) * o.r * 0.62 };
+    }
+    if (p.sway) return { x: p.sway.x0 + Math.sin(t * p.sway.w + p.sway.ph) * p.sway.amp, y: p.y };
+    if (p.ferry) return { x: ferryX(p.ferry, t), y: p.y };
+    if (p.hook) return { x: p.hook.cx + Math.sin(t * p.hook.w + p.hook.ph) * p.hook.amp, y: p.y };
+    return { x: p.x + p.drift * dt, y: p.y };
+  }
+
   // ---------------------------------------------------------------- update
 
   update(dt: number) {
-    if (this.paused || this.leaving) return;
+    if (this.paused || this.leaving || this.supplyPanel) return;
+    // the revive offer holds the whole run still: no camera, no danger check, no parcels moving
+    if (this.revive) {
+      this.revive.t += dt;
+      // WeChat's daily cap reached while the card is up: close it and end the day as usual
+      if (!this.revive.busy && !this.game.platform.adsAvailable?.()) {
+        this.revive = null;
+        this.reviveDone = true;
+        this.endDay('thrown');
+      }
+      return;
+    }
     this.time += dt;
     if (!this.frozen() && !this.ended && !this.off) this.runT += dt;
     this.stepT += dt;
@@ -575,7 +703,7 @@ export class PlayScene implements Scene {
       const rate = target > this.speedK ? (this.rushing ? TUNING.rushUp : 4) : this.speedK > 1 && !this.ended && !this.routeEnd ? TUNING.rushDown : 4;
       this.speedK = approach(this.speedK, target, rate, dt);
       // The river holds still while the tutorial has the player's hands busy.
-      if (!this.frozen()) this.camY -= cfg.speed * (this.assist ? 0.9 : 1) * this.speedK * dt;
+      if (!this.frozen()) this.camY -= cfg.speed * this.flowFactor * this.speedK * dt;
       this.placeTruck();
     }
     for (const p of this.lv.plats) {
@@ -591,10 +719,7 @@ export class PlayScene implements Scene {
 
     for (const fl of this.flights) fl.t += dt;
     this.flights = this.flights.filter((fl) => fl.t < FLY_T);
-    if (this.cod) {
-      this.cod.t += dt;
-      if (this.cod.pick !== null && (this.cod.pickT += dt) > 1.5) this.closeCod();
-    }
+    if (this.cod) this.cod.t += dt;
 
     this.updateFrog(dt);
     this.updateBuffer(dt);
@@ -612,7 +737,6 @@ export class PlayScene implements Scene {
     if (!this.ended && !this.leaving) {
       this.checkHouses();
       this.checkUrgent();
-      this.checkDanger(dt);
       this.tutorial();
       this.updateRoad();
       this.updateCall(dt);
@@ -621,6 +745,7 @@ export class PlayScene implements Scene {
       this.checkEgg();
       if (!this.routeEnd && -this.camY >= cfg.length) this.arrive();
       if (this.routeEnd) this.haulIn();
+      else this.checkDanger(dt);
       this.checkOffwork();
     } else if (this.ended !== 'off') {
       this.endT += dt;
@@ -633,6 +758,7 @@ export class PlayScene implements Scene {
     this.popups = this.popups.filter((p) => p.t < 1.2);
     if (this.banner && (this.banner.t += dt) > this.banner.dur) this.banner = null;
     if (this.toast && (this.toast.t += dt) > 2.2) this.toast = null;
+    this.pullCoachT = Math.max(0, this.pullCoachT - dt);
     if (this.hint && (this.hint.t += dt) > this.hint.dur) this.hint = null;
     if (this.hint) this.placeHint(dt);
     if (this.shakeCard && (this.shakeCard.t += dt) > 0.4) this.shakeCard = null;
@@ -1418,7 +1544,13 @@ export class PlayScene implements Scene {
     this.stats.falls++;
     // the satchel spills: each parcel bobs off on its own and can still be fished out,
     // except one that's been in the river twice already, which is ruined and swept away
-    const spilled = this.bag.splice(0);
+    const carried = this.bag.length;
+    const wrapped = carried > 0 && !this.wrapUsed && useSupply(this.game, 'wrap');
+    if (wrapped) {
+      this.wrapUsed = true;
+      this.showToast(`防水袋护住了 ${carried} 件包裹`);
+    }
+    const spilled = wrapped ? [] : this.bag.splice(0);
     for (const o of spilled) o.dunks++;
     const gone = spilled.filter((o) => o.dunks >= DUNK_MAX);
     gone.forEach((o, i) => {
@@ -1431,7 +1563,7 @@ export class PlayScene implements Scene {
     }
     const floating = spilled.filter((o) => o.dunks < DUNK_MAX);
     const n = floating.length;
-    this.log('fall', { n: spilled.length, gone: gone.length, fy: r2(this.sy(y) / this.H) });
+    this.log('fall', { n: spilled.length, gone: gone.length, protectedCount: wrapped ? carried : 0, fy: r2(this.sy(y) / this.H) });
     this.swim = { t: this.time, strokes: 0, fails: 0, gauges: 0, wheel: null };
     floating.forEach((o, i) => {
       o.state = 'float';
@@ -1724,13 +1856,24 @@ export class PlayScene implements Scene {
       // a tap (or a nudge) where a pull was wanted: what was under the finger says what the player was after
       const n = ++this.tally.taps;
       if (n <= 20) this.log('tap', { len: Math.round(len), held: r1(held), under: this.findPlat(x, y + this.camY)?.kind ?? 'water', on: f.on?.kind ?? null, step: this.step });
+      if (this.step !== 'aim' && held <= 0.5 && !this.pullCoachT && this.pullCoaches < PULL_COACH_MAX) {
+        if (this.time - this.lastEmptyTap <= PULL_COACH_GAP) {
+          this.pullCoaches++;
+          this.pullCoachT = PULL_COACH_T;
+          this.lastEmptyTap = -Infinity;
+          this.showHint('pull', '【按住】拉开，松手就跳', { dur: PULL_COACH_T, sub: '青蛙会朝手指拖动的反方向跳', again: true });
+        } else this.lastEmptyTap = this.time;
+      } else this.lastEmptyTap = -Infinity;
       return;
     }
+    this.lastEmptyTap = -Infinity;
+    this.pullCoachT = 0;
+    if (this.hint?.key === 'pull') this.hint = null;
     const power = clamp(len / TUNING.maxDrag, 0, 1);
     const ux = -dx / len, uy = -dy / len;
     const dist = this.jumpDist(power, ux, uy);
     // coughing in exhaust, the frog jumps in slow motion
-    const T = (0.34 + dist / 1000) * (this.smogT > 0 ? SMOG_SLOW : 1);
+    const T = this.jumpTime(dist);
     const info: Data = { pow: r2(power), dx: Math.round(dx), dy: Math.round(dy), held: r1(held), from: f.on?.kind ?? null, w: this.weight(), fy: r2(this.sy(f.y) / this.H) };
     if (this.smogT > 0) info.smog = true;
     if (this.step) info.step = this.step;
@@ -1781,6 +1924,10 @@ export class PlayScene implements Scene {
     return Math.max(0, d);
   }
 
+  private jumpTime(dist: number) {
+    return (0.34 + dist / 1000) * (this.smogT > 0 ? SMOG_SLOW : 1);
+  }
+
   private checkHouses() {
     for (const h of this.lv.houses) {
       if (h.passed || this.sy(h.plat.y) < this.H + 150) continue;
@@ -1822,10 +1969,10 @@ export class PlayScene implements Scene {
     if (f.state !== 'jump' && !onTruck && s > this.H + 36 && this.climbGrace <= 0) {
       // with the round already done, the waiting truck just reels the frog back in
       if (this.callT !== null) this.yank();
-      else if (!this.ropeUsed && !this.routeEnd) this.yank('rope');
+      else if (!this.ropeUsed && useSupply(this.game, 'rope')) this.yank('rope');
       else {
         this.log('thrown', { state: f.state, on: f.on?.kind ?? null, warnSec: r1(this.inWarnT) });
-        this.endDay('thrown');
+        this.offerRevive();
       }
       return;
     }
@@ -1887,7 +2034,7 @@ export class PlayScene implements Scene {
       this.lastHonk = CALL_T;
       this.log('all_out');
       this.hint = null;
-      this.showHint('call', `全部送完！【${CALL_T}秒内】跳回运输车下班`, { dur: 6, sub: '时间到会被拽上车；不着急的话，去车后面的路上逛逛' });
+      this.showHint('call', `包裹已处理完！【${CALL_T}秒内】跳回运输车下班`, { dur: 6, sub: '司机会免费接你回车上，也可以去车后逛逛' });
       this.spawnEgg();
       this.game.audio.play('truck_horn', { volume: 0.6 });
       return;
@@ -1910,13 +2057,12 @@ export class PlayScene implements Scene {
   }
 
   /** Time's up (or swept away while the truck waits, or the route is over): the truck hauls the frog aboard. */
-  private yank(why: 'call' | 'route' | 'rope' = 'call') {
+  private yank(why: 'call' | 'route' | 'rope' | 'ad' = 'call') {
     const f = this.frog;
     if (f.state === 'board') return;
     if (why === 'rope') {
       this.ropeUsed++;
       this.game.platform.vibrate(40);
-      this.game.audio.play('coin_loss', { delay: 0.6, volume: 0.8 });
     }
     this.log('yank', { state: f.state, on: f.on?.kind ?? null, why, warnSec: why === 'rope' ? r1(this.inWarnT) : undefined });
     this.yankAt = this.time;
@@ -1924,7 +2070,7 @@ export class PlayScene implements Scene {
     const t = this.lv.truck;
     if (f.state === 'swim') this.leaveWater();
     this.hint = null;
-    this.showToast(why === 'route' ? '下班时间到！被运输车拽回去' : why === 'rope' ? '救命绳！运输车把你拽了回来（每天一次，扣 5 金币）' : '时间到！被运输车一把拽了回去');
+    this.showToast(why === 'rope' ? '用掉 1 根救命绳，回车继续送件' : why === 'ad' ? '复活成功，回车继续送件' : '下班啦！司机接你回车上');
     this.runToTruck(t, f.x, f.y, true);
     // the photo catches it at the top of the arc
     this.queueShot('yank', '被拽回车上！', 6, LASSO_T + TUG_T - f.board!.t + YANK_T * 0.45);
@@ -1975,7 +2121,7 @@ export class PlayScene implements Scene {
   private updateHurry() {
     if (this.callT !== null || this.routeEnd || this.frozen()) return;
     const f = this.frog;
-    const left = (this.cfg.length + this.camY) / this.cfg.speed;
+    const left = (this.cfg.length + this.camY) / (this.cfg.speed * this.flowFactor);
     const n = Math.ceil(left);
     const tick = n < this.hurryN;
     this.hurryN = n;
@@ -1984,7 +2130,7 @@ export class PlayScene implements Scene {
       this.hurried = true;
       this.log('hurry', { state: f.state, on: f.on?.kind ?? null });
       this.driverSay(dealLine(HURRY_LINES, this.linesUsed), 2.8, 'hurry');
-      this.showHint('call', '快到站了！【跳回运输车】', { dur: 4, sub: '到站还没上车，会被绳子拽回去', warn: true, again: true });
+      this.showHint('call', '快到站了！【跳回运输车】', { dur: 4, sub: '到站时司机会免费接你上车', warn: true, again: true });
     } else if (tick && n >= 1 && n <= 3) {
       this.game.audio.play('truck_horn', { rate: 1 + (3 - n) * 0.06 });
       this.honkT = 0.5;
@@ -2115,6 +2261,75 @@ export class PlayScene implements Scene {
     if (o.t >= OFF_END) this.finish();
   }
 
+  // ---- a voluntary rewarded video instead of ending the run ----------------------------------
+
+  /**
+   * Called at the exact point the frog would be swept off the screen. Without a configured (or
+   * approved) ad unit, or once today's allowance is used, the day ends exactly as it always did.
+   */
+  private offerRevive() {
+    if (!this.reviveDone && !this.revive && adAllowed(this.game.save, 'revive') && this.game.platform.showRewardedAd && this.game.platform.adsAvailable?.()) {
+      this.revive = { t: 0, busy: false, btns: [] };
+      this.game.audio.setMusic(null);
+      return;
+    }
+    this.endDay('thrown');
+  }
+
+  /** Puts the frog back on the truck; delivered parcels, the bag and the day's progress all stay. */
+  private async takeRevive() {
+    const c = this.revive;
+    if (!c || c.busy) return;
+    c.busy = true;
+    this.game.tm.log('ad_show', { where: 'revive', day: this.day });
+    const ok = await watchAd(this.game, 'revive');
+    if (!this.revive) return; // the scene was left while the video was up
+    this.game.tm.log('ad_done', { where: 'revive', ok });
+    this.revive = null;
+    this.reviveDone = true;
+    if (ok && adAllowed(this.game.save, 'revive')) {
+      adClaim(this.game.save, 'revive');
+      this.game.writeSave();
+      // endDay never ran, so the run is intact; just clear the danger bookkeeping
+      this.ended = null;
+      this.endT = 0;
+      this.leaving = false;
+      this.inWarnT = 0;
+      this.warnK = 0;
+      this.climbGrace = CLIMB_GRACE;
+      this.videoRevived = true;
+      this.yank('ad');
+      this.game.audio.setMusic(musicForDay(this.day));
+    } else {
+      this.endDay('thrown');
+      this.showToast('本次未复活，回总部后可免费重试');
+    }
+  }
+
+  /** Two buttons over the frozen river: watch a video and carry on, or go back to HQ as usual. */
+  private drawRevive(ctx: Ctx) {
+    const c = this.revive;
+    if (!c) return;
+    const H = this.H;
+    const w = 620, h = 330, x = 65, y = H * 0.44 - h / 2;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, c.t * 4);
+    ctx.fillStyle = 'rgba(36,28,22,0.5)';
+    ctx.fillRect(0, 0, 750, H);
+    panel(ctx, x, y, w, h, { r: 26 });
+    text(ctx, '被甩出屏幕！', 375, y + 66, 42, { bold: true, color: P.red });
+    text(ctx, '看完视频可回车继续送件，每趟一次', 375, y + 126, 26, { color: P.inkSoft, maxWidth: w - 60 });
+    text(ctx, '也可直接回总部交差，免费重试', 375, y + 166, 22, { color: P.inkSoft, maxWidth: w - 60 });
+    const bw = 260, bh = 78, by = y + h - 108;
+    c.btns = [
+      { x: 375 - bw - 12, y: by, w: bw, h: bh },
+      { x: 375 + 12, y: by, w: bw, h: bh },
+    ];
+    button(ctx, c.btns[0].x, by, bw, bh, c.busy ? '视频加载中…' : '看视频 · 回车复活', { primary: true, pressed: this.pressed === 'rev0', disabled: c.busy, size: 26 });
+    button(ctx, c.btns[1].x, by, bw, bh, '回总部交差', { pressed: this.pressed === 'rev1', size: 30 });
+    ctx.restore();
+  }
+
   private endDay(kind: 'done' | 'thrown') {
     if (this.ended) return;
     this.ended = kind;
@@ -2143,7 +2358,7 @@ export class PlayScene implements Scene {
   private finish() {
     if (!this.ended || this.leaving) return;
     this.leaving = true;
-    this.log('run_end', this.summary(this.routeEnd ? 'done' : this.ended));
+    const summary = this.summary(this.routeEnd ? 'done' : this.ended);
     for (const o of this.lv.orders) {
       if (o.state === 'pool' || o.state === 'bag') o.state = 'missed';
       else if (o.state === 'float') o.state = 'wet';
@@ -2167,7 +2382,7 @@ export class PlayScene implements Scene {
       urgentOnTime,
       pay,
       bonus: urgentOnTime * TUNING.urgentBonus,
-      penalty: wrong * TUNING.wrongPenalty + wet * TUNING.wetPenalty + this.ropeUsed * TUNING.ropePenalty,
+      penalty: wrong * TUNING.wrongPenalty + wet * TUNING.wetPenalty,
       falls: this.stats.falls,
       wrongNames: orders.filter((o) => o.state === 'wrong' && o.deliveredTo).map((o) => o.deliveredTo!.name),
       photos: this.pickPhotos(),
@@ -2189,6 +2404,8 @@ export class PlayScene implements Scene {
         }),
       },
     };
+    const pass = passed(result);
+    this.log('run_end', { ...summary, passed: pass, unassistedClear: pass && !this.ropeUsed && !this.wrapUsed && !this.whistleUsed && !this.videoRevived });
     this.ended = null;
     this.stopLoops();
     this.game.go(new HqScene(this.game, result), true);
@@ -2354,9 +2571,9 @@ export class PlayScene implements Scene {
   }
 
   /** The goose's round: on guard at the door for GOOSE_ON, then off pottering for GOOSE_OFF. */
-  private gooseOn(h: House) {
+  private gooseOn(h: House, at = this.runT) {
     const T = GOOSE_ON + GOOSE_OFF;
-    return frac((this.runT + h.goose!.ph) / T) * T < GOOSE_ON;
+    return frac((at + h.goose!.ph) / T) * T < GOOSE_ON;
   }
 
   /** Where the goose is: 0 at its post by the door, 1 at the far end of the raft, walking in between. */
@@ -2842,8 +3059,8 @@ export class PlayScene implements Scene {
     if (this.step === 'pick') {
       if (this.refilled) this.setStep(null);
       else {
-        this.setStep('aim');
-        this.aimTarget = this.findAimTarget(o.house);
+        this.aimTarget = this.lv.plats.find((p) => p.kind === 'lily' && p.role === 'start') ?? null;
+        this.setStep(this.aimTarget ? 'aim' : 'go');
       }
     }
   }
@@ -2957,7 +3174,7 @@ export class PlayScene implements Scene {
     const wrong = new Set<number>();
     for (const v of [price, right + 1, right - 1, right + 2, right - 2]) if (v > 0 && v < paid && v !== right) wrong.add(v);
     const picks = shuffle([...wrong], Math.random).slice(0, 2);
-    this.cod = { o, h, t: -delay - 0.25, opts: shuffle([right, ...picks], Math.random), pick: null, pickT: 0, btns: [] };
+    this.cod = { o, h, t: -delay - 0.25, opts: shuffle([right, ...picks], Math.random), btns: [] };
     this.aim = null;
     this.stopCharge();
     this.game.audio.play('cash_register', { delay: delay + 0.2 });
@@ -2965,40 +3182,32 @@ export class PlayScene implements Scene {
 
   private chooseChange(i: number) {
     const c = this.cod!;
+    this.cod = null;
     const { price, paid } = c.o.cod!;
     const ok = c.opts[i] === paid - price;
     this.log('cod', { ok, pick: c.opts[i], right: paid - price, price, paid, sec: r1(c.t) });
-    c.pick = i;
-    c.pickT = 0;
     c.o.codOk = ok;
     const au = this.game.audio;
+    const h = c.h;
+    const rx = h.plat.x + h.resident.x, ry = h.plat.y + h.resident.y;
     if (ok) {
       this.stats.codRight++;
       this.stats.codTips += TUNING.codTip;
       au.play('coins_change');
       au.play('coin', { delay: 0.35 });
       this.queueShot('cod', `${c.h.name}：找得正好！`, 5, 0.1);
+      this.popups.push({ text: `找 ¥${paid - price} · 小费 +${TUNING.codTip}`, x: rx, y: ry - 130, t: 0, color: P.lilyDeep });
+      this.fx.push({ kind: 'coins', x: rx, y: ry - 90, t: 0, dur: 0.9, seed: Math.random() * 100 });
+      h.react = { kind: 'happy', t: 0 };
+      this.frogCue = { pose: 'frog_cheer', from: this.time, until: this.time + 1 };
     } else {
       this.stats.codLoss += TUNING.codPenalty;
       au.play('coins_change', { rate: 0.85 });
       au.play('deliver_unhappy', { delay: 0.3 });
       say(au, c.h.species, 'sad', { delay: 0.75, volume: 0.8 });
       this.game.platform.vibrate(40);
-    }
-  }
-
-  private closeCod() {
-    const c = this.cod!;
-    this.cod = null;
-    const h = c.h;
-    const rx = h.plat.x + h.resident.x, ry = h.plat.y + h.resident.y;
-    if (c.o.codOk) {
-      this.popups.push({ text: `小费 +${TUNING.codTip}`, x: rx, y: ry - 130, t: 0, color: P.lilyDeep });
-      this.fx.push({ kind: 'coins', x: rx, y: ry - 90, t: 0, dur: 0.9, seed: Math.random() * 100 });
-      h.react = { kind: 'happy', t: 0 };
-      this.frogCue = { pose: 'frog_cheer', from: this.time, until: this.time + 1 };
-    } else {
       this.popups.push({ text: `找错了 -${TUNING.codPenalty}`, x: rx, y: ry - 130, t: 0, color: P.red });
+      this.toast = { text: `应该找 ¥${paid - price}（${paid} − ${price}）`, t: 0 };
       h.react = { kind: 'confused', t: 0 };
       this.frogCue = { pose: 'frog_sad', from: this.time, until: this.time + 1 };
     }
@@ -3007,8 +3216,17 @@ export class PlayScene implements Scene {
   // ---------------------------------------------------------------- input
 
   down(x: number, y: number, id: number) {
+    const previousEmptyTap = this.lastEmptyTap;
+    this.lastEmptyTap = -Infinity;
+    if (this.supplyPanel) return this.supplyPanel.down(x, y);
     if (this.paused) {
       for (const b of this.menuBtns) if (hit(b.rect, x, y)) this.pressed = b.id;
+      return;
+    }
+    if (this.revive) {
+      const c = this.revive;
+      if (!c.busy) c.btns.forEach((r, i) => { if (!this.pressed && hit(r, x, y, 8)) this.pressed = `rev${i}`; });
+      // a tap outside does nothing on purpose: losing the run by a stray tap would be worse
       return;
     }
     // a long stretch without touching anything: stuck, or just riding along?
@@ -3026,7 +3244,10 @@ export class PlayScene implements Scene {
     }
     if (this.ended) return;
     if (this.step === 'intro') {
-      if (this.stepT > 0.4 && hit(this.introBtn, x, y, 24)) this.pressed = 'intro';
+      if (this.stepT <= 0.4) return;
+      if (this.supplyBtn && hit(this.supplyBtn, x, y)) this.pressed = 'supplies';
+      else if (this.whistleBtn && hit(this.whistleBtn, x, y)) this.pressed = 'whistle';
+      else if (hit(this.introBtn, x, y)) this.pressed = 'intro';
       else this.miss('intro');
       return;
     }
@@ -3045,10 +3266,10 @@ export class PlayScene implements Scene {
     }
     if (this.cod) {
       const c = this.cod;
-      if (c.pick === null && c.t > 0.3) {
+      if (c.t > 0.15) {
         c.btns.forEach((r, i) => hit(r, x, y, 8) && (this.pressed = `chg${i}`));
         if (!this.pressed) this.miss('cod');
-      } else if (c.pick !== null && c.pickT > 0.5) this.closeCod();
+      }
       return;
     }
     // a tap on the gull shoos it off (and it drops what it's got)
@@ -3083,6 +3304,7 @@ export class PlayScene implements Scene {
       return;
     }
     if (f.state === 'stand' && !this.aim && this.tiredT <= 0 && !this.routeEnd) {
+      this.lastEmptyTap = previousEmptyTap;
       this.aim = { id, sx: x, sy: y, x, y, t: 0, trail: [[this.game.platform.now(), x, y]] };
       this.exhaust();
     } else if (f.state === 'jump' && !this.aim && !this.early && !this.queued && !this.routeEnd) {
@@ -3162,6 +3384,7 @@ export class PlayScene implements Scene {
   }
 
   up(x: number, y: number, id: number) {
+    if (this.supplyPanel) return this.supplyPanel.up(x, y);
     if (this.stick && this.stick.id === id) this.stick = null;
     if (this.paused) {
       const b = this.menuBtns.find((b) => b.id === this.pressed && hit(b.rect, x, y));
@@ -3171,8 +3394,32 @@ export class PlayScene implements Scene {
     }
     const pressed = this.pressed;
     this.pressed = null;
-    if (pressed === 'intro') {
-      this.startDay();
+    if (this.revive) {
+      const c = this.revive;
+      if (c.busy) return;
+      const i = pressed === 'rev0' ? 0 : pressed === 'rev1' ? 1 : -1;
+      if (i < 0 || !c.btns[i] || !hit(c.btns[i], x, y, 8)) return;
+      this.game.audio.play('ui_tap');
+      if (i === 0) void this.takeRevive();
+      else {
+        this.revive = null;
+        this.reviveDone = true;
+        this.endDay('thrown');
+      }
+      return;
+    }
+    if (this.step === 'intro') {
+      if (pressed === 'intro' && hit(this.introBtn, x, y)) this.startDay();
+      else if (pressed === 'whistle' && this.whistleBtn && hit(this.whistleBtn, x, y)) {
+        this.whistleSelected = !this.whistleSelected;
+        this.game.audio.play('ui_tap');
+      } else if (pressed === 'supplies' && this.supplyBtn && hit(this.supplyBtn, x, y)) {
+        this.supplyPanel = new SupplyPanel(this.game, () => { this.supplyPanel = null; }, {
+          selected: () => this.whistleSelected,
+          toggle: () => { this.whistleSelected = !this.whistleSelected; },
+        });
+        this.game.audio.play('ui_open');
+      }
       return;
     }
     if (pressed === 'pause') {
@@ -3185,7 +3432,7 @@ export class PlayScene implements Scene {
     if (pressed?.startsWith('chg')) {
       const i = Number(pressed.slice(3));
       const c = this.cod;
-      if (c && c.pick === null && hit(c.btns[i], x, y, 8)) this.chooseChange(i);
+      if (c && hit(c.btns[i], x, y, 8)) this.chooseChange(i);
       return;
     }
     if (pressed?.startsWith('card')) {
@@ -3219,6 +3466,8 @@ export class PlayScene implements Scene {
 
   /** The system took the touch away: let go of whatever it held without jumping or tapping anything. */
   cancel(id: number) {
+    this.lastEmptyTap = -Infinity;
+    if (this.supplyPanel) return this.supplyPanel.up(NaN, NaN);
     if (this.stick && this.stick.id === id) this.stick = null;
     if (this.aim && this.aim.id === id) {
       this.aim = null;
@@ -3230,6 +3479,8 @@ export class PlayScene implements Scene {
 
   /** Closes the briefing card; day 1 goes on into the hands-on tutorial. */
   private startDay() {
+    if (this.step !== 'intro' || this.supplyPanel) return;
+    if (this.day >= 2 && this.whistleSelected) this.whistleUsed = useSupply(this.game, 'whistle');
     const au = this.game.audio;
     au.play('day_start');
     au.play('truck_horn', { delay: 0.45 });
@@ -3241,25 +3492,13 @@ export class PlayScene implements Scene {
     this.queueShot('start', '上班出发！', 1, 1.2);
   }
 
-  /** A lily ahead that gets the frog closer to `h`, comfortably in reach: the first jump to practise. */
-  private findAimTarget(h: House): Plat | null {
+  /** Invert the same weighted, linear pull-to-distance curve used by a jump from the truck. */
+  private guidePull(target: Plat) {
     const f = this.frog;
-    const reach = this.maxJump() * 0.8;
-    const goal = { x: h.plat.x, y: h.plat.y };
-    let best: Plat | null = null;
-    let bestD = Infinity;
-    for (const p of this.lv.plats) {
-      if (p.kind !== 'lily' && p.kind !== 'log') continue;
-      const d = Math.hypot(p.x - f.x, p.y - f.y);
-      const s = this.sy(p.y);
-      if (d > reach || d < 120 || s > this.sy(f.y) - 60 || s < this.game.safeT + 260) continue;
-      const g = Math.hypot(goal.x - p.x, goal.y - p.y) + (p.kind === 'log' ? 300 : 0);
-      if (g < bestD) {
-        bestD = g;
-        best = p;
-      }
-    }
-    return best;
+    const dx = f.x - target.x, dy = f.y - target.y;
+    const distance = Math.hypot(dx, dy);
+    const pull = clamp((distance - TUNING.minJump) / (this.maxJump() - TUNING.minJump) * TUNING.maxDrag, TUNING.deadDrag, TUNING.maxDrag);
+    return { dx: dx * pull / distance, dy: dy * pull / distance };
   }
 
   /** Held the pull too long: the legs give out and the jump is called off. */
@@ -3339,18 +3578,27 @@ export class PlayScene implements Scene {
   blur() {
     // the page may be closing: keep a snapshot of the run in case it never comes back
     if (!this.leaving) this.log('run_snap', this.summary('hidden'));
-    if (!this.ended) this.setPaused(true);
-    this.aim = null;
-    this.early = null;
-    this.queued = null;
+    this.supplyPanel?.up(NaN, NaN);
+    this.pressed = null;
+    this.lastEmptyTap = -Infinity;
+    // Preparation and revival already hold the river still, including while a video is open.
+    if (!this.ended && this.step !== 'intro' && !this.revive) this.setPaused(true);
+    this.dropGesture();
     this.stick = null;
-    this.stopCharge();
   }
 
   /** The pause menu stops everything that makes noise, music included, and picks it up again after. */
   /** Esc: the pause button, or 继续 when paused. */
   escape() {
-    if (this.paused) {
+    if (this.supplyPanel) return this.supplyPanel.escape();
+    if (this.revive) {
+      if (!this.revive.busy) {
+        this.pressed = null;
+        this.revive = null;
+        this.reviveDone = true;
+        this.endDay('thrown');
+      }
+    } else if (this.paused) {
       this.pressed = null;
       this.menu('resume');
     } else if (!this.ended && !this.off && this.step !== 'intro') {
@@ -3536,12 +3784,21 @@ export class PlayScene implements Scene {
       // the leap gauge goes over everything: the frog's chance to get out depends on seeing it
       ctx.translate(this.camX, this.panY);
       this.drawGauge(ctx);
+      if (this.pullCoachT && this.frog.state === 'stand' && !this.aim && !this.frozen() && !this.ended) {
+        const x = this.frog.x > 375 ? this.frog.x - 170 : this.frog.x + 170;
+        const y = clamp(this.sy(this.frog.y) - 60, this.game.safeT + 180, this.trayY() - 270);
+        panel(ctx, x - 96, y - 86, 192, 48, { r: 24, fill: P.gold, shadow: false });
+        text(ctx, '按住拉开', x, y - 61, 26, { bold: true });
+        this.drawHand(ctx, 'drag', x, y, { dx: 0, dy: 110 }, PULL_COACH_T - this.pullCoachT);
+      }
       ctx.restore();
     }
     if (this.cod && !this.paused) this.drawCod(ctx);
+    if (this.revive && !this.paused) this.drawRevive(ctx);
     if (this.step && this.step !== 'go' && this.step !== 'refill' && !this.paused) this.drawCoach(ctx);
     if (this.off) this.drawOffCard(ctx);
     if (this.paused) this.drawPause(ctx);
+    this.supplyPanel?.render(ctx);
   }
 
   private refreshTray() {
@@ -5381,7 +5638,7 @@ export class PlayScene implements Scene {
     if (!this.off && !this.ended && this.step !== 'intro') {
       this.drawLifeline(ctx);
       this.drawWind(ctx);
-      if (this.assist) this.drawAssist(ctx);
+      if (this.assist || this.whistleUsed) this.drawAssist(ctx);
     }
     // hint bubble
     if (this.hint && !this.paused && (!this.step || this.step === 'go' || this.step === 'refill')) this.drawHint(ctx);
@@ -5568,7 +5825,7 @@ export class PlayScene implements Scene {
       const state = `${w}:${h}:${c.where}:${full}:${tags.map((t) => `${t.s}${t.fill}${t.ink ? 1 : 0}`).join(',')}:${!!o.group}:${o.dunks ?? 0}:${this.game.sprites.version}`;
       // kept per place in its row, so a card taking another's place is drawn over the same canvas
       const slot = this.cards.filter((d) => d.where === c.where).indexOf(c);
-      drawBakedScreen(ctx, `card:${c.where}:${slot}`, `${o.id}:${state}`, x, y, [-10, -12, w + 12, h + 14], (g) => this.cardFace(g, c, 0, 0, w, h, full, false, tags));
+      drawBakedScreen(ctx, `card:${c.where}:${slot}`, `${this.day}:${o.id}:${state}`, x, y, [-10, -12, w + 12, h + 14], (g) => this.cardFace(g, c, 0, 0, w, h, full, false, tags));
       return;
     }
     ctx.save();
@@ -5725,13 +5982,14 @@ export class PlayScene implements Scene {
     ctx.lineWidth = 2;
     ctx.strokeStyle = P.tealDeep;
     ctx.stroke();
-    text(ctx, '慢速', x + 40, y + 19, 22, { bold: true, color: P.tealDeep });
+    text(ctx, this.whistleUsed ? '缓流哨' : '慢速', x + 40, y + 19, 22, { bold: true, color: P.tealDeep });
     ctx.restore();
   }
 
   /** A small tag under the right end of the top bar: whether today's lifeline is still there. */
   private drawLifeline(ctx: Ctx) {
-    const left = this.ropeUsed ? 0 : 1;
+    if (!this.ropeUsed && !this.game.save.supplies.rope) return;
+    const left = !this.ropeUsed;
     const w = 168, h = 36, x = 730 - w, y = this.game.safeT + 88;
     ctx.save();
     ctx.globalAlpha *= left ? 0.95 : 0.55;
@@ -5791,7 +6049,7 @@ export class PlayScene implements Scene {
     let line: Seg[] = [];
     let sub = '';
     let capY = 0;
-    let hand: { kind: 'tap' | 'drag' | 'stick'; x: number; y: number } | null = null;
+    let hand: { kind: 'tap' | 'drag' | 'stick'; x: number; y: number; pull?: { dx: number; dy: number } } | null = null;
     if (this.step === 'pick' || this.step === 'deliver') {
       const cards = this.step === 'pick' ? this.truckCards() : this.cards;
       if (!cards.length || this.trayMode === 'bag') return;
@@ -5802,20 +6060,20 @@ export class PlayScene implements Scene {
       sub = this.step === 'pick' ? (this.refilled ? `背包有 ${this.cfg.bagSlots} 格，一次多拿几个，顺路一起送` : '卡片上的数字是取件码，房子上挂着同样的码') : '取件码和颜色要对得上';
       capY = first.y - 56 - 150;
       hand = { kind: 'tap', x: c.rect.x + c.rect.w * 0.55, y: c.rect.y + c.rect.h * 0.5 };
-    } else if (this.step === 'aim') {
+    } else if (this.step === 'aim' && this.aimTarget) {
       const fy = this.sy(f.y);
       holes.push({ x: f.x - 100, y: fy - 160, w: 200, h: 210, round: true });
       const t = this.aimTarget;
-      if (t) holes.push({ x: t.x - t.rx - 30, y: this.sy(t.y) - t.ry - 44, w: (t.rx + 30) * 2, h: (t.ry + 44) * 2, round: true });
-      // press in the middle of the screen, where there's room to pull every way; clear of the frog's ring
-      const zx = 375;
-      let zy = H * 0.48;
-      if (Math.abs(f.x - zx) < 190 && zy + 90 > fy - 160 && zy - 90 < fy + 50) zy = fy - 160 > H * 0.3 + 110 ? fy - 270 : fy + 160;
-      holes.push({ x: zx - 90, y: zy - 90, w: 180, h: 180, round: true });
-      line = segs('按住【屏幕中间】往下拉');
-      sub = `松手就往反方向跳，拉得越长跳得越远；按住超过 ${FOOT_T} 秒脚会累`;
-      capY = this.game.safeT + 100;
-      if (!this.aim) hand = { kind: 'drag', x: zx, y: zy };
+      holes.push({ x: t.x - t.rx - 30, y: this.sy(t.y) - t.ry - 44, w: (t.rx + 30) * 2, h: (t.ry + 44) * 2, round: true });
+      const pull = this.guidePull(t);
+      const compact = this.sy(t.y) - t.ry < this.game.safeT + 322;
+      capY = this.game.safeT + (compact ? 14 : 92);
+      line = segs('按住空白处，沿【虚线】拉到头再松手');
+      sub = compact ? '' : '青蛙会向反方向跳到荷叶上';
+      const zx = 287 - Math.min(0, pull.dx);
+      const zy = clamp(H * 0.49, capY + (compact ? 116 : 158) - Math.min(0, pull.dy), this.truckRowY() - 88 - Math.max(0, pull.dy));
+      holes.push({ x: zx + Math.min(0, pull.dx) - 28, y: zy + Math.min(0, pull.dy) - 28, w: Math.abs(pull.dx) + 56, h: Math.abs(pull.dy) + 56, round: false });
+      if (!this.aim) hand = { kind: 'drag', x: zx, y: zy, pull };
     } else if (this.step === 'rescue') {
       // first time in the water: the wheel, and (with parcels adrift) the tongue's reach
       const w = this.wheel();
@@ -5872,25 +6130,26 @@ export class PlayScene implements Scene {
     ctx.restore();
     if (this.step === 'aim' && this.aimTarget && !this.aim) {
       const t = this.aimTarget;
-      const ty = this.sy(t.y) - t.ry - 74 + Math.sin(this.time * 5) * 5;
+      const above = this.sy(t.y) - t.ry - 74;
+      const ty = (above > capY + (sub ? 136 : 92) + 30 ? above : this.sy(t.y) + t.ry + 45) + Math.sin(this.time * 5) * 5;
       panel(ctx, t.x - 78, ty - 26, 156, 52, { r: 26, fill: P.gold, shadow: false });
       text(ctx, '跳到这里', t.x, ty + 1, 28, { bold: true });
     }
     this.drawCaption(ctx, line, sub, capY, Math.min(1, this.stepT * 4));
-    if (hand) this.drawHand(ctx, hand.kind, hand.x, hand.y);
+    if (hand) this.drawHand(ctx, hand.kind, hand.x, hand.y, hand.pull);
   }
 
-  private drawHand(ctx: Ctx, kind: 'tap' | 'drag' | 'stick', x: number, y: number) {
+  private drawHand(ctx: Ctx, kind: 'tap' | 'drag' | 'stick', x: number, y: number, pull?: { dx: number; dy: number }, t = this.time) {
     const sp = this.game.sprites;
     ctx.save();
     if (kind === 'stick') {
       // press the wheel and push the knob round
-      const cyc = (this.time % 2.4) / 2.4;
+      const cyc = (t % 2.4) / 2.4;
       const ang = -Math.PI / 2 - Math.PI / 4 + Math.sin(cyc * Math.PI * 2) * 0.9;
       const r = cyc < 0.1 ? (cyc / 0.1) * 50 : 50;
       sp.draw(ctx, 'hand', x + Math.cos(ang) * r, y + 14 + Math.sin(ang) * r, 1.1);
     } else if (kind === 'tap') {
-      const cyc = (this.time % 1.1) / 1.1;
+      const cyc = (t % 1.1) / 1.1;
       const press = cyc < 0.25 ? cyc / 0.25 : cyc < 0.45 ? 1 : Math.max(0, 1 - (cyc - 0.45) / 0.3);
       if (press > 0.8) {
         ctx.globalAlpha = 0.6;
@@ -5901,24 +6160,24 @@ export class PlayScene implements Scene {
         ctx.globalAlpha = 1;
       }
       sp.draw(ctx, 'hand', x, y + 14 - press * 14, 1.1 - press * 0.08);
-    } else {
-      // press, pull down, let go
-      const cyc = (this.time % 2) / 2;
+    } else if (pull) {
+      const cyc = (t % 2) / 2;
       const k = cyc < 0.15 ? 0 : cyc < 0.7 ? easeOutCubic((cyc - 0.15) / 0.55) : 1;
-      const hx = x - k * 30, hy = y + k * 170;
+      const ex = x + pull.dx, ey = y + pull.dy;
+      const hx = x + k * pull.dx, hy = y + k * pull.dy;
       ctx.globalAlpha = cyc > 0.85 ? (1 - cyc) / 0.15 : 1;
-      if (k > 0) {
-        ctx.strokeStyle = P.white;
-        ctx.setLineDash([8, 10]);
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(hx, hy);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+      ctx.strokeStyle = P.white;
+      ctx.setLineDash([8, 10]);
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ellipse(ctx, ex, ey, 12, 12);
+      ctx.stroke();
       sp.draw(ctx, 'hand', hx, hy, 1.1);
-      if (cyc > 0.72) text(ctx, '松手！', hx + 90, hy + 40, 32, { bold: true, color: P.white });
+      if (cyc > 0.72) text(ctx, '松手！', hx + 75, hy + 30, 30, { bold: true, color: P.white });
     }
     ctx.restore();
   }
@@ -5935,11 +6194,13 @@ export class PlayScene implements Scene {
     ctx.fillRect(0, 0, 750, H);
     const rowH = 104;
     const ch = 150 + b.rows.length * rowH + 196;
-    const y0 = (H - ch) / 2 - 20;
-    const s = 0.9 + 0.1 * easeOutBack(Math.min(1, this.stepT * 3));
-    ctx.translate(375, y0 + ch / 2);
+    const available = H - this.game.safeT - this.game.safeB;
+    const mid = this.game.safeT + available / 2;
+    const y0 = mid - ch / 2;
+    const s = Math.min(1, (available - 42) / ch) * (0.9 + 0.1 * easeOutBack(Math.min(1, this.stepT * 3)));
+    ctx.translate(375, mid);
     ctx.scale(s, s);
-    ctx.translate(-375, -(y0 + ch / 2));
+    ctx.translate(-375, -mid);
     panel(ctx, 40, y0, 670, ch, { r: 28 });
     text(ctx, b.title, 375, y0 + 72, 46, { bold: true });
     ctx.strokeStyle = 'rgba(74,59,48,0.25)';
@@ -5997,8 +6258,20 @@ export class PlayScene implements Scene {
     ctx.fill();
     drawStamp(ctx, 122, cy, 17, false, 3);
     rich(ctx, segs(`今日挑战：【${this.cfg.challenge.label}】`), 150, cy + 1, 26, { left: true });
-    this.introBtn = { x: 215, y: y0 + ch - 116, w: 320, h: 88 };
-    button(ctx, 215, y0 + ch - 116, 320, 88, this.cfg.tutorial ? '开始上班' : '开工！', { primary: true, pressed: this.pressed === 'intro', size: 36 });
+    const by = y0 + ch - 116;
+    const action = (id: string, x: number, w: number, label: string) => {
+      button(ctx, x, by, w, 80, label, { primary: id === 'intro', kind: id === 'whistle' ? 'ghost' : undefined, pressed: this.pressed === id, size: id === 'intro' ? 36 : 26 });
+      return { x: 375 + (x - 375) * s, y: mid + (by - mid) * s, w: w * s, h: 80 * s };
+    };
+    this.supplyBtn = null;
+    this.whistleBtn = null;
+    const start = this.cfg.tutorial ? '开始上班' : '开工！';
+    if (this.day >= 2 && canShowSupplies(this.game)) {
+      const hasWhistle = this.game.save.supplies.whistle > 0;
+      this.supplyBtn = action('supplies', hasWhistle ? 64 : 108, hasWhistle ? 168 : 208, '送件补给');
+      if (hasWhistle) this.whistleBtn = action('whistle', 246, 232, this.whistleSelected ? '已选缓流哨' : '本趟用缓流哨');
+      this.introBtn = action('intro', hasWhistle ? 492 : 334, hasWhistle ? 194 : 308, start);
+    } else this.introBtn = action('intro', 215, 320, start);
     ctx.restore();
   }
 
@@ -6008,7 +6281,6 @@ export class PlayScene implements Scene {
     if (c.t < 0) return;
     const sp = this.game.sprites;
     const { price, paid } = c.o.cod!;
-    const right = paid - price;
     const H = this.H;
     const w = 640, h = 560, x0 = 55, y0 = H * 0.42 - h / 2;
     ctx.save();
@@ -6030,26 +6302,19 @@ export class PlayScene implements Scene {
     text(ctx, who, rx + 76 + 18, y0 + 150, 30, { align: 'left' });
     this.drawBill(ctx, rx + 76 + 18 + ww + 40 + 86, y0 + 150, paid);
     rich(ctx, segs(`货款【¥${price}】，要找回多少？`), 375, y0 + 238, 34, { bold: true });
-    if (this.cfg.tutorial && c.pick === null) text(ctx, '找零 = 付的钱 − 货款', 375, y0 + 284, 24, { color: P.inkSoft });
+    if (this.cfg.tutorial) text(ctx, '找零 = 付的钱 − 货款', 375, y0 + 284, 24, { color: P.inkSoft });
     c.btns = c.opts.map((v, i) => {
       const r = { x: x0 + 34 + i * 194, y: y0 + 318, w: 178, h: 132 };
-      const chosen = c.pick === i, isRight = v === right;
-      const done = c.pick !== null;
-      const fill = done && isRight ? '#DDEFD0' : done && chosen ? '#FBE0DA' : P.cream;
       const down = this.pressed === `chg${i}`;
       pressIn(ctx, r, down);
-      panel(ctx, r.x, r.y, r.w, r.h, { r: 18, fill, stitch: done && isRight ? P.lilyDeep : done && chosen ? P.red : undefined });
+      panel(ctx, r.x, r.y, r.w, r.h, { r: 18, fill: P.cream });
       // a little stack of coins beside the amount, the same for every option (its height isn't the answer)
       for (let j = 0; j < 3; j++) sp.draw(ctx, 'coin', r.x + 48, r.y + 96 - j * 10, 0.85, 0.6);
-      text(ctx, `¥${v}`, r.x + 120, r.y + r.h / 2 + 2, 46, { bold: true, color: done && isRight ? P.lilyDeep : done && chosen ? P.red : INK });
+      text(ctx, `¥${v}`, r.x + 120, r.y + r.h / 2 + 2, 46, { bold: true });
       pressOut(ctx, down, () => roundRect(ctx, r.x, r.y, r.w, r.h, 18));
       return r;
     });
-    if (c.pick !== null) {
-      const ok = c.opts[c.pick] === right;
-      const line = ok ? `找对了！${c.h.name}给了小费 +${TUNING.codTip}` : `应该找 ¥${right}（${paid} − ${price}），扣 ${TUNING.codPenalty} 元`;
-      text(ctx, line, 375, y0 + 504, 28, { bold: true, color: ok ? P.lilyDeep : P.red, maxWidth: w - 40 });
-    } else text(ctx, '点一下要找回的钱', 375, y0 + 504, 26, { color: P.inkSoft });
+    text(ctx, '点一下要找回的钱', 375, y0 + 504, 26, { color: P.inkSoft });
     ctx.restore();
   }
 
