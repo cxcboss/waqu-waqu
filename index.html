@@ -44,7 +44,7 @@
       #trial-tools[data-autoplay="true"] #settings-trigger { background: #dce8be; border-color: #758c50; }
       .settings-panel {
         box-sizing: border-box; position: absolute; top: calc(100% + 8px); left: 0;
-        width: min(272px, calc(100vw - 24px)); padding: 7px 13px; background: #fff8e9;
+        width: min(292px, calc(100vw - 24px)); padding: 7px 13px; background: #fff8e9;
         border: 1px solid #ab9872; border-radius: 15px; box-shadow: 0 8px 26px #4a3b3040;
       }
       .settings-row {
@@ -67,9 +67,10 @@
       .settings-speed {
         display: flex; gap: 2px; padding: 2px; background: #ede2cb; border-radius: 10px;
       }
+      #autoplay-speed-label { white-space: nowrap; }
       .settings-speed label { position: relative; cursor: pointer; }
       .settings-speed input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-      .settings-speed span { display: block; min-width: 31px; padding: 5px; text-align: center; border-radius: 8px; }
+      .settings-speed span { display: block; min-width: 28px; padding: 5px 4px; text-align: center; white-space: nowrap; border-radius: 8px; }
       .settings-speed input:checked + span { background: #fffaf0; color: #374c23; box-shadow: 0 1px 3px #4a3b3033; }
       .settings-speed input:focus-visible + span, .settings-switch:focus-visible, #settings-trigger:focus-visible {
         outline: 2px solid #566e37; outline-offset: 2px;
@@ -99,9 +100,11 @@
           <div class="settings-row">
             <span id="autoplay-speed-label">速度</span>
             <div class="settings-speed" role="radiogroup" aria-labelledby="autoplay-speed-label">
+              <label><input name="autoplay-speed" type="radio" value="slowest" /><span>最慢</span></label>
               <label><input name="autoplay-speed" type="radio" value="slow" /><span>慢</span></label>
               <label><input name="autoplay-speed" type="radio" value="normal" checked /><span>中</span></label>
               <label><input name="autoplay-speed" type="radio" value="fast" /><span>快</span></label>
+              <label><input name="autoplay-speed" type="radio" value="fastest" /><span>最快</span></label>
             </div>
           </div>
           <label class="settings-row">允许犯错和失败<input class="settings-switch" id="autoplay-mistakes" type="checkbox" role="switch" /></label>

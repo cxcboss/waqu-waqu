@@ -80,8 +80,10 @@ test('loading at an early stop leads into a visible pull and a normal jump', () 
   assert.equal(landed, 'lily');
 });
 
-test('the three speed settings change how long the courier pulls', () => {
-  const pullSeconds = ['slow', 'normal', 'fast'].map((speed) => {
+const speeds = ['slowest', 'slow', 'normal', 'fast', 'fastest'];
+
+test('all five speeds keep a visible, human-paced pull', () => {
+  const pullSeconds = speeds.map((speed) => {
     let lastHold = 0;
     play(2, 1542, (scene) => {
       if (scene.aim) lastHold = scene.aim.t;
@@ -89,14 +91,36 @@ test('the three speed settings change how long the courier pulls', () => {
     }, { speed, mistakes: false });
     return lastHold;
   });
-  assert.ok(pullSeconds[0] > pullSeconds[1] && pullSeconds[1] > pullSeconds[2], pullSeconds.join(', '));
+  assert.ok(pullSeconds.every((seconds, i) => i === 0 || seconds < pullSeconds[i - 1]), pullSeconds.join(', '));
+  assert.ok(pullSeconds.at(-1) >= 0.35, 'the fastest normal pull should still animate');
+});
+
+test('a reachable upper landing starts the convoy rushing before the frog drifts to mid-screen', () => {
+  const H = 1542;
+  let upper = false, followed = false;
+  play(2, H, (scene) => {
+    const jump = scene.frog.jump;
+    if (jump?.info && jump.y1 - scene.camY < H * 0.28) upper = true;
+    if (upper && scene.speedK > 1.2) followed = true;
+    if (followed || scene.time >= 12) return false;
+  });
+  assert.ok(upper, 'all early jumps waited for lower screen positions');
+  assert.ok(followed, 'the convoy did not follow the upper jump');
 });
 
 const requested = process.env.WAQU_TEST_DAYS?.split(',').map(Number);
 const heights = process.env.WAQU_TEST_HEIGHTS?.split(',').map(Number) ?? [1334, 1623];
-for (const H of heights) for (const day of requested ?? [0, ...DAYS.map((d) => d.day)]) {
-  test(`day ${day} at height ${H} passes through the normal report`, () => {
-    const { game, scene, events } = play(day, H);
+const testedSpeeds = process.env.WAQU_TEST_SPEEDS?.split(',') ?? ['normal'];
+for (const H of heights) for (const speed of testedSpeeds) for (const day of requested ?? [0, ...DAYS.map((d) => d.day)]) {
+  test(`day ${day} at height ${H} and ${speed} speed passes through the normal report`, () => {
+    let highest = H, lowest = 0;
+    const { game, scene, events } = play(day, H, (scene) => {
+      const f = scene.frog;
+      if (!f.jump?.info) return;
+      const y = f.y - scene.camY - f.z;
+      highest = Math.min(highest, y);
+      lowest = Math.max(lowest, y);
+    }, { speed, mistakes: false });
     const report = game.scene.r;
     const jumps = events.filter(([name]) => name === 'jump');
     const delivered = events.filter(([name, d]) => (name === 'deliver' && d.ok) || name === 'return_in');
@@ -105,6 +129,7 @@ for (const H of heights) for (const day of requested ?? [0, ...DAYS.map((d) => d
       jumpCount: jumps.length, successfulTouches: delivered.length,
       orders: scene.lv.orders.map(o => `${o.house.id}:${o.state}${o.ret ? '/return' : ''}`),
     }));
+    assert.ok(highest >= 140 && lowest < H - 12, `jumps reached ${Math.round(highest)}–${Math.round(lowest)} in a ${H} tall view`);
     assert.ok(jumps.length > 0);
     assert.equal(report.thrown, false);
     assert.equal(report.delivered, delivered.length);

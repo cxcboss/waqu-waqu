@@ -629,16 +629,48 @@ export class PlayScene implements Scene {
       const dist = this.jumpDist(power, dx / len, dy / len);
       const x0 = f.x + dx / len * dist, x1 = x0 + this.windShift(x0, this.jumpTime(dist));
       const y1 = f.y + dy / len * dist;
-      const sy = this.sy(y1);
-      if (sy < this.game.safeT + 96 || sy > this.H - 28) continue;
       if (p.house?.goose && this.gooseOn(p.house, this.runT + seconds + 0.04)) continue;
       if (p.dam && this.gateUnder(p, x1)) continue; // use the solid crossbeams beside the gates
       if (p.kind === 'truck') {
         if (Math.abs(x1 - x) > p.rx - 4 || Math.abs(y1 - y) > p.ry * 0.72) continue;
       } else if (shapeN(p, x1 - x + p.x, y1 - y + p.y) > 0.86) continue;
+      if (!this.autoplayArcVisible(y1, dist)) continue;
       return { x: -dx / len * power * max, y: -dy / len * power * max };
     }
     return null;
+  }
+
+  /** Verify a mistimed or skewed input with the same limits as a normal slingshot pull. */
+  autoplayKeepsInFrame(dx: number, dy: number) {
+    const length = Math.hypot(dx, dy);
+    if (length < TUNING.deadDrag) return true;
+    const dist = this.jumpDist(Math.min(1, length / TUNING.maxDrag), -dx / length, -dy / length);
+    return this.autoplayArcVisible(this.frog.y - dy / length * dist, dist);
+  }
+
+  /** Check the frog's projected position through the flight, including the convoy's normal rush response. */
+  private autoplayArcVisible(y1: number, dist: number) {
+    const start = this.sy(this.frog.y), end = this.sy(y1);
+    const top = Math.min(start, this.game.safeT + 158);
+    const bottom = Math.max(start, this.H - this.game.safeB - 42);
+    const duration = this.jumpTime(dist);
+    const lift = this.jumpLift(dist);
+    const flow = this.cfg.speed * this.flowFactor;
+    const base = this.callT === null ? 1 : TUNING.slowFactor; // releasing the drag cancels the boarding slowdown
+    const remaining = Math.max(0, this.cfg.length + this.camY);
+    let camera = 0, speed = this.speedK, rushing = this.rushing;
+    const dt = 1 / 60;
+    for (let elapsed = dt; elapsed < duration + dt; elapsed += dt) {
+      const landing = end + camera;
+      const rush = this.rushAt(landing);
+      rushing = rushing ? landing <= this.H * TUNING.rushRelease : rush > 0.02;
+      speed = this.stepConvoySpeed(speed, rushing, rush, base, dt);
+      camera = Math.min(remaining, camera + flow * speed * dt);
+      const k = Math.min(1, elapsed / duration);
+      const y = lerp(start, end, k) + camera - 4 * lift * k * (1 - k);
+      if (y < top || y > bottom) return false;
+    }
+    return true;
   }
 
   private autoplayPlatform(p: Plat, dt: number) {
@@ -705,10 +737,7 @@ export class PlayScene implements Scene {
       const rush = this.rushK();
       this.updateRush(rush);
       const base = this.slowT > 0 || this.callT !== null ? TUNING.slowFactor : 1;
-      let target = this.rushing ? 1 + (TUNING.rushMax - 1) * Math.max(TUNING.rushFloor, rush) : base;
-      if (this.ended === 'done' || this.routeEnd) target = 0;
-      const rate = target > this.speedK ? (this.rushing ? TUNING.rushUp : 4) : this.speedK > 1 && !this.ended && !this.routeEnd ? TUNING.rushDown : 4;
-      this.speedK = approach(this.speedK, target, rate, dt);
+      this.speedK = this.stepConvoySpeed(this.speedK, this.rushing, rush, base, dt);
       // The river holds still while the tutorial has the player's hands busy.
       if (!this.frozen()) this.camY -= cfg.speed * this.flowFactor * this.speedK * dt;
       this.placeTruck();
@@ -792,9 +821,20 @@ export class PlayScene implements Scene {
    * The convoy speeds up to match, so running ahead of the truck doesn't pay.
    */
   private rushK() {
-    if (!this.canRush()) return 0;
+    return this.canRush() ? this.rushAt(this.frogScreenY()) : 0;
+  }
+
+  private rushAt(screenY: number) {
     const line = this.H * TUNING.rushLine, top = this.game.safeT + 110;
-    return clamp((line - this.frogScreenY()) / (line - top), 0, 1);
+    return clamp((line - screenY) / (line - top), 0, 1);
+  }
+
+  private stepConvoySpeed(speed: number, rushing: boolean, rush: number, base: number, dt: number) {
+    const target = this.ended === 'done' || this.routeEnd ? 0
+      : rushing ? 1 + (TUNING.rushMax - 1) * Math.max(TUNING.rushFloor, rush) : base;
+    const rate = target > speed ? (rushing ? TUNING.rushUp : 4)
+      : speed > 1 && !this.ended && !this.routeEnd ? TUNING.rushDown : 4;
+    return approach(speed, target, rate, dt);
   }
 
   /** The rush starts as soon as the frog is in the top of the screen and lasts until it's back in the middle. */
@@ -1887,7 +1927,7 @@ export class PlayScene implements Scene {
     // a gust (or the blizzard) carries the frog sideways while it's in the air
     const x1 = f.x + ux * dist, wx = this.windShift(x1, T);
     if (wx) info.wind = Math.round(wx);
-    f.jump = { x0: f.x, y0: f.y, x1: x1 + wx, y1: f.y + uy * dist, t: 0, T, H: 36 + dist * 0.3, dist, src: f.on, info, wind: wx || undefined };
+    f.jump = { x0: f.x, y0: f.y, x1: x1 + wx, y1: f.y + uy * dist, t: 0, T, H: this.jumpLift(dist), dist, src: f.on, info, wind: wx || undefined };
     if (this.step === 'aim') this.setStep('go');
     // the push-off shoves the pad down and away
     const from = f.on;
@@ -1933,6 +1973,10 @@ export class PlayScene implements Scene {
 
   private jumpTime(dist: number) {
     return (0.34 + dist / 1000) * (this.smogT > 0 ? SMOG_SLOW : 1);
+  }
+
+  private jumpLift(dist: number) {
+    return 36 + dist * 0.3;
   }
 
   private checkHouses() {
@@ -5364,7 +5408,7 @@ export class PlayScene implements Scene {
       const dist = this.jumpDist(power, ux, uy);
       const T = (0.34 + dist / 1000) * (this.smogT > 0 ? SMOG_SLOW : 1);
       const tx = fx + ux * dist + this.windShift(fx + ux * dist, T), ty = fy + uy * dist;
-      const hj = 36 + dist * 0.3;
+      const hj = this.jumpLift(dist);
       const a = Math.min(1, (this.aim.t - delay) * 4);
       ctx.globalAlpha = a;
       for (let i = 1; i < 16; i++) {

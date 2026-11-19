@@ -6,7 +6,9 @@ import { AUTOPLAY_TOUCH as TOUCH, type PlayScene } from './play';
 
 const DECISION = 0.16;
 // Multipliers for the courier's gestures only. The scene clock and jump physics run normally.
-const HAND_DELAYS = { slow: 1.35, normal: 1, fast: 0.72 };
+const HAND_DELAYS = { slowest: 1.44, slow: 1.22, normal: 1, fast: 0.86, fastest: 0.72 };
+const MIN_PULL = 0.3;
+const MIN_CARD_GAP = 0.17;
 export interface AutoplayOptions {
   speed: keyof typeof HAND_DELAYS;
   mistakes: boolean;
@@ -61,7 +63,7 @@ export class CourierAutoplay {
   private recent = new Map<Plat, number>();
   private pace: () => number;
 
-  constructor(private retry = 0, day = 1, private options: AutoplayOptions = { speed: 'normal', mistakes: false }) {
+  constructor(retry = 0, day = 1, private options: AutoplayOptions = { speed: 'normal', mistakes: false }) {
     this.pace = rng(day * 1531 + retry * 71);
   }
 
@@ -87,7 +89,7 @@ export class CourierAutoplay {
       }
       const elapsed = time - a.started;
       const slip = this.options.mistakes ? a.slip : null;
-      const releasing = elapsed >= (slip?.releaseEarly ? a.press + a.travel * 0.69 : a.release);
+      const releasing = elapsed >= (slip?.releaseEarly ? Math.max(MIN_PULL, a.press + a.travel * 0.69) : a.release);
       const t = clamp((elapsed - a.press) / a.travel, 0, 1);
       const correction = t > 0.7 || releasing ? scene.autoplayPull(a.hop.pad) : a.hop.pull;
       const pull = correction ?? a.hop.pull;
@@ -98,7 +100,7 @@ export class CourierAutoplay {
       scene.move(x, y, TOUCH);
       if (!releasing) return;
       this.aimed = null;
-      if (correction) {
+      if (correction && (!slip || scene.autoplayKeepsInFrame(x - a.start.x, y - a.start.y))) {
         scene.up(x, y, TOUCH);
         this.checkedLanding = false;
         if (frog.on) this.recent.set(frog.on, time);
@@ -149,7 +151,7 @@ export class CourierAutoplay {
         (!nearOrder || c.order.house.plat.y > nearOrder.house.plat.y - height * 0.76));
       if (cargo) {
         tap(scene, center(cargo.rect));
-        this.next = time + (0.22 + this.pace() * 0.14) * handDelay;
+        this.next = time + Math.max(MIN_CARD_GAP, (0.22 + this.pace() * 0.14) * handDelay);
         return;
       }
     }
@@ -177,9 +179,7 @@ export class CourierAutoplay {
     const task = collectReturn ? ret : nearOrder;
     const goal = v.guide ?? task?.house.plat ?? v.truck;
     if (goal === on) return;
-    const lookAhead = Math.max(v.safeTop + 140, height * (0.28 + (this.retry % 4) * 0.025));
-    const staging = !v.guide && goal !== v.truck && goal.y - v.camY < lookAhead;
-    const hop = this.route(scene, v, goal, staging);
+    const hop = this.route(scene, v, goal);
     if (hop) this.startPull(scene, v, hop);
   }
 
@@ -217,14 +217,14 @@ export class CourierAutoplay {
     }
   }
 
-  private route(scene: PlayScene, v: View, goal: Plat, staging: boolean): Hop | undefined {
+  private route(scene: PlayScene, v: View, goal: Plat): Hop | undefined {
     if (v.guide) {
       const pull = scene.autoplayPull(goal);
       if (pull) return { pad: goal, pull };
     }
     const { frog, camY, height } = v;
-    const upper = Math.max(v.safeTop + 120, staging ? height * 0.31 : 0);
-    const lower = height * 0.82;
+    const upper = v.safeTop + 72;
+    const lower = height - Math.max(72, v.safeBottom + 38);
     const safe = (p: Plat) => !p.gone && !p.used && (p.hp === undefined || p.hp > 1)
       && (p.bud === undefined || p.bud < 0.9) && (!p.house?.goose || p === goal);
     const nodes: RouteNode[] = [...v.plats, v.truck].filter((p) =>
@@ -260,12 +260,11 @@ export class CourierAutoplay {
     // When the house is still upriver, leave the truck on the visible pads and use their
     // direction to position for the next stop.
     const to = standSpot(goal);
-    const toY = Math.max(height * 0.34 + camY, to.y);
-    const distance = (p: Point) => Math.hypot(p.x - to.x, p.y - toY);
-    const danger = frog.y - camY > height * 0.69;
+    const distance = (p: Point) => Math.hypot(p.x - to.x, p.y - to.y);
+    const danger = frog.y - camY > height * TUNING.warnLine - 95;
     const current = distance(frog);
-    const departing = frog.on === v.truck && staging;
-    let best = danger || departing ? Infinity : current - 48;
+    const departing = frog.on === v.truck && goal !== v.truck;
+    let best = danger || departing ? Infinity : current - 25;
     let first: Hop | undefined;
     for (const n of nodes) {
       if (!n.first || (n.pad === v.truck && goal !== v.truck) || (departing && n.pad.house)) continue;

@@ -42,7 +42,7 @@ if (controls) void import('./game/autopilot').then(({ CourierAutoplay, center, t
   const autoplay = controls.querySelector<HTMLInputElement>('#autoplay')!;
   const mistakes = controls.querySelector<HTMLInputElement>('#autoplay-mistakes')!;
   const options: AutoplayOptions = { speed: 'normal', mistakes: false };
-  for (const speed of ['slow', 'normal', 'fast'] as const) {
+  for (const speed of ['slowest', 'slow', 'normal', 'fast', 'fastest'] as const) {
     const radio = controls.querySelector<HTMLInputElement>(`input[value="${speed}"]`)!;
     radio.addEventListener('change', () => { if (radio.checked) options.speed = speed; });
   }
