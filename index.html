@@ -64,15 +64,15 @@
       .settings-switch:checked { background: #658140; border-color: #576e38; }
       .settings-switch:checked::before { left: 20px; }
       .settings-switch:disabled { opacity: .55; }
-      .settings-speed {
+      .settings-choices {
         display: flex; gap: 2px; padding: 2px; background: #ede2cb; border-radius: 10px;
       }
-      #autoplay-speed-label { white-space: nowrap; }
-      .settings-speed label { position: relative; cursor: pointer; }
-      .settings-speed input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-      .settings-speed span { display: block; min-width: 28px; padding: 5px 4px; text-align: center; white-space: nowrap; border-radius: 8px; }
-      .settings-speed input:checked + span { background: #fffaf0; color: #374c23; box-shadow: 0 1px 3px #4a3b3033; }
-      .settings-speed input:focus-visible + span, .settings-switch:focus-visible, #settings-trigger:focus-visible {
+      .settings-row > span { white-space: nowrap; }
+      .settings-choices label { position: relative; cursor: pointer; }
+      .settings-choices input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+      .settings-choices span { display: block; min-width: 28px; padding: 5px 4px; text-align: center; white-space: nowrap; border-radius: 8px; }
+      .settings-choices input:checked + span { background: #fffaf0; color: #374c23; box-shadow: 0 1px 3px #4a3b3033; }
+      .settings-choices input:focus-visible + span, .settings-switch:focus-visible, #settings-trigger:focus-visible {
         outline: 2px solid #566e37; outline-offset: 2px;
       }
       /* shown while the script itself downloads, before the game can draw its own loading screen */
@@ -89,7 +89,7 @@
         padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
       }
     </style>
-    <script type="module" crossorigin src="./assets/index-VBdxjoFi.js"></script>
+    <script type="module" crossorigin src="./assets/index-Bkj85ZzQ.js"></script>
   </head>
   <body>
     <div id="boot"><div>蛙趣蛙趣 · 加载中…</div><div class="bar"><i></i></div><small>第一次进来要多等一会儿</small></div>
@@ -100,7 +100,7 @@
           <label class="settings-row">自动玩<input class="settings-switch" id="autoplay" type="checkbox" role="switch" disabled /></label>
           <div class="settings-row">
             <span id="autoplay-speed-label">速度</span>
-            <div class="settings-speed" role="radiogroup" aria-labelledby="autoplay-speed-label">
+            <div class="settings-choices" role="radiogroup" aria-labelledby="autoplay-speed-label">
               <label><input name="autoplay-speed" type="radio" value="slowest" /><span>最慢</span></label>
               <label><input name="autoplay-speed" type="radio" value="slow" /><span>慢</span></label>
               <label><input name="autoplay-speed" type="radio" value="normal" checked /><span>中</span></label>
@@ -108,7 +108,14 @@
               <label><input name="autoplay-speed" type="radio" value="fastest" /><span>最快</span></label>
             </div>
           </div>
-          <label class="settings-row">允许犯错和失败<input class="settings-switch" id="autoplay-mistakes" type="checkbox" role="switch" /></label>
+          <div class="settings-row">
+            <span id="autoplay-error-label">错误率</span>
+            <div class="settings-choices" role="radiogroup" aria-labelledby="autoplay-error-label">
+              <label><input name="autoplay-error" type="radio" value="none" checked /><span>0 错误</span></label>
+              <label><input name="autoplay-error" type="radio" value="low" /><span>少错误</span></label>
+              <label><input name="autoplay-error" type="radio" value="high" /><span>多错误</span></label>
+            </div>
+          </div>
         </div>
       </details>
     </div>
