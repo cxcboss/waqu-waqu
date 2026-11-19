@@ -40,16 +40,17 @@ else void game.start(() => (day !== null ? new PlayScene(game, day) : new HubSce
 if (controls) void import('./game/autopilot').then(({ CourierAutoplay, center, tap }) => {
   const menu = controls.querySelector<HTMLDetailsElement>('#trial-settings')!;
   const autoplay = controls.querySelector<HTMLInputElement>('#autoplay')!;
-  const mistakes = controls.querySelector<HTMLInputElement>('#autoplay-mistakes')!;
-  const options: AutoplayOptions = { speed: 'normal', mistakes: false };
+  const options: AutoplayOptions = { speed: 'normal', errorRate: 'none' };
   for (const speed of ['slowest', 'slow', 'normal', 'fast', 'fastest'] as const) {
     const radio = controls.querySelector<HTMLInputElement>(`input[value="${speed}"]`)!;
     radio.addEventListener('change', () => { if (radio.checked) options.speed = speed; });
   }
-  mistakes.addEventListener('change', () => { options.mistakes = mistakes.checked; });
+  for (const rate of ['none', 'low', 'high'] as const) {
+    const radio = controls.querySelector<HTMLInputElement>(`input[name="autoplay-error"][value="${rate}"]`)!;
+    radio.addEventListener('change', () => { if (radio.checked) options.errorRate = rate; });
+  }
   let active = false;
   let nextDay = day ?? 1;
-  let retries = 0;
   let play: PlayScene | null = null;
   let courier: InstanceType<typeof CourierAutoplay> | null = null;
 
@@ -69,7 +70,6 @@ if (controls) void import('./game/autopilot').then(({ CourierAutoplay, center, t
     game.audio.kick();
     if (!active && game.interactiveScene?.id === 'hub') {
       nextDay = 1;
-      retries = 0;
     }
     setActive(autoplay.checked);
   });
@@ -95,14 +95,13 @@ if (controls) void import('./game/autopilot').then(({ CourierAutoplay, center, t
     if (scene instanceof PlayScene) {
       if (scene !== play) {
         play = scene;
-        courier = new CourierAutoplay(retries, scene.day, options);
+        courier = new CourierAutoplay(options);
         nextDay = play.day;
       }
       courier?.update(scene);
     } else if (scene instanceof HqScene) {
       const result = scene.autoplayReport;
       if (!result) return;
-      retries = result.pass ? 0 : retries + 1;
       nextDay = !result.pass ? result.day : result.day === DAYS.length ? 0 : result.day + 1;
       if (result.button) tap(scene, center(result.button));
       else begin();

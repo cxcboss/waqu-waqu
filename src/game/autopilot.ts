@@ -7,11 +7,12 @@ import { AUTOPLAY_TOUCH as TOUCH, type PlayScene } from './play';
 const DECISION = 0.16;
 // Multipliers for the courier's gestures only. The scene clock and jump physics run normally.
 const HAND_DELAYS = { slowest: 1.44, slow: 1.22, normal: 1, fast: 0.86, fastest: 0.72 };
+const ERROR_MULTIPLIERS = { none: 0, low: 1, high: 2 };
 const MIN_PULL = 0.3;
 const MIN_CARD_GAP = 0.17;
 export interface AutoplayOptions {
   speed: keyof typeof HAND_DELAYS;
-  mistakes: boolean;
+  errorRate: keyof typeof ERROR_MULTIPLIERS;
 }
 
 type View = PlayScene['autoplayView'];
@@ -62,9 +63,15 @@ export class CourierAutoplay {
   private climbAt: number | null = null;
   private recent = new Map<Plat, number>();
   private pace: () => number;
+  private errorRoll: () => number;
 
-  constructor(retry = 0, day = 1, private options: AutoplayOptions = { speed: 'normal', mistakes: false }) {
-    this.pace = rng(day * 1531 + retry * 71);
+  constructor(private options: AutoplayOptions = { speed: 'normal', errorRate: 'none' }, seed = Math.floor(Math.random() * 0x100000000)) {
+    this.pace = rng(seed);
+    this.errorRoll = rng(seed ^ 0x9e3779b9);
+  }
+
+  private slips(chance: number) {
+    return this.errorRoll() < chance * ERROR_MULTIPLIERS[this.options.errorRate];
   }
 
   cancel(scene: PlayScene) {
@@ -88,7 +95,7 @@ export class CourierAutoplay {
         return;
       }
       const elapsed = time - a.started;
-      const slip = this.options.mistakes ? a.slip : null;
+      const slip = this.options.errorRate === 'none' ? null : a.slip;
       const releasing = elapsed >= (slip?.releaseEarly ? Math.max(MIN_PULL, a.press + a.travel * 0.69) : a.release);
       const t = clamp((elapsed - a.press) / a.travel, 0, 1);
       const correction = t > 0.7 || releasing ? scene.autoplayPull(a.hop.pad) : a.hop.pull;
@@ -121,7 +128,7 @@ export class CourierAutoplay {
     }
     if (v.till) {
       if (v.change) {
-        const button = this.options.mistakes && v.changeNeighbor && Math.random() < 0.04 ? v.changeNeighbor : v.change;
+        const button = v.changeNeighbor && this.slips(0.04) ? v.changeNeighbor : v.change;
         tap(scene, center(button));
       }
       return;
@@ -135,7 +142,8 @@ export class CourierAutoplay {
     const handDelay = HAND_DELAYS[this.options.speed];
     if (!this.checkedLanding) {
       this.checkedLanding = true;
-      this.next = time + (frog.y - v.camY > height * 0.65 ? 0.06 : 0.09 + this.pace() * 0.19) * handDelay;
+      const hurried = frog.y - v.camY > height * 0.65;
+      this.next = time + (hurried ? 0.06 + this.pace() * 0.09 : 0.08 + this.pace() * 0.23) * handDelay;
       return;
     }
     const wet = v.floaters.find((p) => Math.hypot(p.x - frog.x, p.y - frog.y + v.camY) < 130);
@@ -160,7 +168,7 @@ export class CourierAutoplay {
         ?? fitting.find((c) => c.where === 'ret');
       if (matching) {
         let card = matching;
-        if (matching.where === 'bag' && this.options.mistakes && Math.random() < 0.06) {
+        if (matching.where === 'bag' && this.slips(0.06)) {
           card = v.cards.filter((c) => c.where === 'bag' && c.order.house !== on.house)
             .sort((a, b) => Math.abs(a.rect.x - matching.rect.x) - Math.abs(b.rect.x - matching.rect.x))[0] ?? matching;
         }
@@ -199,32 +207,39 @@ export class CourierAutoplay {
       const effort = Math.hypot(d.x, d.y) / TUNING.maxDrag;
       const moving = !!(hop.pad.amp || hop.pad.drift);
       const handDelay = HAND_DELAYS[this.options.speed];
-      const press = (0.07 + this.pace() * 0.055) * handDelay;
-      const travel = (0.24 + effort * 0.16 + this.pace() * 0.08) * handDelay;
-      const settle = (0.12 + this.pace() * 0.09 + (moving ? 0.07 : 0)) * handDelay;
+      const press = (0.06 + this.pace() * 0.1) * handDelay;
+      const travel = (0.23 + effort * 0.16 + this.pace() * 0.15) * handDelay;
+      const settle = (0.11 + this.pace() * 0.14 + (moving ? 0.07 : 0)) * handDelay;
       const hurried = v.frog.y - v.camY > v.height * 0.64 ||
         v.bag.some((o) => o.urgent && o.deadline > v.riverTime && o.deadline - v.riverTime < 5);
       let slip: Drag['slip'] = null;
-      if (this.options.mistakes && !v.guide && Math.random() < (hurried ? 0.15 : 0.07)) {
+      if (!v.guide && this.slips(hurried ? 0.15 : 0.07)) {
         // Make a small error on the input to a valid target. The ordinary landing rules decide the outcome.
-        slip = Math.random() < (hurried ? 0.65 : 0.25)
+        slip = this.errorRoll() < (hurried ? 0.65 : 0.25)
           ? { angle: 0, releaseEarly: true }
-          : { angle: (0.09 + Math.random() * 0.12) * (Math.random() < 0.5 ? -1 : 1), releaseEarly: false };
+          : { angle: (0.09 + this.errorRoll() * 0.12) * (this.errorRoll() < 0.5 ? -1 : 1), releaseEarly: false };
       }
       scene.down(x, y, TOUCH);
-      this.aimed = { started: v.time, start: { x, y }, hop, press, travel, release: press + travel + settle, slip };
+      this.aimed = { started: v.time, start: { x, y }, hop, press, travel, release: Math.max(MIN_PULL, press + travel + settle), slip };
       return;
     }
   }
 
   private route(scene: PlayScene, v: View, goal: Plat): Hop | undefined {
-    if (v.guide) {
+    // Board the passing truck while it is in range. A detour can let it get ahead of the frog.
+    if (v.guide || goal === v.truck) {
       const pull = scene.autoplayPull(goal);
       if (pull) return { pad: goal, pull };
     }
     const { frog, camY, height } = v;
     const upper = v.safeTop + 72;
-    const lower = height - Math.max(72, v.safeBottom + 38);
+    // Leave room for the river to scroll during the drag, the flight and the landing settle.
+    const scrollBeforeLanding = v.riverSpeed * (1.05 + HAND_DELAYS[this.options.speed] * 0.85);
+    const lower = height - Math.max(72, v.safeBottom + 38) - scrollBeforeLanding;
+    // Leave enough time to land and hand over the parcel when a house or the route is about to end.
+    const lastSeconds = clamp(1 - v.routeTime / 16, 0, 1);
+    const housePassing = goal.house ? clamp(((goal.y - camY) / height - 0.65) / 0.25, 0, 1) : 0;
+    const hopCost = 24 + 610 * Math.max(lastSeconds, housePassing);
     const safe = (p: Plat) => !p.gone && !p.used && (p.hp === undefined || p.hp > 1)
       && (p.bud === undefined || p.bud < 0.9) && (!p.house?.goose || p === goal);
     const nodes: RouteNode[] = [...v.plats, v.truck].filter((p) =>
@@ -242,17 +257,20 @@ export class CourierAutoplay {
         if (n.visited) continue;
         const dist = Math.hypot(n.x - u.x, n.y - u.y);
         if (dist > v.reach + (u === source ? Math.min(55, n.pad.rx * 0.8) : 12)) continue;
-        const recentlyLeft = v.time - (this.recent.get(n.pad) ?? -Infinity) < 3;
-        const unstable = n.pad.amp || n.pad.bud !== undefined || n.pad.kind === 'leaf' || n.pad.kind === 'stone';
-        const cost = u.cost + 110 + dist + (unstable ? 55 : 0) +
-          (recentlyLeft && n.pad !== goal ? 145 : 0) + Math.max(0, n.y - camY - height * 0.67) * 0.9;
-        if (cost >= n.cost) continue;
         let first = u.first;
+        let length = dist;
         if (u === source) {
           const pull = scene.autoplayPull(n.pad);
           if (!pull) continue;
           first = { pad: n.pad, pull };
+          length = pull.distance;
         }
+        const recentlyLeft = v.time - (this.recent.get(n.pad) ?? -Infinity) < 3;
+        const unstable = n.pad.amp || n.pad.bud !== undefined || n.pad.kind === 'leaf' || n.pad.kind === 'stone';
+        // Make extra short steps cheaper than a long leap, including when the goal is already in range.
+        const cost = u.cost + hopCost + length ** 2 / 110 + (unstable ? 55 : 0) +
+          (recentlyLeft && n.pad !== goal ? 145 : 0) + Math.max(0, n.y - camY - height * 0.67) * 0.9;
+        if (cost >= n.cost) continue;
         n.cost = cost;
         n.first = first;
       }
@@ -264,12 +282,14 @@ export class CourierAutoplay {
     const danger = frog.y - camY > height * TUNING.warnLine - 95;
     const current = distance(frog);
     const departing = frog.on === v.truck && goal !== v.truck;
-    let best = danger || departing ? Infinity : current - 25;
+    let best = Infinity;
     let first: Hop | undefined;
     for (const n of nodes) {
       if (!n.first || (n.pad === v.truck && goal !== v.truck) || (departing && n.pad.house)) continue;
       if (danger && n.y > frog.y - 85) continue;
-      const cost = distance(n) + n.cost * 0.13 +
+      const remaining = distance(n);
+      if (!danger && !departing && remaining > current - 25) continue;
+      const cost = remaining + n.cost * 0.32 +
         (departing && n.first.pad.kind !== 'lily' ? 90 : 0);
       if (cost < best) {
         best = cost;
@@ -291,11 +311,11 @@ export class CourierAutoplay {
       this.next = v.time + 0.25;
     }
     const climbable = swim.target && !swim.target.house?.goose && swim.target.kind !== 'dam';
-    if (!this.options.mistakes || !climbable || !swim.gauge) this.climbAt = null;
+    if (this.options.errorRate === 'none' || !climbable || !swim.gauge) this.climbAt = null;
     if (climbable && swim.green && this.climbAt === null) {
       // A late reaction can miss the green zone while the courier keeps steering.
-      const late = this.options.mistakes && Math.random() < 0.16;
-      this.climbAt = v.time + (late ? 0.2 + Math.random() * 0.18 : 0);
+      const late = this.slips(0.16);
+      this.climbAt = v.time + (late ? 0.2 + this.errorRoll() * 0.18 : 0);
     }
     if (this.climbAt !== null && v.time >= this.climbAt) {
       this.climbAt = null;

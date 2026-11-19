@@ -28,7 +28,7 @@ const ctx = new Proxy({
   createLinearGradient: () => ({ addColorStop: noop }), createRadialGradient: () => ({ addColorStop: noop }),
 }, { get: (obj, key) => key in obj ? obj[key] : noop });
 
-function play(day, H, watch, options) {
+function play(day, H, watch, options, seed = day * 1531) {
   const save = upgradeSave({});
   applyUnlockAll(save);
   const events = [];
@@ -42,7 +42,7 @@ function play(day, H, watch, options) {
   };
   const scene = new PlayScene(game, day);
   game.scene = scene;
-  const autoplay = new CourierAutoplay(0, day, options);
+  const autoplay = new CourierAutoplay(options, seed);
   for (let frame = 0; frame < 60 * 360 && game.scene === scene; frame++) {
     game.ms += 1000 / 60;
     scene.update(1 / 60);
@@ -82,17 +82,20 @@ test('loading at an early stop leads into a visible pull and a normal jump', () 
 
 const speeds = ['slowest', 'slow', 'normal', 'fast', 'fastest'];
 
-test('all five speeds keep a visible, human-paced pull', () => {
-  const pullSeconds = speeds.map((speed) => {
-    let lastHold = 0;
-    play(2, 1542, (scene) => {
-      if (scene.aim) lastHold = scene.aim.t;
-      if (scene.frog.jump?.info?.from === 'truck') return false;
-    }, { speed, mistakes: false });
-    return lastHold;
-  });
+function firstPull(speed, seed) {
+  let lastHold = 0;
+  play(2, 1542, (scene) => {
+    if (scene.aim) lastHold = scene.aim.t;
+    if (scene.frog.jump?.info?.from === 'truck') return false;
+  }, { speed, errorRate: 'none' }, seed);
+  return lastHold;
+}
+
+test('all five speeds scale a randomized, visible pull', () => {
+  const pullSeconds = speeds.map((speed) => firstPull(speed));
   assert.ok(pullSeconds.every((seconds, i) => i === 0 || seconds < pullSeconds[i - 1]), pullSeconds.join(', '));
   assert.ok(pullSeconds.at(-1) >= 0.35, 'the fastest normal pull should still animate');
+  assert.ok(new Set([271, 484, 1029, 3101].map((seed) => firstPull('normal', seed))).size >= 3);
 });
 
 test('a reachable upper landing starts the convoy rushing before the frog drifts to mid-screen', () => {
@@ -102,10 +105,20 @@ test('a reachable upper landing starts the convoy rushing before the frog drifts
     const jump = scene.frog.jump;
     if (jump?.info && jump.y1 - scene.camY < H * 0.28) upper = true;
     if (upper && scene.speedK > 1.2) followed = true;
-    if (followed || scene.time >= 12) return false;
+    if (followed || scene.time >= 20) return false;
   });
   assert.ok(upper, 'all early jumps waited for lower screen positions');
   assert.ok(followed, 'the convoy did not follow the upper jump');
+});
+
+test('the first package follows the nearby pads when a route of short jumps is available', () => {
+  const { events } = play(2, 1542, (_scene, events) => {
+    if (events.at(-1)?.[0] === 'deliver') return false;
+  });
+  const firstDelivery = events.findIndex(([name]) => name === 'deliver');
+  assert.ok(firstDelivery >= 0);
+  const lengths = events.slice(0, firstDelivery).filter(([name]) => name === 'jump').map(([, data]) => data.dist);
+  assert.ok(lengths.length >= 3 && lengths.every((d) => d <= 270), lengths.join(', '));
 });
 
 const requested = process.env.WAQU_TEST_DAYS?.split(',').map(Number);
@@ -120,7 +133,7 @@ for (const H of heights) for (const speed of testedSpeeds) for (const day of req
       const y = f.y - scene.camY - f.z;
       highest = Math.min(highest, y);
       lowest = Math.max(lowest, y);
-    }, { speed, mistakes: false });
+    }, { speed, errorRate: 'none' });
     const report = game.scene.r;
     const jumps = events.filter(([name]) => name === 'jump');
     const delivered = events.filter(([name, d]) => (name === 'deliver' && d.ok) || name === 'return_in');

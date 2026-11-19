@@ -568,9 +568,11 @@ export class PlayScene implements Scene {
     const changeIndex = c && c.t >= 0.65 ? c.opts.indexOf(c.o.cod!.paid - c.o.cod!.price) : -1;
     const g = this.gullS;
     const swim = f.state === 'swim' && !this.ended;
+    const riverSpeed = this.cfg.speed * this.flowFactor;
     return {
       height: this.H, safeTop: this.game.safeT, safeBottom: this.game.safeB,
-      time: this.time, riverTime: this.runT, camY: this.camY,
+      time: this.time, riverTime: this.runT, camY: this.camY, riverSpeed,
+      routeTime: Math.max(0, this.cfg.length + this.camY) / (riverSpeed * Math.max(1, this.speedK)),
       frog: { x: f.x, y: f.y, state: f.state, on: f.on, ready: !f.settle && this.tiredT <= 0 },
       plats: this.lv.plats, truck: this.lv.truck, reach: this.maxJump(),
       bag: this.bag, free: this.cfg.bagSlots - this.slotsUsed(), cards: this.cards, orders: this.lv.orders,
@@ -599,21 +601,28 @@ export class PlayScene implements Scene {
   }
 
   /** Estimate a legal pull, compensating for the water, visible wind and movement during the jump. */
-  autoplayPull(p: Plat): { x: number; y: number } | null {
+  autoplayPull(p: Plat): { x: number; y: number; distance: number } | null {
     if (p.gone || p.used) return null;
     const f = this.frog;
     const reach = this.maxJump();
     const min = TUNING.minJump, max = TUNING.maxDrag;
     // Land inside the surface. Wide planks, stones and the truck have useful off-centre spots.
-    const edge = p.kind === 'truck' ? [0] : [0, -0.5, 0.5, -0.8, 0.8];
+    const edge = p.kind === 'truck' ? [0] : p.kind === 'lily' ? [null, 0, -0.5, 0.5, -0.8, 0.8] : [0, -0.5, 0.5, -0.8, 0.8];
     for (const side of edge) {
       let seconds = 0.6;
       let dx = 0, dy = 0, len = 0;
       let x = p.x, y = p.y;
       for (let look = 0; look < 3; look++) {
         ({ x, y } = this.autoplayPlatform(p, seconds));
-        const tx = p.kind === 'truck' ? x - 58 : x + side * p.rx;
-        const ty = p.kind === 'truck' ? y - 14 : y;
+        let tx = p.kind === 'truck' ? x - 58 : x + (side ?? 0) * p.rx;
+        let ty = p.kind === 'truck' ? y - 14 : y;
+        if (side === null) {
+          // Try the approaching side of the lily first, still well inside the landing surface.
+          const ox = f.x - x, oy = f.y - y;
+          const inset = 0.5 / Math.max(1, shapeN(p, p.x + ox, p.y + oy));
+          tx += ox * inset;
+          ty += oy * inset;
+        }
         // Step onto the near side of a slippery stone to leave space for the skid.
         const skid = p.kind === 'stone' ? SLIP * 0.45 : 0;
         const toward = Math.hypot(tx - f.x, ty - f.y) || 1;
@@ -635,7 +644,7 @@ export class PlayScene implements Scene {
         if (Math.abs(x1 - x) > p.rx - 4 || Math.abs(y1 - y) > p.ry * 0.72) continue;
       } else if (shapeN(p, x1 - x + p.x, y1 - y + p.y) > 0.86) continue;
       if (!this.autoplayArcVisible(y1, dist)) continue;
-      return { x: -dx / len * power * max, y: -dy / len * power * max };
+      return { x: -dx / len * power * max, y: -dy / len * power * max, distance: dist };
     }
     return null;
   }
