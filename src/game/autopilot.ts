@@ -57,6 +57,7 @@ export class CourierAutoplay {
   private aimed: Drag | null = null;
   private checkedLanding = true;
   private wheel: Point | null = null;
+  private climbAt: number | null = null;
   private recent = new Map<Plat, number>();
   private pace: () => number;
 
@@ -68,6 +69,7 @@ export class CourierAutoplay {
     if (this.aimed || this.wheel) scene.cancel(TOUCH);
     this.aimed = null;
     this.wheel = null;
+    this.climbAt = null;
   }
 
   update(scene: PlayScene) {
@@ -289,11 +291,20 @@ export class CourierAutoplay {
       tap(scene, parcel);
       this.next = v.time + 0.25;
     }
-    if (swim.green && swim.target && (!swim.target.house?.goose) && swim.target.kind !== 'dam') {
-      const p = [140, 260, 400].map((x) => ({ x, y: v.height * 0.36 })).find(({ x, y }) => scene.autoplayTouchPoint(x, y));
-      if (p) {
+    const climbable = swim.target && !swim.target.house?.goose && swim.target.kind !== 'dam';
+    if (!this.options.mistakes || !climbable || !swim.gauge) this.climbAt = null;
+    if (climbable && swim.green && this.climbAt === null) {
+      // A late reaction can miss the green zone while the courier keeps steering.
+      const late = this.options.mistakes && Math.random() < 0.16;
+      this.climbAt = v.time + (late ? 0.2 + Math.random() * 0.18 : 0);
+    }
+    if (this.climbAt !== null && v.time >= this.climbAt) {
+      this.climbAt = null;
+      for (const x of [140, 260, 400]) {
+        const y = v.height * 0.36;
+        if (!scene.autoplayTouchPoint(x, y)) continue;
         this.cancel(scene);
-        tap(scene, p);
+        tap(scene, { x, y });
         return;
       }
     }

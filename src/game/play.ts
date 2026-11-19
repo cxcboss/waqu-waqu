@@ -584,6 +584,7 @@ export class PlayScene implements Scene {
       swim: swim ? {
         wheel: this.wheel(), target: this.leapTarget()?.p,
         lesson: this.step === 'rescue',
+        gauge: !!this.gauge,
         green: !!this.gauge && Math.abs(this.gaugeNeedle(this.gauge.t) - 0.5) < this.gaugeZone() / 2,
       } : null,
     };
