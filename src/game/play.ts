@@ -565,17 +565,20 @@ export class PlayScene implements Scene {
   get autoplayView() {
     const f = this.frog;
     const c = this.cod;
+    const changeIndex = c && c.t >= 0.65 ? c.opts.indexOf(c.o.cod!.paid - c.o.cod!.price) : -1;
     const g = this.gullS;
     const swim = f.state === 'swim' && !this.ended;
     return {
-      height: this.H, safeTop: this.game.safeT, time: this.time, camY: this.camY,
+      height: this.H, safeTop: this.game.safeT, safeBottom: this.game.safeB,
+      time: this.time, riverTime: this.runT, camY: this.camY,
       frog: { x: f.x, y: f.y, state: f.state, on: f.on, ready: !f.settle && this.tiredT <= 0 },
       plats: this.lv.plats, truck: this.lv.truck, reach: this.maxJump(),
       bag: this.bag, free: this.cfg.bagSlots - this.slotsUsed(), cards: this.cards, orders: this.lv.orders,
       blocked: this.paused || !!this.supplyPanel || !!this.revive || !!this.ended || this.leaving || this.routeEnd,
       held: this.aim?.id, intro: this.step === 'intro' ? this.introBtn : null,
       guide: this.step === 'aim' ? this.aimTarget : null, pick: this.step === 'pick',
-      till: !!c, change: c && c.t >= 0.65 ? c.btns[c.opts.indexOf(c.o.cod!.paid - c.o.cod!.price)] : undefined,
+      till: !!c, change: c?.btns[changeIndex],
+      changeNeighbor: changeIndex < 0 ? undefined : c?.btns[changeIndex === 0 ? 1 : changeIndex - 1],
       gull: g && !g.away ? { x: g.x, y: this.sy(g.y) } : null,
       floaters: this.floaters.filter((x) => x.t >= 0).map((p) => ({ x: p.x, y: this.sy(p.y) })),
       swim: swim ? {
@@ -5292,7 +5295,7 @@ export class PlayScene implements Scene {
 
   private drawAim(ctx: Ctx) {
     const f = this.frog;
-    if (!this.aim || f.state !== 'stand') return;
+    if (!this.aim || f.state !== 'stand' || this.aim.id === AUTOPLAY_TOUCH) return;
     const [dx, dy] = this.aimVec();
     const len = Math.hypot(dx, dy);
     if (len < 6) return;

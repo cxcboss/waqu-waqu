@@ -5,6 +5,13 @@ import type { Plat } from './level';
 import { AUTOPLAY_TOUCH as TOUCH, type PlayScene } from './play';
 
 const DECISION = 0.16;
+// Multipliers for the courier's gestures only. The scene clock and jump physics run normally.
+const HAND_DELAYS = { slow: 1.35, normal: 1, fast: 0.72 };
+export interface AutoplayOptions {
+  speed: keyof typeof HAND_DELAYS;
+  mistakes: boolean;
+}
+
 type View = PlayScene['autoplayView'];
 type Point = { x: number; y: number };
 
@@ -29,6 +36,7 @@ interface Drag {
   press: number;
   travel: number;
   release: number;
+  slip: { angle: number; releaseEarly: boolean } | null;
 }
 
 function standSpot(p: Plat): Point {
@@ -52,7 +60,7 @@ export class CourierAutoplay {
   private recent = new Map<Plat, number>();
   private pace: () => number;
 
-  constructor(private retry = 0, day = 1) {
+  constructor(private retry = 0, day = 1, private options: AutoplayOptions = { speed: 'normal', mistakes: false }) {
     this.pace = rng(day * 1531 + retry * 71);
   }
 
@@ -76,13 +84,17 @@ export class CourierAutoplay {
         return;
       }
       const elapsed = time - a.started;
+      const slip = this.options.mistakes ? a.slip : null;
+      const releasing = elapsed >= (slip?.releaseEarly ? a.press + a.travel * 0.69 : a.release);
       const t = clamp((elapsed - a.press) / a.travel, 0, 1);
-      const correction = t > 0.7 ? scene.autoplayPull(a.hop.pad) : a.hop.pull;
+      const correction = t > 0.7 || releasing ? scene.autoplayPull(a.hop.pad) : a.hop.pull;
       const pull = correction ?? a.hop.pull;
       const eased = t * t * (3 - 2 * t);
-      const x = a.start.x + pull.x * eased, y = a.start.y + pull.y * eased;
+      const angle = slip?.angle ?? 0;
+      const x = a.start.x + (pull.x * Math.cos(angle) - pull.y * Math.sin(angle)) * eased;
+      const y = a.start.y + (pull.x * Math.sin(angle) + pull.y * Math.cos(angle)) * eased;
       scene.move(x, y, TOUCH);
-      if (elapsed < a.release) return;
+      if (!releasing) return;
       this.aimed = null;
       if (correction) {
         scene.up(x, y, TOUCH);
@@ -104,7 +116,10 @@ export class CourierAutoplay {
       return;
     }
     if (v.till) {
-      if (v.change) tap(scene, center(v.change));
+      if (v.change) {
+        const button = this.options.mistakes && v.changeNeighbor && Math.random() < 0.04 ? v.changeNeighbor : v.change;
+        tap(scene, center(button));
+      }
       return;
     }
     if (v.gull && v.gull.x >= 0 && v.gull.x <= 750 && v.gull.y >= v.safeTop && v.gull.y < height) {
@@ -113,9 +128,10 @@ export class CourierAutoplay {
     }
     const on = frog.on;
     if (frog.state !== 'stand' || !on || !frog.ready) return;
+    const handDelay = HAND_DELAYS[this.options.speed];
     if (!this.checkedLanding) {
       this.checkedLanding = true;
-      this.next = time + (frog.y - v.camY > height * 0.65 ? 0.06 : 0.09 + this.pace() * 0.19);
+      this.next = time + (frog.y - v.camY > height * 0.65 ? 0.06 : 0.09 + this.pace() * 0.19) * handDelay;
       return;
     }
     const wet = v.floaters.find((p) => Math.hypot(p.x - frog.x, p.y - frog.y + v.camY) < 130);
@@ -131,7 +147,7 @@ export class CourierAutoplay {
         (!nearOrder || c.order.house.plat.y > nearOrder.house.plat.y - height * 0.76));
       if (cargo) {
         tap(scene, center(cargo.rect));
-        this.next = time + 0.22 + this.pace() * 0.14;
+        this.next = time + (0.22 + this.pace() * 0.14) * handDelay;
         return;
       }
     }
@@ -139,8 +155,13 @@ export class CourierAutoplay {
       const matching = v.cards.find((c) => c.where === 'bag' && c.order.house === on.house)
         ?? fitting.find((c) => c.where === 'ret');
       if (matching) {
-        tap(scene, center(matching.rect));
-        this.next = time + 0.32 + this.pace() * 0.16;
+        let card = matching;
+        if (matching.where === 'bag' && this.options.mistakes && Math.random() < 0.06) {
+          card = v.cards.filter((c) => c.where === 'bag' && c.order.house !== on.house)
+            .sort((a, b) => Math.abs(a.rect.x - matching.rect.x) - Math.abs(b.rect.x - matching.rect.x))[0] ?? matching;
+        }
+        tap(scene, center(card.rect));
+        this.next = time + (0.32 + this.pace() * 0.16) * handDelay;
         return;
       }
     }
@@ -162,22 +183,34 @@ export class CourierAutoplay {
 
   private startPull(scene: PlayScene, v: View, hop: Hop) {
     const d = hop.pull;
-    const nearX = clamp(v.frog.x - d.x * 0.48, 55 - Math.min(0, d.x), 695 - Math.max(0, d.x));
-    const nearY = clamp(v.frog.y - v.camY - 30 - d.y * 0.4, v.safeTop + 130, v.height * 0.62);
+    const awayX = v.frog.x > 375 ? 185 : 565;
+    const lowerY = Math.min(v.height * 0.67, v.height - v.safeBottom - 60 - Math.max(0, d.y));
     const candidates = [
-      { x: nearX, y: nearY },
-      { x: 365, y: Math.max(v.safeTop + 105, v.height * 0.36) },
-      { x: 260, y: v.height * 0.48 },
+      { x: awayX, y: lowerY },
+      { x: 375, y: lowerY },
+      { x: awayX, y: lowerY - v.height * 0.07 },
+      { x: 750 - awayX, y: lowerY - v.height * 0.07 },
     ];
-    for (const { x, y } of candidates) {
+    for (const p of candidates) {
+      const x = clamp(p.x, 55 - Math.min(0, d.x), 695 - Math.max(0, d.x)), y = p.y;
       if (y + d.y < 18 || y + d.y > v.height - 38 || !scene.autoplayTouchPoint(x, y)) continue;
       const effort = Math.hypot(d.x, d.y) / TUNING.maxDrag;
       const moving = !!(hop.pad.amp || hop.pad.drift);
-      const press = 0.07 + this.pace() * 0.055;
-      const travel = 0.24 + effort * 0.16 + this.pace() * 0.08;
-      const settle = 0.12 + this.pace() * 0.09 + (moving ? 0.07 : 0);
+      const handDelay = HAND_DELAYS[this.options.speed];
+      const press = (0.07 + this.pace() * 0.055) * handDelay;
+      const travel = (0.24 + effort * 0.16 + this.pace() * 0.08) * handDelay;
+      const settle = (0.12 + this.pace() * 0.09 + (moving ? 0.07 : 0)) * handDelay;
+      const hurried = v.frog.y - v.camY > v.height * 0.64 ||
+        v.bag.some((o) => o.urgent && o.deadline > v.riverTime && o.deadline - v.riverTime < 5);
+      let slip: Drag['slip'] = null;
+      if (this.options.mistakes && !v.guide && Math.random() < (hurried ? 0.15 : 0.07)) {
+        // Make a small error on the input to a valid target. The ordinary landing rules decide the outcome.
+        slip = Math.random() < (hurried ? 0.65 : 0.25)
+          ? { angle: 0, releaseEarly: true }
+          : { angle: (0.09 + Math.random() * 0.12) * (Math.random() < 0.5 ? -1 : 1), releaseEarly: false };
+      }
       scene.down(x, y, TOUCH);
-      this.aimed = { started: v.time, start: { x, y }, hop, press, travel, release: press + travel + settle };
+      this.aimed = { started: v.time, start: { x, y }, hop, press, travel, release: press + travel + settle, slip };
       return;
     }
   }

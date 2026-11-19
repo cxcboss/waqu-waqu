@@ -28,7 +28,7 @@ const ctx = new Proxy({
   createLinearGradient: () => ({ addColorStop: noop }), createRadialGradient: () => ({ addColorStop: noop }),
 }, { get: (obj, key) => key in obj ? obj[key] : noop });
 
-function play(day, H, watch) {
+function play(day, H, watch, options) {
   const save = upgradeSave({});
   applyUnlockAll(save);
   const events = [];
@@ -42,7 +42,7 @@ function play(day, H, watch) {
   };
   const scene = new PlayScene(game, day);
   game.scene = scene;
-  const autoplay = new CourierAutoplay(0, day);
+  const autoplay = new CourierAutoplay(0, day, options);
   for (let frame = 0; frame < 60 * 360 && game.scene === scene; frame++) {
     game.ms += 1000 / 60;
     scene.update(1 / 60);
@@ -57,11 +57,12 @@ function play(day, H, watch) {
 
 test('loading at an early stop leads into a visible pull and a normal jump', () => {
   const pullLengths = [];
-  let delay, held, launched, landed;
+  let delay, held, launched, landed, anchorY;
   play(2, 1542, (scene, events) => {
     const aim = scene.aim;
     if (aim && scene.frog.on === scene.lv.truck) {
       delay ??= scene.time - events.findLast(([name]) => name === 'pickup')[2];
+      anchorY ??= aim.sy;
       pullLengths.push(Math.hypot(aim.x - aim.sx, aim.y - aim.sy));
       held = aim.t;
     }
@@ -75,7 +76,20 @@ test('loading at an early stop leads into a visible pull and a normal jump', () 
   const intermediate = new Set(pullLengths.filter((length) => length > full * 0.1 && length < full * 0.9).map(Math.round));
   assert.ok(delay < 1.1, `the courier waited ${delay?.toFixed(2)} s on the truck after loading`);
   assert.ok(held >= 0.4 && intermediate.size >= 5, `only ${intermediate.size} visible pull positions over ${held?.toFixed(2)} s`);
+  assert.ok(anchorY > 1542 * 0.58, `the pull started at ${Math.round(anchorY)}, outside the lower part of the screen`);
   assert.equal(landed, 'lily');
+});
+
+test('the three speed settings change how long the courier pulls', () => {
+  const pullSeconds = ['slow', 'normal', 'fast'].map((speed) => {
+    let lastHold = 0;
+    play(2, 1542, (scene) => {
+      if (scene.aim) lastHold = scene.aim.t;
+      if (scene.frog.jump?.info?.from === 'truck') return false;
+    }, { speed, mistakes: false });
+    return lastHold;
+  });
+  assert.ok(pullSeconds[0] > pullSeconds[1] && pullSeconds[1] > pullSeconds[2], pullSeconds.join(', '));
 });
 
 const requested = process.env.WAQU_TEST_DAYS?.split(',').map(Number);

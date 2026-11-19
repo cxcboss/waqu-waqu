@@ -1,5 +1,6 @@
 // Web entry: browser platform adapter + the shared game.
 import { DAYS, YEAR_END } from './game/config';
+import type { AutoplayOptions } from './game/autopilot';
 import { EndingScene } from './game/ending';
 import { Game } from './game/game';
 import { HqScene } from './game/hq';
@@ -37,7 +38,15 @@ if (dev && q.get('art') === '1') void import('./game/artboard').then((m) => game
 else void game.start(() => (day !== null ? new PlayScene(game, day) : new HubScene(game)), day !== null ? { jump: day } : {});
 (window as unknown as { __game: Game }).__game = game;
 if (controls) void import('./game/autopilot').then(({ CourierAutoplay, center, tap }) => {
-  const button = controls.querySelector('button')!;
+  const menu = controls.querySelector<HTMLDetailsElement>('#trial-settings')!;
+  const autoplay = controls.querySelector<HTMLInputElement>('#autoplay')!;
+  const mistakes = controls.querySelector<HTMLInputElement>('#autoplay-mistakes')!;
+  const options: AutoplayOptions = { speed: 'normal', mistakes: false };
+  for (const speed of ['slow', 'normal', 'fast'] as const) {
+    const radio = controls.querySelector<HTMLInputElement>(`input[value="${speed}"]`)!;
+    radio.addEventListener('change', () => { if (radio.checked) options.speed = speed; });
+  }
+  mistakes.addEventListener('change', () => { options.mistakes = mistakes.checked; });
   let active = false;
   let nextDay = day ?? 1;
   let retries = 0;
@@ -46,8 +55,8 @@ if (controls) void import('./game/autopilot').then(({ CourierAutoplay, center, t
 
   const setActive = (on: boolean) => {
     active = on;
-    button.textContent = on ? '自动玩 · 开' : '自动玩 · 关';
-    button.setAttribute('aria-pressed', String(on));
+    autoplay.checked = on;
+    controls.dataset.autoplay = String(on);
     if (!on && play) {
       courier?.cancel(play);
       play = null;
@@ -55,15 +64,24 @@ if (controls) void import('./game/autopilot').then(({ CourierAutoplay, center, t
     }
   };
   setActive(q.get('auto') === '1');
-  button.addEventListener('click', () => {
+  autoplay.addEventListener('change', () => {
     game.audio.unlock();
     game.audio.kick();
     if (!active && game.interactiveScene?.id === 'hub') {
       nextDay = 1;
       retries = 0;
     }
-    setActive(!active);
+    setActive(autoplay.checked);
   });
+  document.addEventListener('pointerdown', (e) => {
+    if (menu.open && !menu.contains(e.target as Node)) menu.open = false;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !menu.open) return;
+    menu.open = false;
+    menu.querySelector('summary')?.focus();
+    e.stopPropagation();
+  }, true);
   document.getElementById('game')?.addEventListener('pointerdown', () => {
     if (active) setActive(false);
   }, true);
@@ -71,13 +89,13 @@ if (controls) void import('./game/autopilot').then(({ CourierAutoplay, center, t
   const begin = () => game.go(new PlayScene(game, Math.min(nextDay, game.save.day)), true);
   const frame = () => {
     requestAnimationFrame(frame);
-    if (button.disabled && game.ready) button.disabled = false;
+    if (autoplay.disabled && game.ready) autoplay.disabled = false;
     if (!active || document.hidden) return;
     const scene = game.interactiveScene;
     if (scene instanceof PlayScene) {
       if (scene !== play) {
         play = scene;
-        courier = new CourierAutoplay(retries, scene.day);
+        courier = new CourierAutoplay(retries, scene.day, options);
         nextDay = play.day;
       }
       courier?.update(scene);
